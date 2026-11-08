@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { checkSites } from './checks/sites.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
 import { recordEvent } from './events.js';
@@ -40,7 +41,8 @@ if (config.pingUrlInvalid) log('HEALTHCHECKS_PING_URL is set but is not an https
 else if (!config.pingUrl) log('HEALTHCHECKS_PING_URL is not set: not pinging healthchecks.io');
 
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
-const runner = new Runner(db, { handlers: { [CYCLE]: cycleHandler(heartbeat) }, log });
+const runChecks = (signal: AbortSignal) => checkSites(db, { now: Date.now, signal });
+const runner = new Runner(db, { handlers: { [CYCLE]: cycleHandler(heartbeat, runChecks) }, log });
 
 recordEvent(db, startedAt, {
   kind: 'kamaji.started',

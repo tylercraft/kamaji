@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import type { Db } from './db.js';
-import { activity, listServers, listSites, overview, status, type StatusInput } from './queries.js';
+import {
+  activity,
+  listServers,
+  overview,
+  siteSummaries,
+  status,
+  type StatusInput,
+} from './queries.js';
 
 export interface AppOptions {
   db: Db;
@@ -40,7 +47,7 @@ export function createApp({ db, login, webDist, statusInput, log }: AppOptions):
 
   app.get('/api/status', (c) => c.json(status(db, statusInput())));
   app.get('/api/overview', (c) => c.json(overview(db)));
-  app.get('/api/sites', (c) => c.json({ sites: listSites(db) }));
+  app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db) }));
   app.get('/api/servers', (c) => c.json({ servers: listServers(db) }));
   app.get('/api/activity', (c) => {
     const before = Number(c.req.query('before'));

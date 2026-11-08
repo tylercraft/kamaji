@@ -101,4 +101,51 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    name: 'observations',
+    sql: `
+      -- Every check result, kept. value is the check's JSON detail; ok is whether it passed.
+      CREATE TABLE observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resource_type TEXT NOT NULL CHECK (resource_type IN ('site', 'server', 'kamaji')),
+        resource_id TEXT NOT NULL,
+        check_name TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('mini', 'worker', 'plugin', 'ssh')),
+        at INTEGER NOT NULL,
+        ok INTEGER NOT NULL CHECK (ok IN (0, 1)),
+        value TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX observations_latest ON observations (resource_type, resource_id, check_name, source, at);
+
+      -- Discord bookkeeping: when the reminder (24 hours on) and the recovery message went.
+      ALTER TABLE issues ADD COLUMN reminded_at INTEGER;
+      ALTER TABLE issues ADD COLUMN recovery_notified_at INTEGER;
+
+      ALTER TABLE sites ADD COLUMN tailnet_only INTEGER NOT NULL DEFAULT 0 CHECK (tailnet_only IN (0, 1));
+    `,
+  },
+  {
+    version: 3,
+    name: 'estate',
+    // The estate as of 2026-11-08 (calcifer explore/kamaji.md), all monitoring only until
+    // Craftish Care (M3). Expected text was read from each home page on 2026-11-09.
+    sql: `
+      INSERT INTO sites (id, name, url, host_kind, client_slug, mode, setup, expected_text, tailnet_only, created_at) VALUES
+        ('accounting.firstandlastrecords.com', 'F&L accounting', 'https://accounting.firstandlastrecords.com/', 'craftish', NULL, 'monitoring', 'done', 'Label Accounting', 1, unixepoch() * 1000),
+        ('accounting.prettyearpublishing.com', 'Pretty Ear accounting', 'https://accounting.prettyearpublishing.com/', 'craftish', NULL, 'monitoring', 'done', 'Label Accounting', 1, unixepoch() * 1000),
+        ('aleyahoerlein.com', 'Aleya Hoerlein', 'https://aleyahoerlein.com/', 'craftish', NULL, 'monitoring', 'done', 'Aleya Hoerlein', 0, unixepoch() * 1000),
+        ('briardalewealth.com', 'Briardale', 'https://briardalewealth.com/', 'kinsta', 'briardale', 'monitoring', 'done', 'Briardale', 0, unixepoch() * 1000),
+        ('firstandlastrecords.com', 'First & Last Records', 'https://firstandlastrecords.com/', 'craftish', NULL, 'monitoring', 'done', 'Last Records', 0, unixepoch() * 1000),
+        ('mintonhomesllc.com', 'Minton Homes', 'https://mintonhomesllc.com/', 'other', 'minton-homes', 'monitoring', 'done', 'Minton Homes', 0, unixepoch() * 1000),
+        ('photogravure.com', 'Photogravure', 'https://photogravure.com/', 'kinsta', 'katzman', 'monitoring', 'done', 'Photogravure', 0, unixepoch() * 1000),
+        ('photoseed.com', 'PhotoSeed', 'https://photoseed.com/', 'kinsta', 'photoseed', 'monitoring', 'done', 'PhotoSeed', 0, unixepoch() * 1000),
+        ('sweetleisure.com', 'Sweet Leisure', 'https://sweetleisure.com/', 'kinsta', NULL, 'monitoring', 'done', 'Sweet Leisure', 0, unixepoch() * 1000),
+        ('yogarecords.com', 'Yoga Records', 'https://yogarecords.com/', 'craftish', NULL, 'monitoring', 'done', 'Yoga Records', 0, unixepoch() * 1000),
+        ('www.ashburylegal.com', 'Ashbury', 'https://www.ashburylegal.com/', 'wpengine', 'ashbury', 'monitoring', 'done', 'Ashbury Legal', 0, unixepoch() * 1000),
+        ('tylercraft.com', 'tylercraft.com', 'https://tylercraft.com/', 'other', NULL, 'monitoring', 'done', 'Tyler Craft', 0, unixepoch() * 1000),
+        ('craftish.dev', 'craftish.dev', 'https://craftish.dev/', 'other', NULL, 'monitoring', 'done', 'Craftish', 0, unixepoch() * 1000),
+        ('romaji.craftish.dev', 'Romaji', 'https://romaji.craftish.dev/', 'craftish', NULL, 'monitoring', 'done', 'Romaji', 0, unixepoch() * 1000);
+    `,
+  },
 ];

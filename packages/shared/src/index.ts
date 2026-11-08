@@ -38,10 +38,41 @@ export const Site = z.object({
   clientSlug: z.string().nullable(),
   mode: SiteMode,
   setup: SetupStep,
+  /** Answers only on the tailnet: the Worker can't see it, so its alerts come from the mini. */
+  tailnetOnly: z.boolean(),
+  /** Text the home page must contain, or null when none is set. */
+  expectedText: z.string().nullable(),
   pausedAt: Timestamp.nullable(),
   createdAt: Timestamp,
 });
 export type Site = z.infer<typeof Site>;
+
+/**
+ * The home page check from the mini, as last seen. `failing` is a failed check that hasn't
+ * repeated yet; `down` is two in a row, which opens an issue.
+ */
+export const Availability = z.object({
+  state: z.enum(['up', 'failing', 'down']),
+  checkedAt: Timestamp,
+  /** Time to the response headers; null when there was no response. */
+  responseMs: z.number().int().nullable(),
+  /** Why the last check failed, in plain words; null when it passed. */
+  problem: z.string().nullable(),
+});
+export type Availability = z.infer<typeof Availability>;
+
+export const Certificate = z.object({
+  validTo: Timestamp,
+  daysLeft: z.number().int(),
+  checkedAt: Timestamp,
+});
+export type Certificate = z.infer<typeof Certificate>;
+
+export const SiteSummary = Site.extend({
+  availability: known(Availability),
+  certificate: known(Certificate),
+});
+export type SiteSummary = z.infer<typeof SiteSummary>;
 
 export const ServerKind = z.enum(['linux-ssh', 'local-mac']);
 export type ServerKind = z.infer<typeof ServerKind>;
@@ -117,6 +148,9 @@ export const OverviewResponse = z.object({
     monitoring: z.number().int(),
     paused: z.number().int(),
     unfinished: z.number().int(),
+    /** Of the sites being checked: down now, and not checked yet. */
+    down: z.number().int(),
+    unchecked: z.number().int(),
   }),
   servers: z.object({ total: z.number().int() }),
   /** Open issues. Only meaningful once something is being watched: `known: false` until then. */
@@ -126,7 +160,7 @@ export const OverviewResponse = z.object({
 });
 export type OverviewResponse = z.infer<typeof OverviewResponse>;
 
-export const SitesResponse = z.object({ sites: z.array(Site) });
+export const SitesResponse = z.object({ sites: z.array(SiteSummary) });
 export type SitesResponse = z.infer<typeof SitesResponse>;
 
 export const ServersResponse = z.object({ servers: z.array(Server) });

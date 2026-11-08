@@ -1,5 +1,5 @@
-// The check cycle: every few minutes, one `cycle` job. In M1 it checks nothing yet; it proves the
-// runner works and pings healthchecks.io. M2 adds the site and server checks in `runChecks`.
+// The check cycle: every few minutes, one `cycle` job runs the checks, then pings healthchecks.io.
+// Sites failing is the checks' news, not a failed cycle; only Kamaji's own errors fail it.
 import type { Heartbeat } from './heartbeat.js';
 import type { Handler } from './jobs/runner.js';
 

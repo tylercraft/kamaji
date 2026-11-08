@@ -1,12 +1,19 @@
 // Reads for the API, shaped by the shared schemas.
 import type {
   ActivityResponse,
+  Availability,
+  Certificate,
   Issue,
+  Known,
   OverviewResponse,
   Server,
   Site,
+  SiteSummary,
   StatusResponse,
 } from '@kamaji/shared';
+import type { CertificateResult, HomePageResult } from './checks/http.js';
+import { findOpenIssue } from './issues.js';
+import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
@@ -26,6 +33,8 @@ const toSite = (r: Row): Site => ({
   clientSlug: strOrNull(r.client_slug),
   mode: String(r.mode) as Site['mode'],
   setup: String(r.setup) as Site['setup'],
+  tailnetOnly: Number(r.tailnet_only) === 1,
+  expectedText: strOrNull(r.expected_text),
   pausedAt: isoOrNull(r.paused_at),
   createdAt: iso(r.created_at),
 });
@@ -56,6 +65,54 @@ export function listSites(db: Db): Site[] {
     .map(toSite);
 }
 
+function availability(db: Db, site: Site): Known<Availability> {
+  if (site.pausedAt) return { known: false, reason: 'Paused: not being checked' };
+  if (site.setup !== 'done') return { known: false, reason: 'Not checked until setup is finished' };
+  const [last] = latestObservations<HomePageResult>(db, 'site', site.id, 'http', 'mini', 1);
+  if (!last) return { known: false, reason: 'First check pending' };
+  const down = findOpenIssue(db, { resourceType: 'site', resourceId: site.id, kind: 'down' });
+  return {
+    known: true,
+    value: {
+      state: last.ok ? 'up' : down ? 'down' : 'failing',
+      checkedAt: iso(last.at),
+      responseMs: last.value.responseMs,
+      problem: last.value.problem,
+    },
+  };
+}
+
+function certificate(db: Db, site: Site): Known<Certificate> {
+  const [last] = latestObservations<CertificateResult>(
+    db,
+    'site',
+    site.id,
+    'certificate',
+    'mini',
+    1,
+  );
+  if (!last) return { known: false, reason: 'Not read yet' };
+  if (last.value.validTo === null || last.value.daysLeft === null) {
+    return { known: false, reason: last.value.problem ?? 'Couldn’t read it' };
+  }
+  return {
+    known: true,
+    value: {
+      validTo: iso(last.value.validTo),
+      daysLeft: last.value.daysLeft,
+      checkedAt: iso(last.at),
+    },
+  };
+}
+
+export function siteSummaries(db: Db): SiteSummary[] {
+  return listSites(db).map((site) => ({
+    ...site,
+    availability: availability(db, site),
+    certificate: certificate(db, site),
+  }));
+}
+
 export function listServers(db: Db): Server[] {
   return db
     .prepare('SELECT * FROM servers WHERE removed_at IS NULL ORDER BY name COLLATE NOCASE')
@@ -64,8 +121,9 @@ export function listServers(db: Db): Server[] {
 }
 
 export function overview(db: Db): OverviewResponse {
-  const sites = listSites(db);
+  const sites = siteSummaries(db);
   const live = sites.filter((s) => s.setup === 'done' && !s.pausedAt);
+  const checked = db.prepare('SELECT 1 FROM observations LIMIT 1').get() !== undefined;
   const watched = live.length + listServers(db).length;
   const connected = live.filter((s) => s.mode === 'connected').length;
   const issues = db
@@ -83,12 +141,18 @@ export function overview(db: Db): OverviewResponse {
       monitoring: sites.filter((s) => s.mode === 'monitoring').length,
       paused: sites.filter((s) => s.pausedAt).length,
       unfinished: sites.filter((s) => s.setup !== 'done').length,
+      down: live.filter((s) => s.availability.known && s.availability.value.state === 'down')
+        .length,
+      unchecked: live.filter((s) => !s.availability.known).length,
     },
     servers: { total: listServers(db).length },
     attention:
-      watched > 0 || issues.length > 0
+      (watched > 0 && checked) || issues.length > 0
         ? { known: true, value: issues }
-        : { known: false, reason: 'Nothing is being watched yet' },
+        : {
+            known: false,
+            reason: watched > 0 ? 'First checks haven’t run yet' : 'Nothing is being watched yet',
+          },
     // Inventory arrives with Craftish Care (M3). Until a connected site reports, it's unknown.
     updatesWaiting: {
       known: false,
