@@ -9,12 +9,10 @@ A Cloudflare Worker on a 5-minute cron. It makes the same home page check the mi
 
 ## The Cloudflare API token
 
-A custom token at dash.cloudflare.com → My Profile → API Tokens, restricted to Tyler's account, no zones:
+An account-owned token on the Craftish account (dash.cloudflare.com → Manage account → Account API tokens), no zones:
 
-- Account › Workers Scripts › Edit
-- Account › Workers KV Storage › Edit
-- Account › Account Settings › Read
-- User › User Details › Read
-- User › Memberships › Read
+- Workers Admin
+- Workers KV Storage Write
+- Account Settings Read
 
-It lives on the laptop only, entered when deploying. The Worker is served on its `workers.dev` address, so it needs no zone or route permissions.
+Account-owned tokens have no user permissions, so wrangler can't look the account up itself: `account_id` is set in `wrangler.toml` (not a secret). The token lives on the laptop only, entered when deploying. The Worker is served on its `workers.dev` address, so it needs no zone or route permissions.
