@@ -37,7 +37,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:10002/api/status
 ```
 
 ```
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: j_nilsson@me.com' http://127.0.0.1:10002/api/status
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: someone@example.com' http://127.0.0.1:10002/api/status
 ```
 
 ```
@@ -53,7 +53,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: tylercraft@gi
 6. From the laptop, a forged header must still get in as you, proving serve replaced it (expect `200`; a `403` means serve passed the forgery through: take the serve down and don't use Kamaji until that's fixed):
 
 ```
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: j_nilsson@me.com' https://molcajete.tailb3044a.ts.net:10002/api/status
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: someone@example.com' https://molcajete.tailb3044a.ts.net:10002/api/status
 ```
 
 7. Open `https://molcajete.tailb3044a.ts.net:10002`. The header should say "Cycle on time" and "Heartbeat ok" within a minute, and healthchecks.io should show the check as up.

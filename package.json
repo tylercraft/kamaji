@@ -12,14 +12,14 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "build": "tsc -b && npm run build -w @kamaji/web && node scripts/build-info.mjs",
+    "build": "node scripts/guard.mjs build && tsc -b && npm run build -w @kamaji/web && node scripts/build-info.mjs",
     "dev": "node scripts/dev.mjs",
     "start": "node --disable-warning=ExperimentalWarning packages/server/dist/main.js",
     "test": "vitest run",
-    "typecheck": "tsc -b && tsc -p tsconfig.tests.json",
+    "typecheck": "tsc -p tsconfig.check.json && tsc -p packages/web",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "check": "prettier --check . && eslint . && tsc -b && tsc -p tsconfig.tests.json && vitest run"
+    "check": "prettier --check . && eslint . && npm run typecheck && vitest run"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

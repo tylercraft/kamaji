@@ -6,6 +6,6 @@ export PATH=/opt/homebrew/bin:/usr/bin:/bin
 cd ~/kamaji
 git pull --ff-only
 npm ci --no-audit --no-fund
-npm run build
+KAMAJI_DEPLOY=1 npm run build
 launchctl kickstart -k gui/$(id -u)/dev.craftish.kamaji
 print -r -- "restarted; tail ~/Library/Logs/kamaji.log to watch it start"

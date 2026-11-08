@@ -20,8 +20,8 @@ Still to come: `packages/mcp` (M5), `plugin/craftish-care` (M3), `worker` and `s
 Node 22.13 or later.
 
 - `npm run dev`: server on `127.0.0.1:10002` (rebuilt on change, 60-second cycle) and Vite on `http://localhost:5173`. Vite's proxy adds the login header, standing in for tailscale serve.
-- `npm run check`: Prettier, ESLint, TypeScript and the tests. Passes before every PR.
-- `npm run build`: what the mini runs.
+- `npm run check`: Prettier, ESLint, TypeScript and the tests. Passes before every push. Writes nothing to `dist`, so it's safe anywhere, including on the mini.
+- `npm run build`: what `ops/deploy.sh` runs on the mini. Refused by `scripts/guard.mjs` wherever Kamaji is installed, unless the deploy asks.
 
 ## Rules of the code
 

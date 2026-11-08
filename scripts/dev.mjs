@@ -1,6 +1,10 @@
 // Local development: the server rebuilt and restarted on change, and Vite with hot reload.
 // Open http://localhost:5173. Vite's proxy adds the login header tailscale serve adds in production.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+
+if (spawnSync('node', ['scripts/guard.mjs', 'npm run dev'], { stdio: 'inherit' }).status !== 0) {
+  process.exit(1);
+}
 
 const login = process.env.KAMAJI_LOGIN ?? 'dev@localhost';
 const env = {
