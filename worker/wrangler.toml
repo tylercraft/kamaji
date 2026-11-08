@@ -1,0 +1,16 @@
+# Kamaji's outside watch. Deployed from the laptop (README.md), never from the mini.
+name = "kamaji-watch"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+KAMAJI_URL = "https://molcajete.tailb3044a.ts.net:10002"
+
+# Made once with `npx wrangler kv namespace create KAMAJI`; paste its id here.
+[[kv_namespaces]]
+binding = "KAMAJI"
+id = "REPLACE_WITH_THE_NAMESPACE_ID"

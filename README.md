@@ -11,9 +11,10 @@ The decisions live in calcifer, not here: `explore/kamaji.md` (the source of tru
 | `packages/shared` | The API's contract: zod schemas for every response, shared by server and web  |
 | `packages/server` | Node: HTTP API (Hono), job runner, check cycle, SQLite (`node:sqlite`)        |
 | `packages/web`    | React + Vite + Emotion: the six tabs, built to static files the server serves |
+| `worker`          | Cloudflare Worker: the outside checks and their alerts (`worker/README.md`)   |
 | `ops`             | The LaunchAgent, deploy script and runbook (`ops/README.md`)                  |
 
-Still to come: `packages/mcp` (M5), `plugin/craftish-care` (M3), `worker` and `server-report` (M2).
+Still to come: `packages/mcp` (M5), `plugin/craftish-care` (M3) and `server-report` (M2).
 
 ## Commands
 
