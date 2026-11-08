@@ -5,8 +5,13 @@ One Node process under the LaunchAgent `dev.craftish.kamaji`: the app, the check
 - **Code:** `~/kamaji` on the mini, a clone of `tylercraft/kamaji`.
 - **Records:** `~/kamaji/data/kamaji.db` (SQLite, WAL), mode 700 folder, gitignored. Not backed up yet: it joins the cold backup (`calcifer/explore/cold-backup.md`).
 - **Log:** `~/Library/Logs/kamaji.log`: startup, one line per request (method, path, status; no headers), job failures. Never a secret.
-- **Secrets:** Doppler project `kamaji`. The app runs under the `checker` config's service token, scoped to `~/kamaji`. In M1 that's only `HEALTHCHECKS_PING_URL`. The `updater` config (M4) is never in this process.
+- **Secrets:** Doppler project `kamaji`, config `checker`, whose service token is scoped to `~/kamaji`. The `updater` config (M4) is never in this process. Names only here, never values:
+  - `HEALTHCHECKS_PING_URL`: the healthchecks.io check's ping URL.
+  - `DISCORD_WEBHOOK_URL`: the `#kamaji` channel's webhook. The Worker keeps its own copy in Cloudflare's secrets.
+- **Settings** (in the plist, not secret): `KAMAJI_LOGIN`; optionally `KAMAJI_URL` (the link in messages, default `https://molcajete.tailb3044a.ts.net:10002`) and `KAMAJI_DIGEST_AT` (default `07:30`, Christchurch time).
 - **Heartbeat:** after every cycle Kamaji pings `HEALTHCHECKS_PING_URL` (a cycle that fails pings `/fail`). When the pings stop, healthchecks.io emails and posts to Discord. The header and Overview show "Heartbeat off" while the URL isn't set.
+- **Checks:** every 5 minutes, one GET to each site's home page (status, response time, expected text, PHP error text) and a TLS handshake for its certificate. Two failures in a row open a "down" issue; the next pass resolves it. A certificate with 14 days left opens an issue, urgent at 7. If every site fails at once, Kamaji blames the mini's connection instead.
+- **Alerts:** urgent issues go to `#kamaji` at once, grouped into one message per cycle, with a "Resolved" line when they clear and a reminder every 24 hours while open. Everything else waits for the morning digest, sent only when there's something in it. Labels and a link only. The header shows "Alerts off" while the webhook isn't set.
 
 ## First install (Tyler, on the mini)
 

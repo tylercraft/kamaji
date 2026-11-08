@@ -40,6 +40,28 @@ export function cycleHealth(
   };
 }
 
+export function alertsHealth(status: StatusResponse): HealthLine {
+  const alerts = status.alerts;
+  if (!alerts.configured)
+    return {
+      tone: 'amber',
+      label: 'Alerts off',
+      detail: 'No Discord webhook, so problems only show here.',
+    };
+  if (alerts.lastOk === false)
+    return {
+      tone: 'red',
+      label: 'Alerts failing',
+      detail: "The last message didn't reach Discord; Kamaji retries next cycle.",
+    };
+  return {
+    tone: 'green',
+    label: 'Alerts on',
+    detail:
+      alerts.lastOk === null ? 'Nothing has needed sending yet.' : 'Discord is taking messages.',
+  };
+}
+
 export function heartbeatHealth(status: StatusResponse): HealthLine {
   const beat = status.heartbeat;
   if (!beat.configured)

@@ -7,10 +7,12 @@ import { loadConfig } from './config.js';
 import { checkSites } from './checks/sites.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
+import { createDiscord } from './discord.js';
 import { recordEvent } from './events.js';
 import { createHeartbeat } from './heartbeat.js';
 import { Runner } from './jobs/runner.js';
 import { enqueue } from './jobs/store.js';
+import { notifyNow, sendDigest, type NotifyOptions } from './notify.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 
@@ -39,9 +41,24 @@ for (const m of migrate(db)) {
 if (!config.login) log('KAMAJI_LOGIN is not set: every request will be refused');
 if (config.pingUrlInvalid) log('HEALTHCHECKS_PING_URL is set but is not an https URL: not pinging');
 else if (!config.pingUrl) log('HEALTHCHECKS_PING_URL is not set: not pinging healthchecks.io');
+if (config.discordUrlInvalid)
+  log('DISCORD_WEBHOOK_URL is set but is not a Discord webhook: no alerts');
+else if (!config.discordUrl) log('DISCORD_WEBHOOK_URL is not set: no alerts');
 
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
-const runChecks = (signal: AbortSignal) => checkSites(db, { now: Date.now, signal });
+const discord = createDiscord(db, config.discordUrl, { log });
+const runChecks = async (signal: AbortSignal) => {
+  const checked = await checkSites(db, { now: Date.now, signal });
+  const notify: NotifyOptions = {
+    kamajiUrl: config.kamajiUrl,
+    workerAlerts: false,
+    digestAt: config.digestAt,
+    signal,
+  };
+  await notifyNow(db, Date.now(), discord, notify);
+  await sendDigest(db, Date.now(), discord, notify);
+  return checked;
+};
 const runner = new Runner(db, { handlers: { [CYCLE]: cycleHandler(heartbeat, runChecks) }, log });
 
 recordEvent(db, startedAt, {
@@ -69,6 +86,7 @@ const app = createApp({
     now: Date.now(),
     cycleSeconds: config.cycleSeconds,
     heartbeatConfigured: heartbeat.configured,
+    alertsConfigured: discord.configured,
   }),
 });
 

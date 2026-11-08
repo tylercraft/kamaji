@@ -129,6 +129,15 @@ export const StatusResponse = z.object({
       })
       .nullable(),
   }),
+  /** Kamaji's Discord webhook (#kamaji): whether it's set and how the last message went. */
+  alerts: z.discriminatedUnion('configured', [
+    z.object({ configured: z.literal(false) }),
+    z.object({
+      configured: z.literal(true),
+      lastOk: z.boolean().nullable(),
+      lastSuccessAt: Timestamp.nullable(),
+    }),
+  ]),
   heartbeat: z.discriminatedUnion('configured', [
     z.object({ configured: z.literal(false) }),
     z.object({

@@ -11,7 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { cycleHealth, heartbeatHealth } from '../kamajiHealth';
+import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { useLink, useRoute } from '../router';
 import { useResource } from '../useResource';
 import { ThemeToggle } from './ThemeToggle';
@@ -140,7 +140,7 @@ function StatusSummary() {
         <Dot /> Lost contact with Kamaji
       </Pill>
     );
-  const lines = [cycleHealth(status.data), heartbeatHealth(status.data)];
+  const lines = [cycleHealth(status.data), heartbeatHealth(status.data), alertsHealth(status.data)];
   return (
     <span css={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="status">
       {lines.map((line) => (

@@ -35,6 +35,7 @@ function setup(options: { login?: string; db?: Db } = {}) {
       now: 60_000,
       cycleSeconds: 300,
       heartbeatConfigured: false,
+      alertsConfigured: false,
     }),
   });
   const get = (path: string, login: string | null = LOGIN) =>

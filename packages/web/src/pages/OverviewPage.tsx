@@ -14,7 +14,7 @@ import {
   Table,
   Time,
 } from '../components/ui';
-import { cycleHealth, heartbeatHealth } from '../kamajiHealth';
+import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { useResource } from '../useResource';
 
 const Metrics = styled.dl`
@@ -128,7 +128,7 @@ function KamajiItself() {
       <PanelTitle id="kamaji-itself">Kamaji itself</PanelTitle>
       <ResourceView resource={status} label="Kamaji’s status">
         {(s) => {
-          const lines = [cycleHealth(s), heartbeatHealth(s)];
+          const lines = [cycleHealth(s), heartbeatHealth(s), alertsHealth(s)];
           return (
             <>
               {lines.map((line) => (

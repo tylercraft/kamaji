@@ -9,6 +9,7 @@ const base: StatusResponse = {
   startedAt: '2026-11-09T00:00:00.000Z',
   now: '2026-11-09T00:01:00.000Z',
   cycle: { intervalSeconds: 300, last: null },
+  alerts: { configured: false },
   heartbeat: { configured: false },
 };
 const at = (iso: string) => Date.parse(iso);

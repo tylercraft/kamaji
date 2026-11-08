@@ -15,6 +15,7 @@ import type { CertificateResult, HomePageResult } from './checks/http.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
+import { readDiscord } from './discord.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
 import { CYCLE } from './cycle.js';
@@ -190,11 +191,13 @@ export interface StatusInput {
   now: number;
   cycleSeconds: number;
   heartbeatConfigured: boolean;
+  alertsConfigured: boolean;
 }
 
 export function status(db: Db, input: StatusInput): StatusResponse {
   const cycle = latestStartedJob(db, CYCLE);
   const beat = readHeartbeat(db);
+  const discord = readDiscord(db);
   return {
     version: input.version,
     commit: input.commit,
@@ -211,6 +214,13 @@ export function status(db: Db, input: StatusInput): StatusResponse {
             }
           : null,
     },
+    alerts: input.alertsConfigured
+      ? {
+          configured: true,
+          lastOk: discord ? discord.lastOk : null,
+          lastSuccessAt: discord ? isoOrNull(discord.lastSuccessAt) : null,
+        }
+      : { configured: false },
     heartbeat: input.heartbeatConfigured
       ? {
           configured: true,
