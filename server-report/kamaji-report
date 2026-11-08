@@ -1,0 +1,93 @@
+#!/bin/bash
+# kamaji-report: prints one JSON health report for Kamaji, then exits. Installed on a Linux
+# server at /usr/local/bin/kamaji-report and run only as the forced command of Kamaji's SSH key
+# (README.md), as an unprivileged user with no sudo. It reads; it never changes anything, and
+# it takes no input: anything the SSH client asks to run is ignored.
+#
+# Format version 1. Kamaji parses it with packages/server/src/checks/serverReport.ts; change
+# both together, and bump "format" if a field changes meaning.
+set -u
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# A JSON string from arbitrary text: backslashes, quotes and control characters escaped.
+js() {
+  local s=${1//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/}
+  printf '"%s"' "$s"
+}
+
+# A JSON array of strings, one per line of stdin.
+lines() {
+  local first=1 line
+  printf '['
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    [ $first -eq 1 ] || printf ','
+    first=0
+    js "$line"
+  done
+  printf ']'
+}
+
+num() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] && printf '%s' "$1" || printf 'null'; }
+
+os_field() { (. /etc/os-release 2>/dev/null && eval "printf '%s' \"\${$1:-}\""); }
+
+# Pending packages from apt's cached lists (unattended-upgrades and apt's daily timer refresh
+# them; this never runs apt update). Security means from a -security pocket, ESM included.
+upgradable=$(apt list --upgradable 2>/dev/null | sed -n 's|^\([^/]*\)/\([^ ]*\) .*|\1 \2|p')
+security=$(printf '%s\n' "$upgradable" | awk '$2 ~ /-security/ {print $1}')
+other=$(printf '%s\n' "$upgradable" | awk 'NF && $2 !~ /-security/ {print $1}')
+esm=$(printf '%s\n' "$upgradable" | awk '$2 ~ /esm|-apps-|-infra-/ {print $1}')
+
+if [ -f /var/run/reboot-required ]; then reboot=true; else reboot=false; fi
+reboot_pkgs=$(cat /var/run/reboot-required.pkgs 2>/dev/null | sort -u)
+
+failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null | awk '{print $1}')
+
+services=""
+for unit in nginx mariadb php8.3-fpm tailscaled fail2ban unattended-upgrades; do
+  state=$(systemctl is-active "$unit" 2>/dev/null)
+  services+="${services:+,}$(js "$unit"):$(js "${state:-unknown}")"
+done
+
+disks=""
+while read -r _fs size used avail _pct mount; do
+  [[ $size =~ ^[0-9]+$ ]] || continue
+  disks+="${disks:+,}{\"mount\":$(js "$mount"),\"sizeBytes\":$size,\"usedBytes\":$used,\"availableBytes\":$avail}"
+done < <(df -P -B1 -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2)
+
+mem_total=$(awk '/^MemTotal:/ {print $2 * 1024}' /proc/meminfo)
+mem_avail=$(awk '/^MemAvailable:/ {print $2 * 1024}' /proc/meminfo)
+swap_total=$(awk '/^SwapTotal:/ {print $2 * 1024}' /proc/meminfo)
+swap_free=$(awk '/^SwapFree:/ {print $2 * 1024}' /proc/meminfo)
+read -r load1 load5 load15 _ < /proc/loadavg
+uptime_s=$(awk '{print int($1)}' /proc/uptime)
+
+php=$(ls -1 /etc/php 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | sort -V)
+
+printf '{'
+printf '"format":1,'
+printf '"host":%s,' "$(js "$(hostname)")"
+printf '"generatedAt":%s,' "$(js "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+printf '"os":{"id":%s,"version":%s,"codename":%s,"name":%s},' \
+  "$(js "$(os_field ID)")" "$(js "$(os_field VERSION_ID)")" \
+  "$(js "$(os_field VERSION_CODENAME)")" "$(js "$(os_field PRETTY_NAME)")"
+printf '"kernel":%s,' "$(js "$(uname -r)")"
+printf '"uptimeSeconds":%s,' "$(num "$uptime_s")"
+printf '"packages":{"security":%s,"other":%s,"esm":%s},' \
+  "$(printf '%s\n' "$security" | lines)" "$(printf '%s\n' "$other" | lines)" \
+  "$(printf '%s\n' "$esm" | lines)"
+printf '"rebootRequired":%s,"rebootPackages":%s,' "$reboot" "$(printf '%s\n' "$reboot_pkgs" | lines)"
+printf '"failedUnits":%s,' "$(printf '%s\n' "$failed" | lines)"
+printf '"services":{%s},' "$services"
+printf '"disks":[%s],' "$disks"
+printf '"memory":{"totalBytes":%s,"availableBytes":%s,"swapTotalBytes":%s,"swapFreeBytes":%s},' \
+  "$(num "$mem_total")" "$(num "$mem_avail")" "$(num "$swap_total")" "$(num "$swap_free")"
+printf '"load":{"one":%s,"five":%s,"fifteen":%s,"cpus":%s},' \
+  "$(num "$load1")" "$(num "$load5")" "$(num "$load15")" "$(num "$(nproc)")"
+printf '"php":%s' "$(printf '%s\n' "$php" | lines)"
+printf '}\n'
