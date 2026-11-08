@@ -1,6 +1,8 @@
 # Kamaji's outside watch. Deployed from the laptop (README.md), never from the mini.
 name = "kamaji-watch"
 main = "src/index.js"
+# The Craftish account. Not a secret; account-owned tokens can't look it up themselves.
+account_id = "3c222dfd9f6b06886e25d9240c1f3826"
 compatibility_date = "2026-10-01"
 workers_dev = true
 
