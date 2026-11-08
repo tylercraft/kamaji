@@ -1,0 +1,10 @@
+{
+  "name": "@kamaji/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hono/node-server": "2.1.6",
+    "@kamaji/shared": "*",
+    "hono": "4.13.17"
+  }
+}

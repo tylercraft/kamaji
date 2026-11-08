@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Kamaji on molcajete: one Node process (app, checks, cycle) on 127.0.0.1:10002, put on the
+     tailnet by `tailscale serve --https=10002`. Doppler's scope for ~/kamaji holds the checker
+     config's service token, so the process gets HEALTHCHECKS_PING_URL and nothing from updater.
+     Runbook: ops/README.md. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.craftish.kamaji</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/doppler</string>
+    <string>run</string>
+    <string>--</string>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>packages/server/dist/main.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/tylercraft/kamaji</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <!-- Tyler's Tailscale login, as serve's Tailscale-User-Login header has it. Not a secret. -->
+    <key>KAMAJI_LOGIN</key>
+    <string>tylercraft@github</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji.log</string>
+</dict>
+</plist>
