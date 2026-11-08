@@ -73,7 +73,11 @@ const yes = (value: number): Known<number> => ({ known: true, value });
 
 function siteNote(sites: OverviewResponse['sites']): string {
   if (sites.total === 0) return 'None added yet';
-  const parts = [`${sites.connected} connected`, `${sites.monitoring} monitoring only`];
+  const parts: string[] = [];
+  if (sites.down) parts.push(`${sites.down} down`);
+  if (sites.unchecked) parts.push(`${sites.unchecked} not checked yet`);
+  if (sites.connected) parts.push(`${sites.connected} connected`);
+  if (sites.monitoring) parts.push(`${sites.monitoring} monitoring only`);
   if (sites.paused) parts.push(`${sites.paused} paused`);
   if (sites.unfinished) parts.push(`${sites.unfinished} setup unfinished`);
   return parts.join(' · ');
@@ -83,8 +87,8 @@ function Attention({ attention }: { attention: OverviewResponse['attention'] }) 
   if (!attention.known)
     return (
       <Empty title={attention.reason}>
-        No sites or servers are being checked, so an empty list here doesn’t mean all clear.
-        Problems show here, most urgent first, once checks are running.
+        Until checks have run, an empty list here doesn’t mean all clear. Problems show here, most
+        urgent first, once they have.
       </Empty>
     );
   if (attention.value.length === 0)
