@@ -5,6 +5,7 @@ import type {
   Certificate,
   Issue,
   Known,
+  OutsideCheck,
   OverviewResponse,
   Server,
   Site,
@@ -12,6 +13,7 @@ import type {
   StatusResponse,
 } from '@kamaji/shared';
 import type { CertificateResult, HomePageResult } from './checks/http.js';
+import type { OutsideResult } from './checks/outside.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
@@ -83,6 +85,17 @@ function availability(db: Db, site: Site): Known<Availability> {
   };
 }
 
+function outside(db: Db, site: Site, workerOn: boolean): Known<OutsideCheck> {
+  if (site.tailnetOnly) return { known: false, reason: 'Tailnet only: not visible from outside' };
+  if (!workerOn) return { known: false, reason: 'Outside checks aren’t set up' };
+  const [last] = latestObservations<OutsideResult>(db, 'site', site.id, 'http', 'worker', 1);
+  if (!last) return { known: false, reason: 'Not checked from outside yet' };
+  return {
+    known: true,
+    value: { ok: last.ok, checkedAt: iso(last.at), problem: last.value.problem ?? null },
+  };
+}
+
 function certificate(db: Db, site: Site): Known<Certificate> {
   const [last] = latestObservations<CertificateResult>(
     db,
@@ -106,10 +119,11 @@ function certificate(db: Db, site: Site): Known<Certificate> {
   };
 }
 
-export function siteSummaries(db: Db): SiteSummary[] {
+export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
   return listSites(db).map((site) => ({
     ...site,
     availability: availability(db, site),
+    outside: outside(db, site, workerOn),
     certificate: certificate(db, site),
   }));
 }

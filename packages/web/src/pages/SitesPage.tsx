@@ -46,6 +46,22 @@ function Availability({ site }: { site: SiteSummary }) {
   );
 }
 
+function Outside({ site }: { site: SiteSummary }) {
+  const o = site.outside;
+  if (!o.known) return <Muted>{o.reason}</Muted>;
+  return (
+    <div css={{ display: 'grid', gap: 3, justifyItems: 'start' }}>
+      <Pill tone={o.value.ok ? 'green' : 'red'}>
+        <Dot /> {o.value.ok ? 'Up' : 'Failing'}
+      </Pill>
+      <Muted>
+        {o.value.problem ? `${o.value.problem} · ` : ''}
+        <Time iso={o.value.checkedAt} />
+      </Muted>
+    </div>
+  );
+}
+
 function CertificateCell({ site }: { site: SiteSummary }) {
   const c = site.certificate;
   if (!c.known) return <Muted>{c.reason}</Muted>;
@@ -80,7 +96,8 @@ export function SitesPage() {
                   <thead>
                     <tr>
                       <th scope="col">Site</th>
-                      <th scope="col">Availability (from the mini)</th>
+                      <th scope="col">From the mini</th>
+                      <th scope="col">From outside</th>
                       <th scope="col">Certificate</th>
                       <th scope="col">Host</th>
                       <th scope="col">Connection</th>
@@ -105,6 +122,9 @@ export function SitesPage() {
                         </td>
                         <td>
                           <Availability site={site} />
+                        </td>
+                        <td>
+                          <Outside site={site} />
                         </td>
                         <td>
                           <CertificateCell site={site} />

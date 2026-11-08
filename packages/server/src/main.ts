@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkSites } from './checks/sites.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -44,14 +45,16 @@ else if (!config.pingUrl) log('HEALTHCHECKS_PING_URL is not set: not pinging hea
 if (config.discordUrlInvalid)
   log('DISCORD_WEBHOOK_URL is set but is not a Discord webhook: no alerts');
 else if (!config.discordUrl) log('DISCORD_WEBHOOK_URL is not set: no alerts');
+if (!config.worker) log('KAMAJI_WORKER_URL or KAMAJI_WORKER_TOKEN is not set: no outside checks');
 
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
   const checked = await checkSites(db, { now: Date.now, signal });
+  if (config.worker) await syncOutside(db, config.worker, { now: Date.now, signal, log });
   const notify: NotifyOptions = {
     kamajiUrl: config.kamajiUrl,
-    workerAlerts: false,
+    workerAlerts: Boolean(config.worker) && workerFresh(readOutside(db), Date.now()),
     digestAt: config.digestAt,
     signal,
   };
@@ -78,6 +81,7 @@ const app = createApp({
   db,
   login: config.login,
   webDist: config.webDist,
+  workerOn: Boolean(config.worker),
   log,
   statusInput: () => ({
     version,

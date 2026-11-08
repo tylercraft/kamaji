@@ -21,6 +21,8 @@ export interface Config {
   kamajiUrl: string;
   /** When the morning digest goes, Pacific/Auckland time. */
   digestAt: string;
+  /** The Worker's address and Kamaji's token for it; outside checks are off unless both are set. */
+  worker: { url: string; token: string } | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -40,6 +42,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     discordUrl,
     discordUrlInvalid: Boolean(rawDiscord) && !discordUrl,
     kamajiUrl: env.KAMAJI_URL ?? 'https://molcajete.tailb3044a.ts.net:10002',
+    worker:
+      env.KAMAJI_WORKER_URL?.startsWith('https://') && env.KAMAJI_WORKER_TOKEN
+        ? { url: env.KAMAJI_WORKER_URL, token: env.KAMAJI_WORKER_TOKEN }
+        : undefined,
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',

@@ -20,10 +20,19 @@ export interface AppOptions {
   login: string;
   webDist: string;
   statusInput: () => StatusInput;
+  /** Whether the Worker's outside checks are set up. */
+  workerOn?: boolean;
   log?: (message: string) => void;
 }
 
-export function createApp({ db, login, webDist, statusInput, log }: AppOptions): Hono {
+export function createApp({
+  db,
+  login,
+  webDist,
+  statusInput,
+  workerOn = false,
+  log,
+}: AppOptions): Hono {
   const app = new Hono();
 
   app.use(async (c, next) => {
@@ -47,7 +56,7 @@ export function createApp({ db, login, webDist, statusInput, log }: AppOptions):
 
   app.get('/api/status', (c) => c.json(status(db, statusInput())));
   app.get('/api/overview', (c) => c.json(overview(db)));
-  app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db) }));
+  app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
   app.get('/api/servers', (c) => c.json({ servers: listServers(db) }));
   app.get('/api/activity', (c) => {
     const before = Number(c.req.query('before'));

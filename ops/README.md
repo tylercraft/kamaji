@@ -8,6 +8,7 @@ One Node process under the LaunchAgent `dev.craftish.kamaji`: the app, the check
 - **Secrets:** Doppler project `kamaji`, config `checker`, whose service token is scoped to `~/kamaji`. The `updater` config (M4) is never in this process. Names only here, never values:
   - `HEALTHCHECKS_PING_URL`: the healthchecks.io check's ping URL.
   - `DISCORD_WEBHOOK_URL`: the `#kamaji` channel's webhook. The Worker keeps its own copy in Cloudflare's secrets.
+  - `KAMAJI_WORKER_URL` and `KAMAJI_WORKER_TOKEN`: the Worker's `workers.dev` address and the bearer token it expects (`worker/README.md`). Outside checks are off until both are set.
 - **Settings** (in the plist, not secret): `KAMAJI_LOGIN`; optionally `KAMAJI_URL` (the link in messages, default `https://molcajete.tailb3044a.ts.net:10002`) and `KAMAJI_DIGEST_AT` (default `07:30`, Christchurch time).
 - **Heartbeat:** after every cycle Kamaji pings `HEALTHCHECKS_PING_URL` (a cycle that fails pings `/fail`). When the pings stop, healthchecks.io emails and posts to Discord. The header and Overview show "Heartbeat off" while the URL isn't set.
 - **Checks:** every 5 minutes, one GET to each site's home page (status, response time, expected text, PHP error text) and a TLS handshake for its certificate. Two failures in a row open a "down" issue; the next pass resolves it. A certificate with 14 days left opens an issue, urgent at 7. If every site fails at once, Kamaji blames the mini's connection instead.

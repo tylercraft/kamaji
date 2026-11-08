@@ -68,8 +68,17 @@ export const Certificate = z.object({
 });
 export type Certificate = z.infer<typeof Certificate>;
 
+/** The Worker's check of the same page, from Cloudflare's network. */
+export const OutsideCheck = z.object({
+  ok: z.boolean(),
+  checkedAt: Timestamp,
+  problem: z.string().nullable(),
+});
+export type OutsideCheck = z.infer<typeof OutsideCheck>;
+
 export const SiteSummary = Site.extend({
   availability: known(Availability),
+  outside: known(OutsideCheck),
   certificate: known(Certificate),
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
