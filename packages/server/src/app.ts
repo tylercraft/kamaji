@@ -8,8 +8,8 @@ import { Hono } from 'hono';
 import type { Db } from './db.js';
 import {
   activity,
-  listServers,
   overview,
+  serverSummaries,
   siteSummaries,
   status,
   type StatusInput,
@@ -57,7 +57,7 @@ export function createApp({
   app.get('/api/status', (c) => c.json(status(db, statusInput())));
   app.get('/api/overview', (c) => c.json(overview(db)));
   app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
-  app.get('/api/servers', (c) => c.json({ servers: listServers(db) }));
+  app.get('/api/servers', (c) => c.json({ servers: serverSummaries(db) }));
   app.get('/api/activity', (c) => {
     const before = Number(c.req.query('before'));
     const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200);

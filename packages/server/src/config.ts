@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseWebhookUrl } from './discord.js';
 import { parsePingUrl } from './heartbeat.js';
@@ -23,6 +24,9 @@ export interface Config {
   digestAt: string;
   /** The Worker's address and Kamaji's token for it; outside checks are off unless both are set. */
   worker: { url: string; token: string } | undefined;
+  /** The SSH key whose only power is running kamaji-report, and the host keys Kamaji trusts. */
+  sshKeyPath: string;
+  sshKnownHostsPath: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -46,6 +50,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.KAMAJI_WORKER_URL?.startsWith('https://') && env.KAMAJI_WORKER_TOKEN
         ? { url: env.KAMAJI_WORKER_URL, token: env.KAMAJI_WORKER_TOKEN }
         : undefined,
+    sshKeyPath: env.KAMAJI_SSH_KEY ?? `${homedir()}/.ssh/kamaji-report`,
+    sshKnownHostsPath: env.KAMAJI_SSH_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji_known_hosts`,
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',

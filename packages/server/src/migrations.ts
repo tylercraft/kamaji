@@ -6,6 +6,8 @@ export interface Migration {
   version: number;
   name: string;
   sql: string;
+  /** Seeds data (the estate) rather than shaping the schema; tests leave these out by default. */
+  seed?: boolean;
 }
 
 export const migrations: Migration[] = [
@@ -128,6 +130,7 @@ export const migrations: Migration[] = [
   {
     version: 3,
     name: 'estate',
+    seed: true,
     // The estate as of 2026-11-08 (calcifer explore/kamaji.md), all monitoring only until
     // Craftish Care (M3). Expected text was read from each home page on 2026-11-09.
     sql: `
@@ -146,6 +149,18 @@ export const migrations: Migration[] = [
         ('tylercraft.com', 'tylercraft.com', 'https://tylercraft.com/', 'other', NULL, 'monitoring', 'done', 'Tyler Craft', 0, unixepoch() * 1000),
         ('craftish.dev', 'craftish.dev', 'https://craftish.dev/', 'other', NULL, 'monitoring', 'done', 'Craftish', 0, unixepoch() * 1000),
         ('romaji.craftish.dev', 'Romaji', 'https://romaji.craftish.dev/', 'craftish', NULL, 'monitoring', 'done', 'Romaji', 0, unixepoch() * 1000);
+    `,
+  },
+  {
+    version: 4,
+    name: 'servers',
+    seed: true,
+    // craftish reports over its forced-command SSH key, at its tailnet address; molcajete is read
+    // locally.
+    sql: `
+      INSERT INTO servers (id, name, kind, address, created_at) VALUES
+        ('craftish', 'craftish', 'linux-ssh', 'kamaji-report@100.77.122.31', unixepoch() * 1000),
+        ('molcajete', 'molcajete', 'local-mac', 'localhost', unixepoch() * 1000);
     `,
   },
 ];

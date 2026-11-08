@@ -8,12 +8,15 @@ import type {
   OutsideCheck,
   OverviewResponse,
   Server,
+  ServerHealth,
+  ServerSummary,
   Site,
   SiteSummary,
   StatusResponse,
 } from '@kamaji/shared';
 import type { CertificateResult, HomePageResult } from './checks/http.js';
 import type { OutsideResult } from './checks/outside.js';
+import { UBUNTU_EOL, type ReportReading } from './checks/serverReport.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
@@ -133,6 +136,69 @@ export function listServers(db: Db): Server[] {
     .prepare('SELECT * FROM servers WHERE removed_at IS NULL ORDER BY name COLLATE NOCASE')
     .all()
     .map(toServer);
+}
+
+function health(at: number, r: Extract<ReportReading, { ok: true }>['report']): ServerHealth {
+  const { totalBytes, availableBytes } = r.memory;
+  return {
+    checkedAt: iso(at),
+    os: r.os.name,
+    osSupportEnds: (r.os.id === 'ubuntu' && UBUNTU_EOL[r.os.codename]) || null,
+    uptimeSeconds: r.uptimeSeconds === null ? null : Math.round(r.uptimeSeconds),
+    securityUpdates: r.packages.security,
+    otherUpdates: r.packages.other.length,
+    rebootRequired: r.rebootRequired,
+    stopped: [
+      ...new Set([
+        ...r.failedUnits.map((u) => u.replace(/\.service$/, '')),
+        ...Object.entries(r.services)
+          .filter(([, state]) => state === 'failed' || state === 'inactive')
+          .map(([unit]) => unit),
+      ]),
+    ].sort(),
+    disks: r.disks.map((d) => ({
+      mount: d.mount,
+      usedPercent: d.sizeBytes > 0 ? Math.round((d.usedBytes / d.sizeBytes) * 100) : 0,
+      availableBytes: d.availableBytes,
+    })),
+    memoryUsedPercent:
+      totalBytes && availableBytes !== null
+        ? Math.round(((totalBytes - availableBytes) / totalBytes) * 100)
+        : null,
+    load: { one: r.load.one, cpus: r.load.cpus === null ? null : Math.round(r.load.cpus) },
+    php: r.php,
+  };
+}
+
+function serverSummary(db: Db, server: Server): ServerSummary {
+  if (server.kind === 'local-mac') {
+    const reason = 'Not read yet: molcajete’s local readers are still to come';
+    return { ...server, health: { known: false, reason }, lastAttempt: { known: false, reason } };
+  }
+  const readings = latestObservations<ReportReading>(db, 'server', server.id, 'report', 'ssh', 50);
+  const last = readings[0];
+  const good = readings.find((o) => o.ok);
+  return {
+    ...server,
+    health:
+      good && good.value.ok
+        ? { known: true, value: health(good.at, good.value.report) }
+        : { known: false, reason: last ? 'No report has been read yet' : 'First report pending' },
+    lastAttempt: last
+      ? {
+          known: true,
+          value: {
+            ok: last.ok,
+            at: iso(last.at),
+            problem: last.value.ok ? null : last.value.problem,
+          },
+        }
+      : { known: false, reason: 'First report pending' },
+  };
+}
+
+export function serverSummaries(db: Db): ServerSummary[] {
+  return listServers(db).map((server) => serverSummary(db, server));
 }
 
 export function overview(db: Db): OverviewResponse {

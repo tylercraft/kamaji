@@ -66,6 +66,98 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Tailscale-User-Login: someone@examp
 
 Also add `molcajete:10002` to the tailnet ACL's `tests` block beside the dashboard's `10000` (Tyler's login reaches it, Johan's doesn't).
 
+## craftish's report
+
+Kamaji reads craftish through `kamaji-report` (`server-report/README.md`) over SSH, as the `kamaji-report` user, at craftish's tailnet address. Until these steps are done, Servers says "No SSH key on the mini yet", and after three cycles the morning digest mentions it.
+
+On the mini:
+
+1. Make Kamaji's key (no passphrase: the LaunchAgent can't type one):
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-report@molcajete -f /Users/tylercraft/.ssh/kamaji-report
+```
+
+2. Show the public key, to paste in step 6:
+
+```
+/bin/cat /Users/tylercraft/.ssh/kamaji-report.pub
+```
+
+On the laptop:
+
+3. Copy the script up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/server-report/kamaji-report craftish:/tmp/kamaji-report
+```
+
+On craftish (`ssh craftish`):
+
+4. Install it, owned by root:
+
+```
+sudo install -m 755 -o root -g root /tmp/kamaji-report /usr/local/bin/kamaji-report && rm /tmp/kamaji-report
+```
+
+5. Make its user:
+
+```
+sudo adduser --system --group --home /var/lib/kamaji-report --shell /bin/sh kamaji-report
+```
+
+6. Give it the key, with the line from `server-report/README.md` (paste the whole line between the quotes, with step 2's key at the end):
+
+```
+sudo install -d -m 700 -o kamaji-report -g kamaji-report /var/lib/kamaji-report/.ssh && echo 'PASTE-THE-LINE-HERE' | sudo tee /var/lib/kamaji-report/.ssh/authorized_keys && sudo chown kamaji-report: /var/lib/kamaji-report/.ssh/authorized_keys && sudo chmod 600 /var/lib/kamaji-report/.ssh/authorized_keys
+```
+
+7. Check sshd will let that user in (if this prints an `allowusers` or `allowgroups` line, add `kamaji-report` to it and reload sshd):
+
+```
+sudo sshd -T | grep -i -E '^(allowusers|allowgroups|denyusers)'
+```
+
+8. Run the report as that user (expect JSON beginning `{"format":1`):
+
+```
+sudo -u kamaji-report /usr/local/bin/kamaji-report | head -c 300
+```
+
+9. Note craftish's host key fingerprint, for step 11:
+
+```
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+On the mini:
+
+10. Record craftish's host key for Kamaji:
+
+```
+/usr/bin/ssh-keyscan -t ed25519 100.77.122.31 > /Users/tylercraft/.ssh/kamaji_known_hosts
+```
+
+11. Check it matches step 9's fingerprint (if it doesn't, delete the file and stop):
+
+```
+/usr/bin/ssh-keygen -lf /Users/tylercraft/.ssh/kamaji_known_hosts
+```
+
+12. Read the report as Kamaji will (expect JSON):
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-report -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-report@100.77.122.31 | head -c 300
+```
+
+13. Check the key can't do anything else: asking for a shell command still prints the report, not `uid=…`:
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-report -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-report@100.77.122.31 id | head -c 100
+```
+
+Kamaji picks it up on its next cycle; no restart needed.
+
 ## Deploying a change
 
 On the mini, after the change is on `main`:

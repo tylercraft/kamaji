@@ -95,6 +95,35 @@ export const Server = z.object({
 });
 export type Server = z.infer<typeof Server>;
 
+/** What craftish's report (or, later, molcajete's readers) last said. */
+export const ServerHealth = z.object({
+  checkedAt: Timestamp,
+  os: z.string(),
+  /** End of the OS's standard support, as a date; null when Kamaji doesn't know it. */
+  osSupportEnds: z.string().nullable(),
+  uptimeSeconds: z.number().int().nullable(),
+  securityUpdates: z.array(z.string()),
+  otherUpdates: z.number().int(),
+  rebootRequired: z.boolean(),
+  /** Failed or stopped services. */
+  stopped: z.array(z.string()),
+  disks: z.array(
+    z.object({ mount: z.string(), usedPercent: z.number().int(), availableBytes: z.number() }),
+  ),
+  memoryUsedPercent: z.number().int().nullable(),
+  load: z.object({ one: z.number().nullable(), cpus: z.number().int().nullable() }),
+  php: z.array(z.string()),
+});
+export type ServerHealth = z.infer<typeof ServerHealth>;
+
+export const ServerSummary = Server.extend({
+  /** From the last report that could be read. */
+  health: known(ServerHealth),
+  /** The last attempt, which may have failed after a good one. */
+  lastAttempt: known(z.object({ ok: z.boolean(), at: Timestamp, problem: z.string().nullable() })),
+});
+export type ServerSummary = z.infer<typeof ServerSummary>;
+
 export const Severity = z.enum(['urgent', 'normal']);
 export type Severity = z.infer<typeof Severity>;
 
@@ -181,7 +210,7 @@ export type OverviewResponse = z.infer<typeof OverviewResponse>;
 export const SitesResponse = z.object({ sites: z.array(SiteSummary) });
 export type SitesResponse = z.infer<typeof SitesResponse>;
 
-export const ServersResponse = z.object({ servers: z.array(Server) });
+export const ServersResponse = z.object({ servers: z.array(ServerSummary) });
 export type ServersResponse = z.infer<typeof ServersResponse>;
 
 export const ActivityResponse = z.object({

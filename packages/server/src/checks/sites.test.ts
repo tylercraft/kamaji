@@ -140,7 +140,7 @@ describe('checkSites', () => {
 
 describe('the estate', () => {
   it('seeds fourteen monitoring-only sites, first check pending', () => {
-    const sites = siteSummaries(testDb({ estate: true }));
+    const sites = siteSummaries(testDb({ seed: true }));
     expect(sites).toHaveLength(14);
     expect(sites.every((s) => s.mode === 'monitoring' && s.expectedText)).toBe(true);
     expect(sites.filter((s) => s.tailnetOnly).map((s) => s.id)).toEqual([

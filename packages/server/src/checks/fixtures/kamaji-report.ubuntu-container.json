@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "host": "aee7f172becd",
+  "generatedAt": "2026-11-08T22:35:18Z",
+  "os": { "id": "ubuntu", "version": "24.04", "codename": "noble", "name": "Ubuntu 24.04.5 LTS" },
+  "kernel": "7.0.14-linuxkit",
+  "uptimeSeconds": 276389,
+  "packages": { "security": ["apt", "libapt-pkg6.0t64", "libpcre2-8-0"], "other": [], "esm": [] },
+  "rebootRequired": false,
+  "rebootPackages": [],
+  "failedUnits": [],
+  "services": {
+    "nginx": "unknown",
+    "mariadb": "unknown",
+    "php8.3-fpm": "unknown",
+    "tailscaled": "unknown",
+    "fail2ban": "unknown",
+    "unattended-upgrades": "unknown"
+  },
+  "disks": [
+    {
+      "mount": "/etc/hosts",
+      "sizeBytes": 977843695616,
+      "usedBytes": 29327130624,
+      "availableBytes": 898769342464
+    },
+    {
+      "mount": "/usr/local/bin/kamaji-report",
+      "sizeBytes": 994610155520,
+      "usedBytes": 609566375936,
+      "availableBytes": 385043779584
+    }
+  ],
+  "memory": {
+    "totalBytes": 8319438848,
+    "availableBytes": 6193442816,
+    "swapTotalBytes": 1073737728,
+    "swapFreeBytes": 904183808
+  },
+  "load": { "one": 0.14, "five": 0.05, "fifteen": 0.01, "cpus": 10 },
+  "php": []
+}

@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
+import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -52,6 +53,12 @@ const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
   const checked = await checkSites(db, { now: Date.now, signal });
   if (config.worker) await syncOutside(db, config.worker, { now: Date.now, signal, log });
+  const servers = await checkServers(db, {
+    now: Date.now,
+    signal,
+    keyPath: config.sshKeyPath,
+    knownHostsPath: config.sshKnownHostsPath,
+  });
   const notify: NotifyOptions = {
     kamajiUrl: config.kamajiUrl,
     workerAlerts: Boolean(config.worker) && workerFresh(readOutside(db), Date.now()),
@@ -60,7 +67,7 @@ const runChecks = async (signal: AbortSignal) => {
   };
   await notifyNow(db, Date.now(), discord, notify);
   await sendDigest(db, Date.now(), discord, notify);
-  return checked;
+  return checked + servers;
 };
 const runner = new Runner(db, { handlers: { [CYCLE]: cycleHandler(heartbeat, runChecks) }, log });
 
