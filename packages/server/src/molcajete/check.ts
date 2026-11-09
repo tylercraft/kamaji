@@ -53,6 +53,8 @@ export interface MacState {
   updatesTriedAt: number | null;
   /** softwareupdate tries that failed in a row. */
   updatesFailures: number;
+  /** Why the last try failed. */
+  updatesProblem?: string | null;
 }
 
 const empty = (): MacState => ({
@@ -101,8 +103,9 @@ export function judgeMolcajete(
 
   // Jobs
   const jobs: MacJob[] = [];
-  unreadable('LaunchAgents', reading.jobs ? null : 'launchctl didn’t answer');
-  for (const j of reading.jobs ?? []) {
+  const listed = 'problem' in reading.jobs ? null : reading.jobs;
+  unreadable('LaunchAgents', 'problem' in reading.jobs ? reading.jobs.problem : null);
+  for (const j of listed ?? []) {
     const name = shortName(j.label);
     const p = j.printed;
     const prev = state.jobs[j.label];
@@ -154,11 +157,11 @@ export function judgeMolcajete(
       attention,
     });
   }
-  if (reading.jobs) {
+  if (listed) {
     // A job whose plist was removed: its issues go with it.
     const names = new Set(jobs.map((j) => j.name));
     for (const label of Object.keys(state.jobs)) {
-      if (!reading.jobs.some((j) => j.label === label)) delete state.jobs[label];
+      if (!listed.some((j) => j.label === label)) delete state.jobs[label];
     }
     const open = db
       .prepare(
@@ -187,11 +190,8 @@ export function judgeMolcajete(
       set(unmounted, 'urgent', `${d.name} isn’t mounted on molcajete`, 2);
     } else if (d.mounted === true) {
       ok(unmounted, `${d.name} is mounted again`);
-    } else {
-      diskProblem = 'mount didn’t answer';
-      hold(unmounted);
-    }
-    if (d.mounted && !d.info) diskProblem = `diskutil couldn’t read ${d.name}`;
+    } else hold(unmounted);
+    diskProblem ??= d.problem;
     if (d.info && usedPercent !== null) {
       if (usedPercent >= DISK_WARN) {
         set(
@@ -226,7 +226,7 @@ export function judgeMolcajete(
 
   // Docker
   const docker = reading.docker;
-  if ('problem' in docker && docker.problem === 'Docker’s command isn’t installed') {
+  if ('problem' in docker && !docker.installed) {
     unreadable('Docker', docker.problem);
     hold('docker');
     hold('containers');
@@ -270,12 +270,11 @@ export function judgeMolcajete(
   }
 
   // Uptime. The shutdown cause isn't kept long enough to rely on, so a restart is "cause unknown".
-  unreadable('boot time', reading.bootedAt === null ? 'sysctl didn’t answer' : null);
-  if (reading.bootedAt !== null) {
-    if (state.bootedAt !== null && reading.bootedAt > state.bootedAt + 60_000) {
-      state.restartedAt = reading.bootedAt;
-    }
-    state.bootedAt = reading.bootedAt;
+  const booted = typeof reading.bootedAt === 'number' ? reading.bootedAt : null;
+  unreadable('boot time', typeof reading.bootedAt === 'number' ? null : reading.bootedAt.problem);
+  if (booted !== null) {
+    if (state.bootedAt !== null && booted > state.bootedAt + 60_000) state.restartedAt = booted;
+    state.bootedAt = booted;
   }
   if (state.restartedAt !== null && at - state.restartedAt < DAY) {
     set(
@@ -314,7 +313,7 @@ export function judgeMolcajete(
     set(
       'unreadable:software updates',
       'normal',
-      'Kamaji can’t read molcajete’s software updates: softwareupdate didn’t answer',
+      `Kamaji can’t read molcajete’s software updates: ${state.updatesProblem ?? 'softwareupdate failed'}`,
     );
   } else if (state.updatesFailures === 0) {
     ok('unreadable:software updates', 'Kamaji can read molcajete’s software updates again');
@@ -337,15 +336,18 @@ export function judgeMolcajete(
     kind: 'local-mac',
     checkedAt: iso(at),
     bootedAt:
-      reading.bootedAt === null
-        ? { known: false, reason: 'Boot time couldn’t be read' }
-        : { known: true, value: iso(reading.bootedAt) },
+      typeof reading.bootedAt === 'number'
+        ? { known: true, value: iso(reading.bootedAt) }
+        : { known: false, reason: reading.bootedAt.problem },
     disks,
     updates: u
       ? { known: true, value: { checkedAt: iso(u.checkedAt), items: u.items } }
       : {
           known: false,
-          reason: state.updatesFailures > 0 ? 'softwareupdate didn’t answer' : 'Not checked yet',
+          reason:
+            state.updatesFailures > 0
+              ? (state.updatesProblem ?? 'softwareupdate failed')
+              : 'Not checked yet',
         },
     docker:
       'problem' in docker
@@ -394,12 +396,16 @@ export async function checkMolcajete(db: Db, options: MolcajeteOptions): Promise
     const items = await readUpdates(exec, signal);
     const at = options.now();
     state.updatesTriedAt = at;
-    if (items) {
+    if (!('problem' in items)) {
+      state.updatesProblem = null;
       const firstSeen: Record<string, number> = {};
       for (const i of items) firstSeen[i.label] = state.updates?.firstSeen[i.label] ?? at;
       state.updates = { checkedAt: at, items, firstSeen };
       state.updatesFailures = 0;
-    } else state.updatesFailures++;
+    } else {
+      state.updatesFailures++;
+      state.updatesProblem = items.problem;
+    }
   }
   if (signal.aborted) throw signal.reason;
 
@@ -423,7 +429,7 @@ export async function checkMolcajete(db: Db, options: MolcajeteOptions): Promise
         docker: health.docker.known
           ? health.docker.value.containers.filter((c) => c.healthy).length
           : null,
-        bootedAt: reading.bootedAt,
+        bootedAt: typeof reading.bootedAt === 'number' ? reading.bootedAt : null,
         needs,
       },
     });

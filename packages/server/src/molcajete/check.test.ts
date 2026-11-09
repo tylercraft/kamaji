@@ -28,6 +28,10 @@ interface Mini {
   /** Labels with a plist in ~/Library/LaunchAgents. */
   plists: string[];
   tails: string[];
+  /** Tools that fail, by path. */
+  fail: Record<string, { code: number | null; stderr: string }>;
+  /** The extra environment each call asked for, by tool path. */
+  envs: [string, Record<string, string> | undefined][];
 }
 
 function mini(): Mini {
@@ -44,13 +48,18 @@ function mini(): Mini {
     dockerVersion: fixture('docker-version.json'),
     plists: LABELS,
     tails: [],
+    fail: {},
+    envs: [],
   };
 }
 
 function fake(m: Mini): { exec: Run; fs: Files } {
   const out = (stdout: string, code: number | null = 0) =>
     Promise.resolve({ code, stdout, stderr: '' });
-  const exec: Run = (file, args) => {
+  const exec: Run = (file, args, options) => {
+    m.envs.push([file, options.env]);
+    const failing = m.fail[file];
+    if (failing) return Promise.resolve({ code: failing.code, stdout: '', stderr: failing.stderr });
     if (file === TOOLS.launchctl && args[0] === 'list') return out(fixture('launchctl-list.txt'));
     if (file === TOOLS.launchctl && args[0] === 'print') {
       const label = String(args[1]).split('/').pop() ?? '';
@@ -328,11 +337,54 @@ describe('molcajete', () => {
   it('says Docker isn’t answering, without a guess at the containers', async () => {
     const db = testDb();
     const m = mini();
-    m.dockerVersion = '{"Client":{"Version":"29.9.2"},"Server":null}';
+    m.fail[TOOLS.docker] = {
+      code: 1,
+      stderr: 'Cannot connect to the Docker daemon at unix:///Users/x/.docker/run/docker.sock.\n',
+    };
     await cycle(db, m, T0);
     await cycle(db, m, T0 + 5 * MIN);
     expect(openIssues(db).map((i) => i.summary)).toEqual(['Docker isn’t answering on molcajete']);
-    expect(health(db).docker).toEqual({ known: false, reason: 'Docker isn’t answering' });
+    expect(health(db).docker).toEqual({
+      known: false,
+      reason:
+        'Docker isn’t answering (exit 1: Cannot connect to the Docker daemon at unix:///Users/x/.docker/run/docker.sock.)',
+    });
+  });
+
+  it('asks the Tailscale app to act as its CLI, and no other tool', async () => {
+    const db = testDb();
+    const m = mini();
+    await cycle(db, m, T0);
+    const extra = m.envs.filter(([, env]) => env !== undefined);
+    expect(extra).toEqual([[TOOLS.tailscale, { TAILSCALE_BE_CLI: '1' }]]);
+  });
+
+  it('says why a reader failed: its exit code and stderr’s first line, cut to 200', async () => {
+    const db = testDb();
+    const m = mini();
+    m.fail[TOOLS.tailscale] = {
+      code: 1,
+      stderr:
+        '\nThe Tailscale GUI failed to start: Tailscale.CLIError error 3\nsecond line, not shown\n',
+    };
+    m.fail[TOOLS.sysctl] = { code: null, stderr: '' };
+    m.fail[TOOLS.launchctl] = { code: 5, stderr: `${'x'.repeat(250)}\n` };
+    await cycle(db, m, T0);
+    const h = health(db);
+    expect(h.tailscale).toEqual({
+      known: false,
+      reason:
+        'Tailscale’s status couldn’t be read (exit 1: The Tailscale GUI failed to start: Tailscale.CLIError error 3)',
+    });
+    expect(h.bootedAt).toEqual({
+      known: false,
+      reason: 'sysctl kern.boottime failed (didn’t finish)',
+    });
+    for (const n of [1, 2]) await cycle(db, m, T0 + n * 5 * MIN);
+    const jobs = openIssues(db).find((i) => i.kind === 'unreadable:LaunchAgents');
+    expect(jobs?.summary).toBe(
+      `Kamaji can’t read molcajete’s LaunchAgents: launchctl list failed (exit 5: ${'x'.repeat(200)})`,
+    );
   });
 
   it('raises a reader that keeps failing on the third cycle', async () => {
