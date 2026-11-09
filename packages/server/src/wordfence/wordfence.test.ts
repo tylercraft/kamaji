@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CareReport } from '@kamaji/shared';
@@ -221,6 +221,52 @@ describe('the feed', () => {
       version: '3.3',
       fixedIn: '3.3.1',
     });
+  });
+
+  it('shows an informational record but never raises it', async () => {
+    const db = testDb();
+    site(db);
+    const dir = mkdtempSync(join(tmpdir(), 'kamaji-wordfence-'));
+    const file = join(dir, 'feed.json');
+    const all = {
+      from_version: '*',
+      from_inclusive: true,
+      to_version: '*',
+      to_inclusive: true,
+    };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        note: {
+          id: 'note',
+          title: 'WordPress Core - All Known Versions - An informational note',
+          informational: true,
+          software: [
+            {
+              type: 'core',
+              name: 'WordPress',
+              slug: 'wordpress',
+              affected_versions: { '*': all },
+              patched: false,
+              patched_versions: [],
+              remediation: 'No known patch available.',
+            },
+          ],
+        },
+      }),
+    );
+    await checkWordfence(db, {
+      apiKey: undefined,
+      feedPath: '',
+      localFile: file,
+      now: () => Date.now(),
+      signal,
+    });
+    const inventory = siteInventory(db, { id: SITE.id, mode: 'connected' });
+    expect(inventory.known && inventory.value.core.vulnerabilities).toEqual([
+      expect.objectContaining({ informational: true, fixedIn: null }),
+    ]);
+    expect(openIssues(db)).toEqual([]);
   });
 
   it('shows matches in the inventory, and unknown rather than none before any feed', async () => {

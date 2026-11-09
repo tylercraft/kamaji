@@ -268,7 +268,8 @@ export const migrations: Migration[] = [
     // The Wordfence Intelligence v3 feed (wordfence/feed.ts): one row per record and affected
     // software, all of it, replaced whole on each good download, so a newly installed plugin is
     // matched on the next cycle without waiting for the next download. Matching happens on the
-    // mini against components; what's installed where never leaves it.
+    // mini against components; what's installed where never leaves it. Informational records
+    // (121 of 43,741 on 2026-11-09, like core's "All Known Versions" notes) are shown, never raised.
     sql: `
       CREATE TABLE vulnerabilities (
         id TEXT NOT NULL,
@@ -276,6 +277,7 @@ export const migrations: Migration[] = [
         slug TEXT NOT NULL,
         software_name TEXT,
         title TEXT NOT NULL,
+        informational INTEGER NOT NULL DEFAULT 0 CHECK (informational IN (0, 1)),
         affected TEXT NOT NULL,
         patched INTEGER NOT NULL CHECK (patched IN (0, 1)),
         patched_versions TEXT NOT NULL DEFAULT '[]',

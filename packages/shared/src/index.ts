@@ -200,6 +200,8 @@ export type DirectoryStatus = z.infer<typeof DirectoryStatus>;
 export const VulnerabilityMatch = z.object({
   id: z.string(),
   title: z.string(),
+  /** Wordfence's general notes ("all known versions"): shown, never an issue. */
+  informational: z.boolean(),
   cvssScore: z.number().nullable(),
   cvssRating: z.string().nullable(),
   cve: z.string().nullable(),

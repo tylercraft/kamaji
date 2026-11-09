@@ -55,6 +55,7 @@ const FeedRecord = z.object({
     .nullable()
     .optional(),
   references: z.array(z.unknown()).optional(),
+  informational: z.boolean().optional(),
   published: z.string().nullable().optional(),
 });
 
@@ -64,6 +65,8 @@ export interface VulnerabilityRow {
   slug: string;
   softwareName: string | null;
   title: string;
+  /** A general note rather than a defect an update fixes: shown, never raised as an issue. */
+  informational: boolean;
   affected: VersionRange[];
   patched: boolean;
   patchedVersions: string[];
@@ -124,6 +127,7 @@ export function parseFeed(feed: unknown): {
         slug: s.slug,
         softwareName: s.name ?? null,
         title: r.title,
+        informational: r.informational === true,
         affected: Object.values(s.affected_versions),
         patched: s.patched === true,
         patchedVersions: s.patched_versions ?? [],
@@ -171,8 +175,8 @@ function storeFeed(db: Db, rows: VulnerabilityRow[]): void {
     db.exec('DELETE FROM vulnerabilities');
     const insert = db.prepare(
       `INSERT OR REPLACE INTO vulnerabilities (id, software_type, slug, software_name, title,
-         affected, patched, patched_versions, remediation, cve, cvss_score, cvss_rating,
-         reference, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         informational, affected, patched, patched_versions, remediation, cve, cvss_score, cvss_rating,
+         reference, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const r of rows) {
       insert.run(
@@ -181,6 +185,7 @@ function storeFeed(db: Db, rows: VulnerabilityRow[]): void {
         r.slug,
         r.softwareName,
         r.title,
+        r.informational ? 1 : 0,
         JSON.stringify(r.affected),
         r.patched ? 1 : 0,
         JSON.stringify(r.patchedVersions),
@@ -356,6 +361,7 @@ function toRow(r: Record<string, unknown>): VulnerabilityRow {
     slug: String(r.slug),
     softwareName: r.software_name === null ? null : String(r.software_name),
     title: String(r.title),
+    informational: Number(r.informational) === 1,
     affected: JSON.parse(String(r.affected)) as VersionRange[],
     patched: Number(r.patched) === 1,
     patchedVersions: JSON.parse(String(r.patched_versions)) as string[],
@@ -410,6 +416,7 @@ const WHAT = { core: 'WordPress itself', plugin: 'a plugin', theme: 'a theme' } 
 export function judgeVulnerabilities(db: Db, now: number): void {
   const groups = new Map<string, Match[]>();
   for (const m of matches(db)) {
+    if (m.vulnerability.informational) continue;
     const key = `${m.siteId}\u0000${VULNERABLE_KIND}${m.type}:${m.item}`;
     groups.set(key, [...(groups.get(key) ?? []), m]);
   }

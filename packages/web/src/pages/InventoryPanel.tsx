@@ -69,8 +69,9 @@ function SecurityCell({
     <div css={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
       {vulnerabilities.map((v) => (
         <div key={v.id} css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
-          <Pill tone={v.fixedIn ? 'red' : 'amber'}>
-            <Dot /> {v.fixedIn ? `Fixed in ${v.fixedIn}` : 'No fix yet'}
+          <Pill tone={v.informational ? 'neutral' : v.fixedIn ? 'red' : 'amber'}>
+            <Dot />{' '}
+            {v.informational ? 'Informational' : v.fixedIn ? `Fixed in ${v.fixedIn}` : 'No fix yet'}
             {v.cvssRating ? ` · ${v.cvssRating}` : ''}
           </Pill>
           <span css={{ whiteSpace: 'normal', maxWidth: 360 }}>
@@ -82,7 +83,7 @@ function SecurityCell({
               v.title
             )}
           </span>
-          {!v.fixedIn && v.remediation && (
+          {!v.fixedIn && !v.informational && v.remediation && (
             <Muted css={{ whiteSpace: 'normal', maxWidth: 360 }}>{v.remediation}</Muted>
           )}
         </div>

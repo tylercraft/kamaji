@@ -338,6 +338,7 @@ function toMatch(m: Match): VulnerabilityMatch {
   return {
     id: v.id,
     title: v.title,
+    informational: v.informational,
     cvssScore: v.cvssScore,
     cvssRating: v.cvssRating,
     cve: v.cve,
