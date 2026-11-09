@@ -1,6 +1,6 @@
 # Kamaji
 
-Read `README.md` first: layout, commands, rules of the code. The product decisions are in `~/calcifer/explore/kamaji.md` (it wins over everything else), with `kamaji/plan.md` and `kamaji/protocol.md` beside it. Read the milestone you're on in `plan.md` before starting, and its Linear issue (project "Kamaji").
+Read `README.md` first: layout, commands, rules of the code. The product decisions are in `~/calcifer/explore/kamaji.md` (it wins over everything else), with `kamaji/plan.md` beside it. The plugin's contract is `docs/protocol.md` in this repo, the working copy: change it here when the build has to. Read the milestone you're on in `plan.md` before starting, and its Linear issue (project "Kamaji").
 
 ## Where you are
 

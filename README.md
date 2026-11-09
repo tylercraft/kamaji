@@ -2,7 +2,7 @@
 
 Tyler's operations dashboard: keeps the WordPress sites he looks after, his servers and his own systems current, available and recoverable. Replaces MainWP. Runs on molcajete, reachable only on the tailnet.
 
-The decisions live in calcifer, not here: `explore/kamaji.md` (the source of truth), `explore/kamaji/plan.md` (milestones, repo shape, records) and `explore/kamaji/protocol.md` (the plugin's contract). Linear project "Kamaji", one issue per milestone.
+The decisions live in calcifer, not here: `explore/kamaji.md` (the source of truth) and `explore/kamaji/plan.md` (milestones, repo shape, records). The plugin's contract is here, in `docs/protocol.md` (the working copy since 2026-11-09). Linear project "Kamaji", one issue per milestone.
 
 ## Layout
 
