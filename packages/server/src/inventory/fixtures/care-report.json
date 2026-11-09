@@ -1,0 +1,76 @@
+{
+  "refreshed": true,
+  "core": {
+    "version": "7.1.4",
+    "locale": "en_US",
+    "offers": []
+  },
+  "plugins": [
+    {
+      "file": "akismet/akismet.php",
+      "slug": "akismet",
+      "name": "Akismet Anti-spam: Spam Protection",
+      "version": "5.3",
+      "active": true,
+      "auto_update": false,
+      "offer": {
+        "version": "5.7.2",
+        "package": true
+      }
+    },
+    {
+      "file": "craftish-care/craftish-care.php",
+      "slug": "craftish-care",
+      "name": "Craftish Care",
+      "version": "0.1.0",
+      "active": true,
+      "auto_update": false,
+      "offer": null
+    },
+    {
+      "file": "hello-dolly/hello.php",
+      "slug": "hello-dolly",
+      "name": "Hello Dolly",
+      "version": "1.7.2",
+      "active": false,
+      "auto_update": false,
+      "offer": null
+    }
+  ],
+  "themes": [
+    {
+      "stylesheet": "twentytwentyfive",
+      "name": "Twenty Twenty-Five",
+      "version": "1.5",
+      "active": true,
+      "parent": null,
+      "auto_update": false,
+      "offer": null
+    },
+    {
+      "stylesheet": "twentytwentyfour",
+      "name": "Twenty Twenty-Four",
+      "version": "1.6",
+      "active": false,
+      "parent": null,
+      "auto_update": false,
+      "offer": null
+    }
+  ],
+  "php": "8.3.36",
+  "database": {
+    "server": "11.8.9-MariaDB-ubu2404-log",
+    "version": "11.8.9"
+  },
+  "checked_at": {
+    "core": 1794214686,
+    "plugins": 1794214687,
+    "themes": 1794214687
+  },
+  "site_health": [
+    {
+      "test": "debug_enabled",
+      "label": "Your site is set to log errors to a potentially public file"
+    }
+  ]
+}

@@ -222,4 +222,44 @@ export const migrations: Migration[] = [
     // M2's done-test passed both ways (Worker, then Kamaji). Its history stays; the site goes.
     sql: `UPDATE sites SET removed_at = unixepoch() * 1000 WHERE id = 'kamaji-test' AND removed_at IS NULL;`,
   },
+  {
+    version: 9,
+    name: 'inventory',
+    // What craftish-care reports (inventory/report.ts): one row per site and component, the
+    // current state. Changes go to events and every report to observations, so history is kept;
+    // a component no longer reported gets gone_at rather than being deleted.
+    //
+    // plugin_directory is wordpress.org's answer per plugin slug (inventory/directory.ts): listed,
+    // closed (a closed plugin never offers an update), or not there at all (paid or custom).
+    sql: `
+      CREATE TABLE components (
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        type TEXT NOT NULL CHECK (type IN ('core', 'plugin', 'theme')),
+        item TEXT NOT NULL,
+        slug TEXT,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        auto_update INTEGER CHECK (auto_update IN (0, 1)),
+        parent TEXT,
+        offer_version TEXT,
+        offer_package INTEGER CHECK (offer_package IN (0, 1)),
+        first_seen_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        gone_at INTEGER,
+        PRIMARY KEY (site_id, type, item)
+      );
+
+      CREATE TABLE plugin_directory (
+        slug TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (status IN ('listed', 'closed', 'not-listed')),
+        latest_version TEXT,
+        last_updated INTEGER,
+        tested TEXT,
+        closed_date TEXT,
+        closed_reason TEXT,
+        checked_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];

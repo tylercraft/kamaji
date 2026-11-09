@@ -8,6 +8,8 @@ import { loadConfig } from './config.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
+import { checkDirectory } from './inventory/directory.js';
+import { checkReports } from './inventory/report.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -60,6 +62,8 @@ const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
   const checked = await checkSites(db, { now: Date.now, signal });
   if (config.worker) await syncOutside(db, config.worker, { now: Date.now, signal, log });
+  await checkReports(db, { keys: config.care, send: careRequest, now: Date.now, signal });
+  await checkDirectory(db, { now: Date.now, signal });
   const servers = await checkServers(db, {
     now: Date.now,
     signal,

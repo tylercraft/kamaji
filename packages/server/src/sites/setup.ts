@@ -15,6 +15,7 @@ import type { CareKeys, SigningKey } from '../care/keys.js';
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
 import { latestObservations, recordObservation } from '../observations.js';
+import { siteInventory } from '../inventory/report.js';
 import { siteSummaries } from '../queries.js';
 
 /** Sends one signed request to a site; careRequest in production, a fake in tests. */
@@ -158,6 +159,7 @@ export function siteDetail(
   return {
     site,
     handshake: latestHandshake(db, id),
+    inventory: siteInventory(db, { id, mode: String(row.mode) }),
     backupExpectation:
       row.backup_expectation === null
         ? null

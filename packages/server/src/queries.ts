@@ -27,6 +27,7 @@ import { latestStartedJob } from './jobs/store.js';
 import { CYCLE } from './cycle.js';
 import { HEALTH_STATE } from './molcajete/check.js';
 import { recentCrashGroups } from './molcajete/crashes.js';
+import { updatesWaiting } from './inventory/report.js';
 import { readState } from './state.js';
 
 type Row = Record<string, unknown>;
@@ -132,6 +133,7 @@ export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
     availability: availability(db, site),
     outside: outside(db, site, workerOn),
     certificate: certificate(db, site),
+    updates: updatesWaiting(db, site),
   }));
 }
 
@@ -218,6 +220,22 @@ export function serverSummaries(db: Db): ServerSummary[] {
   return listServers(db).map((server) => serverSummary(db, server));
 }
 
+/** A total only when every connected site has reported: a partial sum would read as fewer. */
+function totalUpdates(sites: SiteSummary[], connected: number): Known<number> {
+  if (connected === 0) return { known: false, reason: 'No connected sites' };
+  const unknown = sites.filter((s) => !s.updates.known).length;
+  if (unknown > 0) {
+    return {
+      known: false,
+      reason: `${unknown} of ${connected} connected ${connected === 1 ? 'site hasn’t' : 'sites haven’t'} reported yet`,
+    };
+  }
+  return {
+    known: true,
+    value: sites.reduce((n, s) => n + (s.updates.known ? s.updates.value : 0), 0),
+  };
+}
+
 export function overview(db: Db): OverviewResponse {
   const sites = siteSummaries(db);
   const live = sites.filter((s) => s.setup === 'done' && !s.pausedAt);
@@ -251,11 +269,10 @@ export function overview(db: Db): OverviewResponse {
             known: false,
             reason: watched > 0 ? 'First checks haven’t run yet' : 'Nothing is being watched yet',
           },
-    // Inventory arrives with Craftish Care (M3). Until a connected site reports, it's unknown.
-    updatesWaiting: {
-      known: false,
-      reason: connected > 0 ? 'No inventory reported yet' : 'No connected sites',
-    },
+    updatesWaiting: totalUpdates(
+      live.filter((s) => s.mode === 'connected'),
+      connected,
+    ),
   };
 }
 

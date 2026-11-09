@@ -9,6 +9,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
+import { reportSite } from './inventory/report.js';
 import type { Db } from './db.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
@@ -140,6 +141,16 @@ export function createApp({
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
     const result = await handshake(db, c.req.param('id'), care.keys, care.send, now);
     return result ? c.json(result) : c.json({ error: 'not_found' }, 404);
+  });
+  // Refresh now: a report with WordPress's own update checks first (the plugin allows one per 10 minutes).
+  app.post('/api/sites/:id/report', async (c) => {
+    if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    const site = siteDetail(db, c.req.param('id'), { workerOn, canConnect: true })?.site;
+    if (!site || site.mode !== 'connected' || site.setup !== 'done') {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    const ok = await reportSite(db, site, care.keys, care.send, now, { refresh: true });
+    return c.json({ ok });
   });
   app.post('/api/sites/:id/configure', async (c) => {
     const body = await readJson(c, ConfigureSiteRequest);

@@ -4,7 +4,7 @@ import { migrate, openDb } from './db.js';
 describe('migrate', () => {
   it('applies every migration once', () => {
     const db = openDb(':memory:');
-    expect(migrate(db).map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(migrate(db).map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(migrate(db)).toEqual([]);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")

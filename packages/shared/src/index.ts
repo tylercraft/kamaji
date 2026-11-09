@@ -80,6 +80,8 @@ export const SiteSummary = Site.extend({
   availability: known(Availability),
   outside: known(OutsideCheck),
   certificate: known(Certificate),
+  /** Components WordPress offers an update for, from the last good report. */
+  updates: known(z.number().int()),
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
 
@@ -117,6 +119,126 @@ export const CareHello = z.object({
   }),
 });
 export type CareHello = z.infer<typeof CareHello>;
+
+const CareOffer = z.object({ version: z.string(), package: z.boolean() }).nullable();
+
+/** craftish-care's answer to report (docs/protocol.md, "The report"). */
+export const CareReport = z.object({
+  refreshed: z.boolean(),
+  core: z.object({
+    version: z.string(),
+    locale: z.string(),
+    offers: z.array(
+      z.object({
+        version: z.string(),
+        locale: z.string(),
+        response: z.string(),
+        package: z.boolean(),
+      }),
+    ),
+  }),
+  plugins: z.array(
+    z.object({
+      file: z.string(),
+      slug: z.string(),
+      name: z.string(),
+      version: z.string(),
+      active: z.boolean(),
+      auto_update: z.boolean(),
+      offer: CareOffer,
+    }),
+  ),
+  themes: z.array(
+    z.object({
+      stylesheet: z.string(),
+      name: z.string(),
+      version: z.string(),
+      active: z.boolean(),
+      parent: z.string().nullable(),
+      auto_update: z.boolean(),
+      offer: CareOffer,
+    }),
+  ),
+  php: z.string(),
+  database: z.object({ server: z.string(), version: z.string() }),
+  checked_at: z.object({
+    core: z.number().int().nullable(),
+    plugins: z.number().int().nullable(),
+    themes: z.number().int().nullable(),
+  }),
+  site_health: z.array(z.object({ test: z.string(), label: z.string() })),
+});
+export type CareReport = z.infer<typeof CareReport>;
+
+export const Offer = z.object({
+  version: z.string(),
+  /** False for a paid plugin without a licence: WordPress offers a version it can't download. */
+  hasPackage: z.boolean(),
+});
+export type Offer = z.infer<typeof Offer>;
+
+/** wordpress.org's answer for one plugin slug. */
+export const DirectoryStatus = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('listed'),
+    latestVersion: z.string().nullable(),
+    lastUpdated: Timestamp.nullable(),
+    tested: z.string().nullable(),
+    checkedAt: Timestamp,
+  }),
+  z.object({
+    status: z.literal('closed'),
+    closedDate: z.string().nullable(),
+    reason: z.string().nullable(),
+    checkedAt: Timestamp,
+  }),
+  z.object({ status: z.literal('not-listed'), checkedAt: Timestamp }),
+]);
+export type DirectoryStatus = z.infer<typeof DirectoryStatus>;
+
+export const InventoryPlugin = z.object({
+  file: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  version: z.string(),
+  active: z.boolean(),
+  autoUpdate: z.boolean(),
+  offer: Offer.nullable(),
+  /** Null until wordpress.org has been asked. */
+  directory: DirectoryStatus.nullable(),
+});
+export type InventoryPlugin = z.infer<typeof InventoryPlugin>;
+
+export const InventoryTheme = z.object({
+  stylesheet: z.string(),
+  name: z.string(),
+  version: z.string(),
+  active: z.boolean(),
+  parent: z.string().nullable(),
+  autoUpdate: z.boolean(),
+  offer: Offer.nullable(),
+});
+export type InventoryTheme = z.infer<typeof InventoryTheme>;
+
+/** A connected site's inventory, from its last good report. */
+export const Inventory = z.object({
+  reportedAt: Timestamp,
+  /** When WordPress itself last checked for updates, per kind. */
+  wordpressCheckedAt: z.object({
+    core: Timestamp.nullable(),
+    plugins: Timestamp.nullable(),
+    themes: Timestamp.nullable(),
+  }),
+  core: z.object({ version: z.string(), locale: z.string(), offer: Offer.nullable() }),
+  php: z.string(),
+  database: z.string(),
+  plugins: z.array(InventoryPlugin),
+  themes: z.array(InventoryTheme),
+  siteHealth: z.array(z.object({ test: z.string(), label: z.string() })),
+  /** The latest report failed: what's shown is from reportedAt and must say so. */
+  lastFailure: z.object({ at: Timestamp, problem: z.string() }).nullable(),
+});
+export type Inventory = z.infer<typeof Inventory>;
 
 /** The handshake as Kamaji saw it: the plugin's answer, or why there wasn't one. */
 export const Handshake = z.object({
@@ -160,6 +282,7 @@ export type RemoveSiteRequest = z.infer<typeof RemoveSiteRequest>;
 export const SiteDetailResponse = z.object({
   site: SiteSummary,
   handshake: Handshake.nullable(),
+  inventory: known(Inventory),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
   /** Whether this Kamaji has craftish-care keys, so connecting is possible at all. */
