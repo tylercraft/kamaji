@@ -10,6 +10,7 @@ import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
 import { checkDirectory } from './inventory/directory.js';
 import { checkReports } from './inventory/report.js';
+import { checkWordfence } from './wordfence/feed.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -51,6 +52,8 @@ if (config.discordUrlInvalid)
   log('DISCORD_WEBHOOK_URL is set but is not a Discord webhook: no alerts');
 else if (!config.discordUrl) log('DISCORD_WEBHOOK_URL is not set: no alerts');
 if (!config.worker) log('KAMAJI_WORKER_URL or KAMAJI_WORKER_TOKEN is not set: no outside checks');
+if (!config.wordfenceApiKey && !config.wordfenceFeedFile)
+  log('WORDFENCE_API_KEY is not set: vulnerabilities are unknown');
 if (!config.care)
   log('KAMAJI_CARE_REPORT_KEY is not set: sites can be monitored but not connected');
 
@@ -64,6 +67,13 @@ const runChecks = async (signal: AbortSignal) => {
   if (config.worker) await syncOutside(db, config.worker, { now: Date.now, signal, log });
   await checkReports(db, { keys: config.care, send: careRequest, now: Date.now, signal });
   await checkDirectory(db, { now: Date.now, signal });
+  await checkWordfence(db, {
+    apiKey: config.wordfenceApiKey,
+    feedPath: config.wordfenceFeedPath,
+    localFile: config.wordfenceFeedFile,
+    now: Date.now,
+    signal,
+  });
   const servers = await checkServers(db, {
     now: Date.now,
     signal,

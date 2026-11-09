@@ -1,0 +1,3 @@
+# Wordfence fixtures
+
+`feed.json` is built by hand in the shape of Wordfence Intelligence's v3 production feed, as two open-source clients read it (typisttech/wordfence-api and szepeviktor/plugin-vulnerability, 2026-11-09): an object of records keyed by id; each record's `software` entries have `type`, `slug`, `affected_versions` (ranges with `from_version`, `from_inclusive`, `to_version`, `to_inclusive`, `*` open-ended), `patched`, `patched_versions` and `remediation`. Every record is invented and titled `TEST`. The last two cover what's skipped: a software type Kamaji doesn't know, and a record with no title. Replace it with a few records from a real download (ops/README.md) when one is captured.

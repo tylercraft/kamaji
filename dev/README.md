@@ -22,3 +22,7 @@ cd /Users/tyler/kamaji && npm run test:plugin
 ```
 
 Signs real requests against the DDEV site, one test per refusal in `docs/protocol.md`. It reinstalls the plugin with the dev keys first, and changes `wp-config.php` briefly for the `FS_METHOD` and `DISALLOW_FILE_MODS` cases. `npm run check` doesn't need DDEV and skips these.
+
+## Vulnerabilities locally
+
+The Wordfence key lives only in the mini's `checker` config. To test matching on the laptop, point the dev server at a saved feed instead: `KAMAJI_WORDFENCE_FEED_FILE=/path/to/feed.json npm run dev`. `packages/server/src/wordfence/fixtures/feed.json` is an invented one, with Akismet 5.3 (on the DDEV site) affected.

@@ -1,0 +1,116 @@
+{
+  "00000000-0000-4000-8000-000000000001": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "title": "TEST Akismet <= 5.3 - Example Stored Cross-Site Scripting",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Akismet Anti-spam: Spam Protection",
+        "slug": "akismet",
+        "affected_versions": {
+          "* - 5.3": {
+            "from_version": "*",
+            "from_inclusive": true,
+            "to_version": "5.3",
+            "to_inclusive": true
+          }
+        },
+        "patched": true,
+        "patched_versions": ["5.3.1"],
+        "remediation": "Update to version 5.3.1, or a newer patched version"
+      }
+    ],
+    "informational": false,
+    "description": "Invented for Kamaji's tests.",
+    "references": [
+      "https://www.wordfence.com/threat-intel/vulnerabilities/id/00000000-0000-4000-8000-000000000001?source=api-prod"
+    ],
+    "cwe": { "id": 79, "name": "Cross-site Scripting" },
+    "cvss": {
+      "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:N",
+      "score": 6.4,
+      "rating": "Medium"
+    },
+    "cve": "CVE-0000-00001",
+    "published": "2026-10-01 00:00:00",
+    "updated": "2026-10-02 00:00:00"
+  },
+  "00000000-0000-4000-8000-000000000002": {
+    "id": "00000000-0000-4000-8000-000000000002",
+    "title": "TEST Hello Dolly <= 1.7.2 - Example Missing Authorization",
+    "software": [
+      {
+        "type": "plugin",
+        "name": "Hello Dolly",
+        "slug": "hello-dolly",
+        "affected_versions": {
+          "* - 1.7.2": {
+            "from_version": "*",
+            "from_inclusive": true,
+            "to_version": "1.7.2",
+            "to_inclusive": true
+          }
+        },
+        "patched": false,
+        "patched_versions": [],
+        "remediation": "No known patch available. Please review the vulnerability's details in depth and employ mitigations based on your organization's risk tolerance. It may be best to uninstall the affected software and find a replacement."
+      }
+    ],
+    "references": [],
+    "cvss": { "vector": null, "score": 4.3, "rating": "Medium" },
+    "cve": null,
+    "published": "2026-10-03 00:00:00"
+  },
+  "00000000-0000-4000-8000-000000000003": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "title": "TEST WordPress Core 6.0 - 6.4.2 - Example Object Injection",
+    "software": [
+      {
+        "type": "core",
+        "name": "WordPress",
+        "slug": "wordpress",
+        "affected_versions": [
+          {
+            "from_version": "6.0",
+            "from_inclusive": true,
+            "to_version": "6.4.2",
+            "to_inclusive": true
+          }
+        ],
+        "patched": true,
+        "patched_versions": ["6.4.3"],
+        "remediation": "Update to version 6.4.3, or a newer patched version"
+      }
+    ],
+    "cvss": null,
+    "published": "2024-01-30 00:00:00"
+  },
+  "00000000-0000-4000-8000-000000000004": {
+    "id": "00000000-0000-4000-8000-000000000004",
+    "title": "TEST Twenty Twenty-Four < 1.2 - Example",
+    "software": [
+      {
+        "type": "theme",
+        "name": "Twenty Twenty-Four",
+        "slug": "twentytwentyfour",
+        "affected_versions": {
+          "* - 1.2": {
+            "from_version": "*",
+            "from_inclusive": true,
+            "to_version": "1.2",
+            "to_inclusive": false
+          }
+        },
+        "patched": true,
+        "patched_versions": ["1.2"],
+        "remediation": "Update to version 1.2, or a newer patched version"
+      },
+      { "type": "library", "slug": "example-library", "affected_versions": {} }
+    ],
+    "published": "2024-05-01 00:00:00"
+  },
+  "00000000-0000-4000-8000-000000000005": {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "software": []
+  }
+}

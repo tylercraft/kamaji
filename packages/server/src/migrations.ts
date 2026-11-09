@@ -262,4 +262,32 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 10,
+    name: 'vulnerabilities',
+    // The Wordfence Intelligence v3 feed (wordfence/feed.ts): one row per record and affected
+    // software, all of it, replaced whole on each good download, so a newly installed plugin is
+    // matched on the next cycle without waiting for the next download. Matching happens on the
+    // mini against components; what's installed where never leaves it.
+    sql: `
+      CREATE TABLE vulnerabilities (
+        id TEXT NOT NULL,
+        software_type TEXT NOT NULL CHECK (software_type IN ('core', 'plugin', 'theme')),
+        slug TEXT NOT NULL,
+        software_name TEXT,
+        title TEXT NOT NULL,
+        affected TEXT NOT NULL,
+        patched INTEGER NOT NULL CHECK (patched IN (0, 1)),
+        patched_versions TEXT NOT NULL DEFAULT '[]',
+        remediation TEXT,
+        cve TEXT,
+        cvss_score REAL,
+        cvss_rating TEXT,
+        reference TEXT,
+        published TEXT,
+        PRIMARY KEY (id, software_type, slug)
+      );
+      CREATE INDEX vulnerabilities_software ON vulnerabilities (software_type, slug);
+    `,
+  },
 ];

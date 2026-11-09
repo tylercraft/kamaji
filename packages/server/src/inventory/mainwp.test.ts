@@ -24,7 +24,8 @@ const listed = {
 const inventory = (): Inventory => ({
   reportedAt: '2026-11-09T09:05:00.000Z',
   wordpressCheckedAt: { core: null, plugins: null, themes: null },
-  core: { version: '7.1.4', locale: 'en_US', offer: null },
+  core: { version: '7.1.4', locale: 'en_US', offer: null, vulnerabilities: [] },
+  vulnerabilityData: { known: false, reason: 'test' },
   php: '8.3.6',
   database: '10.11.14-MariaDB',
   plugins: [
@@ -37,6 +38,7 @@ const inventory = (): Inventory => ({
       autoUpdate: false,
       offer: null,
       directory: { status: 'not-listed', checkedAt: '2026-11-09T09:00:00.000Z' },
+      vulnerabilities: [],
     },
     {
       file: 'example-cache/cache.php',
@@ -47,6 +49,7 @@ const inventory = (): Inventory => ({
       autoUpdate: false,
       offer: null,
       directory: listed,
+      vulnerabilities: [],
     },
     {
       file: 'example-forms/example-forms.php',
@@ -57,6 +60,7 @@ const inventory = (): Inventory => ({
       autoUpdate: false,
       offer: { version: '2.2.0', hasPackage: true },
       directory: listed,
+      vulnerabilities: [],
     },
   ],
   themes: [
@@ -68,6 +72,7 @@ const inventory = (): Inventory => ({
       parent: null,
       autoUpdate: false,
       offer: null,
+      vulnerabilities: [],
     },
     {
       stylesheet: 'twentytwentyfive',
@@ -77,6 +82,7 @@ const inventory = (): Inventory => ({
       parent: null,
       autoUpdate: false,
       offer: null,
+      vulnerabilities: [],
     },
   ],
   siteHealth: [],

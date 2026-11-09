@@ -196,6 +196,21 @@ export const DirectoryStatus = z.discriminatedUnion('status', [
 ]);
 export type DirectoryStatus = z.infer<typeof DirectoryStatus>;
 
+/** A known vulnerability affecting what's installed (Wordfence Intelligence). */
+export const VulnerabilityMatch = z.object({
+  id: z.string(),
+  title: z.string(),
+  cvssScore: z.number().nullable(),
+  cvssRating: z.string().nullable(),
+  cve: z.string().nullable(),
+  /** The lowest patched version above what's installed; null when there's no fix yet. */
+  fixedIn: z.string().nullable(),
+  remediation: z.string().nullable(),
+  reference: z.string().nullable(),
+  published: z.string().nullable(),
+});
+export type VulnerabilityMatch = z.infer<typeof VulnerabilityMatch>;
+
 export const InventoryPlugin = z.object({
   file: z.string(),
   slug: z.string(),
@@ -206,6 +221,7 @@ export const InventoryPlugin = z.object({
   offer: Offer.nullable(),
   /** Null until wordpress.org has been asked. */
   directory: DirectoryStatus.nullable(),
+  vulnerabilities: z.array(VulnerabilityMatch),
 });
 export type InventoryPlugin = z.infer<typeof InventoryPlugin>;
 
@@ -217,6 +233,7 @@ export const InventoryTheme = z.object({
   parent: z.string().nullable(),
   autoUpdate: z.boolean(),
   offer: Offer.nullable(),
+  vulnerabilities: z.array(VulnerabilityMatch),
 });
 export type InventoryTheme = z.infer<typeof InventoryTheme>;
 
@@ -229,7 +246,19 @@ export const Inventory = z.object({
     plugins: Timestamp.nullable(),
     themes: Timestamp.nullable(),
   }),
-  core: z.object({ version: z.string(), locale: z.string(), offer: Offer.nullable() }),
+  core: z.object({
+    version: z.string(),
+    locale: z.string(),
+    offer: Offer.nullable(),
+    vulnerabilities: z.array(VulnerabilityMatch),
+  }),
+  /**
+   * Whether the vulnerability lists mean anything: unknown until a Wordfence download has
+   * worked, and stale after two days. An empty list is "none known" only when this is known.
+   */
+  vulnerabilityData: known(
+    z.object({ fetchedAt: Timestamp, stale: z.boolean(), problem: z.string().nullable() }),
+  ),
   php: z.string(),
   database: z.string(),
   plugins: z.array(InventoryPlugin),

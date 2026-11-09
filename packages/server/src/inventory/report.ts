@@ -3,13 +3,19 @@
 // The components table holds the current state; every report is an observation and every change
 // an event, so the history is kept. A failed report never empties the inventory: the last good
 // one stays, saying how old it is.
-import { CareReport, type Inventory, type Known } from '@kamaji/shared';
+import { CareReport, type Inventory, type Known, type VulnerabilityMatch } from '@kamaji/shared';
 import type { CareKeys } from '../care/keys.js';
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
 import { clearIssue, raiseIssue } from '../issues.js';
 import { latestObservations, recordObservation } from '../observations.js';
 import type { CareSend } from '../sites/setup.js';
+import {
+  matches,
+  readFeedState,
+  STALE_AFTER_MS as FEED_STALE_AFTER_MS,
+  type Match,
+} from '../wordfence/feed.js';
 import { directoryStatus } from './directory.js';
 
 export const REPORT_EVERY_MS = 60 * 60 * 1000;
@@ -327,6 +333,42 @@ const offer = (r: Row) =>
     ? null
     : { version: String(r.offer_version), hasPackage: Number(r.offer_package) === 1 };
 
+function toMatch(m: Match): VulnerabilityMatch {
+  const v = m.vulnerability;
+  return {
+    id: v.id,
+    title: v.title,
+    cvssScore: v.cvssScore,
+    cvssRating: v.cvssRating,
+    cve: v.cve,
+    fixedIn: m.fixedIn,
+    remediation: v.remediation,
+    reference: v.reference,
+    published: v.published,
+  };
+}
+
+/** Whether "no known vulnerabilities" can be believed. */
+function vulnerabilityData(db: Db): Inventory['vulnerabilityData'] {
+  const feed = readFeedState(db);
+  if (feed.lastSuccessAt === null) {
+    return {
+      known: false,
+      reason: feed.problem
+        ? `No Wordfence data yet: ${feed.problem}`
+        : 'No Wordfence data yet: vulnerabilities are unknown',
+    };
+  }
+  return {
+    known: true,
+    value: {
+      fetchedAt: iso(feed.lastSuccessAt),
+      stale: Date.now() - feed.lastSuccessAt >= FEED_STALE_AFTER_MS,
+      problem: feed.problem,
+    },
+  };
+}
+
 /** A site's inventory from its last good report, or why there isn't one. */
 export function siteInventory(db: Db, site: { id: string; mode: string }): Known<Inventory> {
   if (site.mode !== 'connected')
@@ -349,6 +391,12 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
     )
     .all(site.id);
   const core = rows.find((r) => r.type === 'core');
+  const found = new Map<string, VulnerabilityMatch[]>();
+  for (const m of matches(db, site.id)) {
+    const key = `${m.type}\u0000${m.item}`;
+    found.set(key, [...(found.get(key) ?? []), toMatch(m)]);
+  }
+  const vulns = (type: string, item: string) => found.get(`${type}\u0000${item}`) ?? [];
   return {
     known: true,
     value: {
@@ -362,7 +410,9 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
         version: core ? String(core.version) : 'unknown',
         locale: value.locale,
         offer: core ? offer(core) : null,
+        vulnerabilities: vulns('core', 'core'),
       },
+      vulnerabilityData: vulnerabilityData(db),
       php: value.php,
       database: value.database,
       plugins: rows
@@ -376,6 +426,7 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
           autoUpdate: Number(r.auto_update) === 1,
           offer: offer(r),
           directory: directoryStatus(db, String(r.slug)),
+          vulnerabilities: vulns('plugin', String(r.item)),
         })),
       themes: rows
         .filter((r) => r.type === 'theme')
@@ -387,6 +438,7 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
           parent: r.parent === null ? null : String(r.parent),
           autoUpdate: Number(r.auto_update) === 1,
           offer: offer(r),
+          vulnerabilities: vulns('theme', String(r.item)),
         })),
       siteHealth: value.siteHealth,
       lastFailure:

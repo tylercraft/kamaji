@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCareKeys, type CareKeys } from './care/keys.js';
 import { parseWebhookUrl } from './discord.js';
@@ -35,6 +36,11 @@ export interface Config {
   care: CareKeys | undefined;
   /** The plugin's source, zipped for each site at Add site. */
   pluginDir: string;
+  /** Wordfence Intelligence's v3 feed key, and where the day's download is kept. */
+  wordfenceApiKey: string | undefined;
+  wordfenceFeedPath: string;
+  /** Laptop testing only: a saved feed to load instead of downloading. */
+  wordfenceFeedFile: string | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -64,6 +70,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logsDir: `${homedir()}/Library/Logs`,
     care: loadCareKeys(env),
     pluginDir: `${repoRoot}plugin/craftish-care`,
+    wordfenceApiKey: env.WORDFENCE_API_KEY || undefined,
+    wordfenceFeedPath: join(
+      dirname(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`),
+      'wordfence-production.json',
+    ),
+    wordfenceFeedFile: env.KAMAJI_WORDFENCE_FEED_FILE || undefined,
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',
