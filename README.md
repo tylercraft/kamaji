@@ -26,6 +26,7 @@ Node 22.13 or later.
 - `npm run dev`: server on `127.0.0.1:10002` (rebuilt on change, 60-second cycle) and Vite on `http://localhost:5173`. Vite's proxy adds the login header, standing in for tailscale serve.
 - `npm run check`: Prettier, ESLint, TypeScript and the tests. Passes before every push. Writes nothing to `dist`, so it's safe anywhere, including on the mini.
 - `npm run test:plugin`: craftish-care's request tests against the local DDEV WordPress (`dev/README.md`). Laptop only.
+- `npm run compare:mainwp`: compares the pilot sites' inventory in Kamaji (over the tailnet) with MainWP's REST API exports in `scratch/mainwp` (M3's done test). Laptop only.
 - `npm run build`: what `ops/deploy.sh` runs on the mini. Refused by `scripts/guard.mjs` wherever Kamaji is installed, unless the deploy asks.
 
 ## Rules of the code

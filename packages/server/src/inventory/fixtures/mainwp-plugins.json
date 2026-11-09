@@ -1,0 +1,28 @@
+{
+  "success": 1,
+  "total": 3,
+  "data": [
+    {
+      "slug": "example-forms/example-forms.php",
+      "name": "Example Forms",
+      "version": "2.1.0",
+      "active": true,
+      "update_version": "2.2.0"
+    },
+    {
+      "slug": "example-cache/cache.php",
+      "name": "Example Cache",
+      "version": "1.0.4",
+      "active": false,
+      "update_version": null
+    },
+    {
+      "slug": "mainwp-child/mainwp-child.php",
+      "name": "MainWP Child",
+      "version": "6.4.1",
+      "active": true,
+      "update_version": null
+    }
+  ],
+  "site": { "id": "1", "name": "example.test", "url": "https://example.test/", "client_id": "0" }
+}

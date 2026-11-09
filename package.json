@@ -16,6 +16,7 @@
     "dev": "node scripts/dev.mjs",
     "start": "node --disable-warning=ExperimentalWarning packages/server/dist/main.js",
     "test": "vitest run",
+    "compare:mainwp": "node scripts/guard.mjs compare:mainwp && tsc -b packages/server && node --disable-warning=ExperimentalWarning packages/server/dist/inventory/compareMainwp.js",
     "test:plugin": "NODE_EXTRA_CA_CERTS=\"$(mkcert -CAROOT)/rootCA.pem\" vitest run -c plugin/vitest.config.ts",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p packages/web",
     "lint": "eslint .",

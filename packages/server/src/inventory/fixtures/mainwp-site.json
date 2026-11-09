@@ -1,0 +1,17 @@
+{
+  "data": {
+    "id": "1",
+    "name": "example.test",
+    "url": "https://example.test/",
+    "wp_version": "7.1.4",
+    "php_version": "8.3.6",
+    "mysql_version": "10.11.14-MariaDB",
+    "child_version": "6.4.1",
+    "wp_upgrades": "[]",
+    "plugin_upgrades": "[]",
+    "theme_upgrades": "[]",
+    "premium_upgrades": "",
+    "status": "connected",
+    "last_sync": "2026-11-09T09:09:53"
+  }
+}
