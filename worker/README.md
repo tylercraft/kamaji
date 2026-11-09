@@ -15,4 +15,14 @@ An account-owned token on the Craftish account (dash.cloudflare.com → Manage a
 - Workers KV Storage Write
 - Account Settings Read
 
-Account-owned tokens have no user permissions, so wrangler can't look the account up itself: `account_id` is set in `wrangler.toml` (not a secret). The token lives on the laptop only, entered when deploying. The Worker is served on its `workers.dev` address, so it needs no zone or route permissions.
+Account-owned tokens have no user permissions, so wrangler can't look the account up itself: `account_id` is set in `wrangler.toml` (not a secret). The token lives in Doppler, project `kamaji`, config `deploy`, as `CLOUDFLARE_API_TOKEN` (with `CLOUDFLARE_ACCOUNT_ID`). Only the laptop reads that config: the mini's config, `checker`, never holds Cloudflare credentials, so a compromised mini can't redeploy or change the Worker. The Worker is served on its `workers.dev` address, so it needs no zone or route permissions.
+
+## Deploy
+
+From the laptop, in this folder (linked to `kamaji/deploy` with `doppler setup`):
+
+1. `cd /Users/tyler/kamaji/worker`
+2. `/usr/bin/git pull --rebase`
+3. `doppler run -- npx wrangler deploy`
+
+Doppler passes the token to wrangler for that one command; it's never exported or typed in. The output lists the `workers.dev` address and the cron. Secrets and the KV data carry over between deploys.
