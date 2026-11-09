@@ -1,50 +1,70 @@
-// The brief's tokens (brief.md, "Visual direction"; the prototype's values for the rest), as CSS
-// custom properties so both appearances come from one set of names. Status colours carry meaning
-// and always come with text or an icon; copper and brass are brand, never status.
+// Ironworks, from the v1.5 design handoff (brief "Visual direction"; the prototype's values for
+// the rest), as CSS custom properties so both appearances come from one set of names. Status
+// colours carry meaning and always come with text or an icon; copper and brass are brand, never
+// status. The chrome (header, mark) is near-black iron in both appearances.
 import { css, Global } from '@emotion/react';
+import '@fontsource/ibm-plex-sans/latin-400.css';
+import '@fontsource/ibm-plex-sans/latin-500.css';
+import '@fontsource/ibm-plex-sans/latin-600.css';
+import '@fontsource/ibm-plex-sans/latin-700.css';
+import '@fontsource/ibm-plex-mono/latin-400.css';
+import '@fontsource/ibm-plex-mono/latin-500.css';
+import '@fontsource/ibm-plex-mono/latin-600.css';
 
 const light = `
-  --bg: #eee9df;
-  --panel: #fffcf5;
-  --soft: #f4efe5;
-  --ink: #342e26;
-  --muted: #736959;
-  --line: #ded4c4;
-  --copper: #8b482d;
-  --copper-soft: #f6e7da;
-  --on-copper: #fffcf5;
-  --brass: #94723e;
-  --brass-soft: #ece0c6;
-  --metal: #39352e;
-  --metal-ink: #e9cc96;
-  --green: #286746;
-  --green-soft: #eaf2e6;
-  --amber: #805913;
-  --amber-soft: #fbf0d4;
-  --red: #af3540;
-  --red-soft: #fceeee;
+  --bg: #dfe3e6;
+  --panel: #f1f3f4;
+  --soft: #e5e9ec;
+  --ink: #202932;
+  --muted: #54616f;
+  --line: #bbc5ce;
+  --copper: #86502e;
+  --copper-soft: #e8ddd3;
+  --on-copper: #ffffff;
+  --brass: #8b7357;
+  --green: #366751;
+  --green-soft: #ddeae3;
+  --amber: #7b5c20;
+  --amber-soft: #ede4cf;
+  --red: #a43c3c;
+  --red-soft: #f4e0e0;
+  --chrome: #20262e;
+  --chrome-ink: #e6e9ee;
+  --chrome-muted: #a5afbc;
+  --seam: #48515c;
+  --seam-copper: #9e6745;
+  --lens: #10141b;
+  --rim: #8e99a4;
+  --glint: #707587;
+  --hair: #81878b;
 `;
 
 const dark = `
-  --bg: #191815;
-  --panel: #24221e;
-  --soft: #302c25;
-  --ink: #eee7db;
-  --muted: #b8ad9c;
-  --line: #494135;
-  --copper: #edb18b;
-  --copper-soft: #3b2d24;
-  --on-copper: #332419;
-  --brass: #b99559;
-  --brass-soft: #3b3325;
-  --metal: #11100e;
-  --metal-ink: #edc988;
-  --green: #99d3ad;
-  --green-soft: #263b2c;
-  --amber: #edc46c;
-  --amber-soft: #3d3420;
-  --red: #ffacb0;
-  --red-soft: #422b2c;
+  --bg: #101419;
+  --panel: #1b2128;
+  --soft: #242c35;
+  --ink: #e5e9ef;
+  --muted: #a1adbc;
+  --line: #38424e;
+  --copper: #d5a074;
+  --copper-soft: #352c25;
+  --on-copper: #171a1e;
+  --brass: #a38b70;
+  --green: #97bba9;
+  --green-soft: #25372f;
+  --amber: #dcb77c;
+  --amber-soft: #393023;
+  --red: #ef9b9b;
+  --red-soft: #3c262a;
+  --chrome: #0c1015;
+  --chrome-ink: #dce3ec;
+  --chrome-muted: #98a5b5;
+  --seam: #343e49;
+  --seam-copper: #b78059;
+  --lens: #090c11;
+  --rim: #a8b2bf;
+  --glint: #768093;
+  --hair: #a4aaa8;
 `;
 
 const globalStyles = css`
@@ -53,8 +73,8 @@ const globalStyles = css`
     color-scheme: light;
     --radius: 6px;
     --gap: 14px;
-    --serif: Georgia, 'Times New Roman', serif;
-    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
@@ -75,11 +95,7 @@ const globalStyles = css`
     margin: 0;
     background: var(--bg);
     color: var(--ink);
-    font:
-      13px/1.45 -apple-system,
-      BlinkMacSystemFont,
-      'Segoe UI',
-      sans-serif;
+    font: 13px/1.45 var(--sans);
     font-variant-numeric: tabular-nums;
   }
   h1,
@@ -90,6 +106,12 @@ const globalStyles = css`
   }
   a {
     color: var(--copper);
+  }
+  /* Readouts: timestamps, code and figures are set in mono. */
+  time,
+  code,
+  pre {
+    font-family: var(--mono);
   }
   button {
     font: inherit;
