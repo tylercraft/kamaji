@@ -34,3 +34,5 @@ Email text must never reach Kamaji's database. Where `message` and `traceback` a
 - One alert per new group: "triage crashed 3 times since 06:00", with a link. A group seen before stays quiet until it has gone 7 days without a crash.
 - Beside it, from `launchctl`: each job's last exit code and last run. The log's tail (`~/Library/Logs/calcifer-<job>.log`, stdout and stderr together) only for allowlisted jobs; the others' logs are never opened.
 - The reader treats `message` and `traceback` as optional, and drops them if they ever arrive for a job outside the allowlist.
+- The database keeps each crash's group, time and pid, and the group's `line` and `frames`: never `message` or `traceback`, for any job. The Servers page reads those two from the log itself, on the mini, when Tyler opens an allowlisted job's details (`packages/server/src/molcajete/crashes.ts`).
+- The hook is in calcifer as `ops/molcajete/crash_hook.py`.
