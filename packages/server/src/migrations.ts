@@ -207,4 +207,12 @@ export const migrations: Migration[] = [
         'craftish', 'monitoring', 'done', 'Kamaji test page', 0, unixepoch() * 1000);
     `,
   },
+  {
+    version: 7,
+    name: 'done-test site, tailnet only',
+    seed: true,
+    // TEMPORARY, M2's done-test, second pass: tailnet-only sites aren't sent to the Worker, so
+    // Kamaji announces this page going down itself. Removed with the site.
+    sql: `UPDATE sites SET tailnet_only = 1 WHERE id = 'kamaji-test';`,
+  },
 ];
