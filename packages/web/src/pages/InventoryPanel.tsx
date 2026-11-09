@@ -1,6 +1,12 @@
 // A connected site's inventory: core, plugins and themes (inactive ones too), what WordPress
 // offers for each, and what wordpress.org says about each plugin. Old data always says how old.
-import type { InventoryPlugin, Offer, SiteDetailResponse } from '@kamaji/shared';
+import type {
+  Inventory,
+  InventoryPlugin,
+  Offer,
+  SiteDetailResponse,
+  VulnerabilityMatch,
+} from '@kamaji/shared';
 import { useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
@@ -47,6 +53,43 @@ function DirectoryCell({ plugin }: { plugin: InventoryPlugin }) {
 }
 
 const yesNo = (v: boolean) => (v ? 'On' : 'Off');
+
+/** Known vulnerabilities for one component. Empty reads as "none known" only when the feed is. */
+function SecurityCell({
+  vulnerabilities,
+  data,
+}: {
+  vulnerabilities: VulnerabilityMatch[];
+  data: Inventory['vulnerabilityData'];
+}) {
+  if (!data.known) return <Muted>Unknown</Muted>;
+  if (vulnerabilities.length === 0)
+    return <Muted>{data.value.stale ? 'None known (data stale)' : 'None known'}</Muted>;
+  return (
+    <div css={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+      {vulnerabilities.map((v) => (
+        <div key={v.id} css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
+          <Pill tone={v.fixedIn ? 'red' : 'amber'}>
+            <Dot /> {v.fixedIn ? `Fixed in ${v.fixedIn}` : 'No fix yet'}
+            {v.cvssRating ? ` · ${v.cvssRating}` : ''}
+          </Pill>
+          <span css={{ whiteSpace: 'normal', maxWidth: 360 }}>
+            {v.reference ? (
+              <a href={v.reference} target="_blank" rel="noreferrer">
+                {v.title}
+              </a>
+            ) : (
+              v.title
+            )}
+          </span>
+          {!v.fixedIn && v.remediation && (
+            <Muted css={{ whiteSpace: 'normal', maxWidth: 360 }}>{v.remediation}</Muted>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function InventoryPanel({
   detail,
@@ -113,6 +156,39 @@ export function InventoryPanel({
                 </Pill>
               )}
             </dd>
+            {inventory.value.core.vulnerabilities.length > 0 && (
+              <>
+                <dt>WordPress security</dt>
+                <dd>
+                  <SecurityCell
+                    vulnerabilities={inventory.value.core.vulnerabilities}
+                    data={inventory.value.vulnerabilityData}
+                  />
+                </dd>
+              </>
+            )}
+            <dt>Vulnerabilities</dt>
+            <dd>
+              {inventory.value.vulnerabilityData.known ? (
+                <>
+                  Wordfence Intelligence, downloaded{' '}
+                  <Time iso={inventory.value.vulnerabilityData.value.fetchedAt} />
+                  {inventory.value.vulnerabilityData.value.stale && (
+                    <span css={{ color: 'var(--amber)' }}>
+                      {' '}
+                      · stale
+                      {inventory.value.vulnerabilityData.value.problem
+                        ? `: ${inventory.value.vulnerabilityData.value.problem}`
+                        : ''}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span css={{ color: 'var(--amber)' }}>
+                  {inventory.value.vulnerabilityData.reason}
+                </span>
+              )}
+            </dd>
             <dt>PHP</dt>
             <dd>{inventory.value.php}</dd>
             <dt>Database</dt>
@@ -155,6 +231,7 @@ export function InventoryPanel({
                   <th scope="col">Active</th>
                   <th scope="col">Auto-update</th>
                   <th scope="col">wordpress.org</th>
+                  <th scope="col">Security</th>
                 </tr>
               </thead>
               <tbody>
@@ -173,6 +250,12 @@ export function InventoryPanel({
                     <td>
                       <DirectoryCell plugin={p} />
                     </td>
+                    <td>
+                      <SecurityCell
+                        vulnerabilities={p.vulnerabilities}
+                        data={inventory.value.vulnerabilityData}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -190,6 +273,7 @@ export function InventoryPanel({
                   <th scope="col">Update</th>
                   <th scope="col">Active</th>
                   <th scope="col">Auto-update</th>
+                  <th scope="col">Security</th>
                 </tr>
               </thead>
               <tbody>
@@ -208,6 +292,12 @@ export function InventoryPanel({
                     </td>
                     <td>{t.active ? 'Active' : <Muted>Inactive</Muted>}</td>
                     <td>{yesNo(t.autoUpdate)}</td>
+                    <td>
+                      <SecurityCell
+                        vulnerabilities={t.vulnerabilities}
+                        data={inventory.value.vulnerabilityData}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
