@@ -7,6 +7,7 @@ import { Capabilities, ConfigureStep, ConnectStep, RemovePanel, Steps } from './
 import { postJson } from '../api';
 import { Handshake } from '@kamaji/shared';
 import { useState } from 'react';
+import { InventoryPanel } from './InventoryPanel';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -73,6 +74,7 @@ export function SitePage({ id }: { id: string }) {
                     <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
                   )}
                 </Panel>
+                {site.mode === 'connected' && <InventoryPanel detail={d} reload={reload} />}
                 <ConfigureStep detail={d} reload={reload} />
               </>
             )}

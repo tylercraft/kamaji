@@ -75,6 +75,18 @@ function CertificateCell({ site }: { site: SiteSummary }) {
   );
 }
 
+function UpdatesCell({ site }: { site: SiteSummary }) {
+  if (site.mode !== 'connected') return <Muted>–</Muted>;
+  if (!site.updates.known) return <Muted>{site.updates.reason}</Muted>;
+  return site.updates.value === 0 ? (
+    <Muted>None offered</Muted>
+  ) : (
+    <Pill tone="amber">
+      <Dot /> {site.updates.value} offered
+    </Pill>
+  );
+}
+
 function SiteLink({ site }: { site: SiteSummary }) {
   const link = useLink(`/sites/${site.id}`);
   return (
@@ -130,6 +142,7 @@ export function SitesPage() {
                       <th scope="col">Certificate</th>
                       <th scope="col">Host</th>
                       <th scope="col">Connection</th>
+                      <th scope="col">Updates</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -167,6 +180,9 @@ export function SitesPage() {
                           ) : (
                             <Pill>Monitoring only</Pill>
                           )}
+                        </td>
+                        <td>
+                          <UpdatesCell site={site} />
                         </td>
                       </tr>
                     ))}
