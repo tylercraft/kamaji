@@ -226,7 +226,12 @@ function Tab({ path, label, icon: Icon }: (typeof tabs)[number]) {
   const { path: current } = useRoute();
   const link = useLink(path);
   return (
-    <a {...link} aria-current={current === path ? 'page' : undefined}>
+    <a
+      {...link}
+      aria-current={
+        current === path || (path !== '/' && current.startsWith(`${path}/`)) ? 'page' : undefined
+      }
+    >
       <Icon size={15} aria-hidden="true" />
       {label}
     </a>

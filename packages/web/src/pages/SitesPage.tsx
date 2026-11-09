@@ -11,6 +11,7 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
+import { useLink } from '../router';
 import { useResource } from '../useResource';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
@@ -74,14 +75,42 @@ function CertificateCell({ site }: { site: SiteSummary }) {
   );
 }
 
+function SiteLink({ site }: { site: SiteSummary }) {
+  const link = useLink(`/sites/${site.id}`);
+  return (
+    <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
+      {site.name}
+    </a>
+  );
+}
+
+function AddSiteLink() {
+  const link = useLink('/sites/new');
+  return (
+    <a
+      {...link}
+      css={{
+        padding: '7px 13px',
+        borderRadius: 3,
+        background: 'var(--copper)',
+        color: 'var(--on-copper)',
+        fontSize: 12,
+        fontWeight: 600,
+        textDecoration: 'none',
+      }}
+    >
+      Add site
+    </a>
+  );
+}
+
 export function SitesPage() {
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
   return (
     <>
-      <PageHeading
-        title="Sites"
-        purpose="Your sites, their health and their connection to Kamaji."
-      />
+      <PageHeading title="Sites" purpose="Your sites, their health and their connection to Kamaji.">
+        <AddSiteLink />
+      </PageHeading>
       <Panel>
         <ResourceView resource={sites} label="sites">
           {({ sites }) =>
@@ -107,16 +136,16 @@ export function SitesPage() {
                     {sites.map((site) => (
                       <tr key={site.id}>
                         <td>
-                          <a
-                            href={site.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            css={{ fontWeight: 600, color: 'inherit' }}
-                          >
-                            {site.name}
-                          </a>
+                          <SiteLink site={site} />
                           <Muted>
-                            {new URL(site.url).host}
+                            <a
+                              href={site.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              css={{ color: 'inherit' }}
+                            >
+                              {new URL(site.url).host}
+                            </a>
                             {site.tailnetOnly ? ' · tailnet only' : ''}
                           </Muted>
                         </td>

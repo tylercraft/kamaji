@@ -89,8 +89,12 @@ export const Button = styled.button`
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
-  &:hover {
+  &:hover:not(:disabled) {
     border-color: var(--copper);
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 `;
 
