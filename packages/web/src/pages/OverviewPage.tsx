@@ -27,8 +27,9 @@ const Metrics = styled.dl`
   @media (max-width: 760px) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  border-top-color: var(--seam);
   div {
-    padding: 10px 15px;
+    padding: 10px 13px;
     border-left: 1px solid var(--line);
     min-width: 0;
   }
@@ -36,15 +37,13 @@ const Metrics = styled.dl`
     border-left: 0;
   }
   dt {
-    font-size: 11px;
+    font: 11px/1.45 var(--mono);
     color: var(--muted);
   }
   dd {
     margin: 3px 0 0;
-    font-size: 24px;
-    line-height: 1.3;
-    font-weight: 600;
-    letter-spacing: -0.7px;
+    font: 500 24px/1.3 var(--mono);
+    letter-spacing: -1px;
   }
   dd.unknown {
     font-size: 15px;
@@ -199,7 +198,7 @@ export function OverviewPage() {
         </Panel>
         <div css={{ display: 'grid', gap: 'var(--gap)', alignContent: 'start' }}>
           <KamajiItself />
-          <Panel aria-labelledby="briefing">
+          <Panel aria-labelledby="briefing" css={{ borderLeft: '2px solid var(--seam-copper)' }}>
             <PanelTitle id="briefing">Calcifer’s briefing</PanelTitle>
             <Muted>Calcifer isn’t connected to Kamaji yet, so there’s no briefing.</Muted>
           </Panel>

@@ -8,16 +8,27 @@ export const Panel = styled.section`
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--ink) 4%, transparent);
   padding: 14px 16px;
   min-width: 0;
   display: grid;
   gap: 10px;
   align-content: start;
+  /* A title that opens the panel becomes its label strip. */
+  & > h2:first-child {
+    margin: -14px -16px 0;
+    padding: 10px 16px;
+    border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+    background: var(--soft);
+    border-bottom: 1px solid var(--line);
+  }
 `;
 
+/** A panel's label: small mono capitals, like a plate on the machine. */
 export const PanelTitle = styled.h2`
-  font-size: 13px;
-  font-weight: 650;
+  font: 500 11px/1.4 var(--mono);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 `;
 
 export const Muted = styled.p`
@@ -51,9 +62,7 @@ export const Pill = styled.span<{ tone?: Tone }>`
   gap: 5px;
   border-radius: 4px;
   padding: 2px 6px;
-  font-size: 11px;
-  line-height: 1.4;
-  font-weight: 550;
+  font: 550 11px/1.4 var(--sans);
   white-space: nowrap;
   color: ${(p) => toneColours[p.tone ?? 'neutral'][0]};
   background: ${(p) => toneColours[p.tone ?? 'neutral'][1]};
@@ -75,7 +84,7 @@ export const Button = styled.button`
   gap: 7px;
   padding: 7px 11px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 3px;
   background: var(--panel);
   font-size: 12px;
   font-weight: 550;
@@ -92,11 +101,13 @@ const Heading = styled.header`
   justify-content: space-between;
   flex-wrap: wrap;
   min-height: 49px;
+  & > div:first-of-type {
+    padding-left: 11px;
+    border-left: 2px solid var(--seam-copper);
+  }
   h1 {
-    font-size: 25px;
-    line-height: 1.2;
-    font-weight: 650;
-    letter-spacing: -0.7px;
+    font: 500 23px/1.2 var(--mono);
+    letter-spacing: -0.8px;
     outline: none;
   }
 `;
@@ -249,16 +260,19 @@ export const Table = styled.table`
   font-size: 12px;
   th {
     text-align: left;
-    font-weight: 550;
+    font: 500 11px/1.4 var(--mono);
     color: var(--muted);
-    font-size: 11px;
-    padding: 6px 10px;
+    background: var(--soft);
+    padding: 7px 10px;
     border-bottom: 1px solid var(--line);
   }
   td {
     padding: 8px 10px;
     border-bottom: 1px solid var(--line);
     vertical-align: top;
+  }
+  tbody tr:nth-of-type(even) {
+    background: color-mix(in srgb, var(--soft) 35%, var(--panel));
   }
   tr:last-child td {
     border-bottom: 0;
