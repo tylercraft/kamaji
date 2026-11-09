@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
+import { careRequest } from './care/client.js';
 import { loadConfig } from './config.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
@@ -48,6 +49,8 @@ if (config.discordUrlInvalid)
   log('DISCORD_WEBHOOK_URL is set but is not a Discord webhook: no alerts');
 else if (!config.discordUrl) log('DISCORD_WEBHOOK_URL is not set: no alerts');
 if (!config.worker) log('KAMAJI_WORKER_URL or KAMAJI_WORKER_TOKEN is not set: no outside checks');
+if (!config.care)
+  log('KAMAJI_CARE_REPORT_KEY is not set: sites can be monitored but not connected');
 
 const localMac = () =>
   db.prepare("SELECT 1 FROM servers WHERE kind = 'local-mac' AND removed_at IS NULL").get() !==
@@ -107,6 +110,7 @@ const app = createApp({
   webDist: config.webDist,
   workerOn: Boolean(config.worker),
   jobFiles: { crashFiles: { path: config.crashLogPath }, logsDir: config.logsDir },
+  care: { keys: config.care, pluginDir: config.pluginDir, send: careRequest },
   log,
   statusInput: () => ({
     version,

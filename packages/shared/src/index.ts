@@ -162,6 +162,8 @@ export const SiteDetailResponse = z.object({
   handshake: Handshake.nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
+  /** Whether this Kamaji has craftish-care keys, so connecting is possible at all. */
+  canConnect: z.boolean(),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 

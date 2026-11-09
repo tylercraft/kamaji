@@ -9,6 +9,7 @@ One Node process under the LaunchAgent `dev.craftish.kamaji`: the app, the check
   - `HEALTHCHECKS_PING_URL`: the healthchecks.io check's ping URL.
   - `DISCORD_WEBHOOK_URL`: the `#kamaji` channel's webhook. The Worker keeps its own copy in Cloudflare's secrets.
   - `KAMAJI_WORKER_URL` and `KAMAJI_WORKER_TOKEN`: the Worker's `workers.dev` address and the bearer token it expects (`worker/README.md`). Outside checks are off until both are set.
+  - `KAMAJI_CARE_REPORT_KEY`: the base64 seed of craftish-care's report key (`docs/protocol.md`), with `KAMAJI_CARE_UPDATE_PUBLIC_KEY`, the update key's public half (not secret, but kept beside it), and optionally `KAMAJI_CARE_REPORT_KEY_ID` and `KAMAJI_CARE_UPDATE_KEY_ID` (defaults `r1`, `u1`). Not set yet: until they are, Add site offers monitoring only. The update key's private half is never in `checker`.
 - **Deploy secrets:** Doppler project `kamaji`, config `deploy`, read only on the laptop, where `~/kamaji/worker` is linked to it. The mini never has it, and `checker` never holds Cloudflare credentials. Names only:
   - `CLOUDFLARE_API_TOKEN`: the account-owned token wrangler deploys the Worker with (`worker/README.md`).
   - `CLOUDFLARE_ACCOUNT_ID`: the Craftish account.

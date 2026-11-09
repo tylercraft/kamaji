@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { loadCareKeys, type CareKeys } from './care/keys.js';
 import { parseWebhookUrl } from './discord.js';
 import { parsePingUrl } from './heartbeat.js';
 
@@ -30,6 +31,10 @@ export interface Config {
   /** Calcifer's crash log (docs/crash-hook.md) and the folder its jobs log to. */
   crashLogPath: string;
   logsDir: string;
+  /** craftish-care's keys (docs/protocol.md), or undefined where connecting sites isn't set up. */
+  care: CareKeys | undefined;
+  /** The plugin's source, zipped for each site at Add site. */
+  pluginDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -57,6 +62,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sshKnownHostsPath: env.KAMAJI_SSH_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji_known_hosts`,
     crashLogPath: env.KAMAJI_CRASH_LOG ?? `${homedir()}/Library/Logs/calcifer-crashes.jsonl`,
     logsDir: `${homedir()}/Library/Logs`,
+    care: loadCareKeys(env),
+    pluginDir: `${repoRoot}plugin/craftish-care`,
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',

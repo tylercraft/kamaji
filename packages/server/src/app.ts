@@ -4,7 +4,11 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { ConfigureSiteRequest, NewSiteRequest, RemoveSiteRequest } from '@kamaji/shared';
+import { Hono, type Context } from 'hono';
+import { z } from 'zod';
+import type { CareKeys } from './care/keys.js';
+import { pluginZip } from './care/zip.js';
 import type { Db } from './db.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
@@ -15,6 +19,15 @@ import {
   status,
   type StatusInput,
 } from './queries.js';
+import {
+  chooseMode,
+  configureSite,
+  createSite,
+  handshake,
+  removeSite,
+  siteDetail,
+  type CareSend,
+} from './sites/setup.js';
 
 export interface AppOptions {
   db: Db;
@@ -25,8 +38,35 @@ export interface AppOptions {
   workerOn?: boolean;
   /** Where molcajete's job logs and crash log are, for one job's details. */
   jobFiles?: JobFiles;
+  /** craftish-care: Kamaji's keys (undefined where connecting isn't set up), the plugin's source and the sender. */
+  care?: { keys: CareKeys | undefined; pluginDir: string; send: CareSend };
+  now?: () => number;
   log?: (message: string) => void;
 }
+
+/**
+ * Writes come only from Kamaji's own page. tailscale serve adds Tyler's login to any request his
+ * browser makes, including one a hostile page triggers, so a write must be JSON (a form can't
+ * send that without a preflight) and its Origin must be this host.
+ */
+function sameOrigin(c: Context): boolean {
+  const origin = c.req.header('Origin');
+  const host = c.req.header('Host');
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+async function readJson<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T> | null> {
+  if (!(c.req.header('Content-Type') ?? '').startsWith('application/json')) return null;
+  const parsed = schema.safeParse(await c.req.json().catch(() => undefined));
+  return parsed.success ? parsed.data : null;
+}
+
+const MODE = z.object({ mode: z.enum(['connected', 'monitoring']) });
 
 export function createApp({
   db,
@@ -35,6 +75,8 @@ export function createApp({
   statusInput,
   workerOn = false,
   jobFiles,
+  care,
+  now = Date.now,
   log,
 }: AppOptions): Hono {
   const app = new Hono();
@@ -55,12 +97,72 @@ export function createApp({
     );
     const who = (c.req.header('Tailscale-User-Login') ?? '').trim().toLowerCase();
     if (!login || who !== login) return c.json({ error: 'forbidden' }, 403);
+    if (!['GET', 'HEAD'].includes(c.req.method) && !sameOrigin(c)) {
+      return c.json({ error: 'forbidden' }, 403);
+    }
     await next();
   });
 
   app.get('/api/status', (c) => c.json(status(db, statusInput())));
   app.get('/api/overview', (c) => c.json(overview(db)));
   app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
+  // Add site and Remove (sites/setup.ts).
+  app.post('/api/sites', async (c) => {
+    const body = await readJson(c, NewSiteRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = createSite(db, body, now());
+    return 'error' in result ? c.json(result, 409) : c.json(result, 201);
+  });
+  app.get('/api/sites/:id', (c) => {
+    const detail = siteDetail(db, c.req.param('id'), { workerOn, canConnect: Boolean(care?.keys) });
+    return detail ? c.json(detail) : c.json({ error: 'not_found' }, 404);
+  });
+  app.post('/api/sites/:id/mode', async (c) => {
+    const body = await readJson(c, MODE);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    if (body.mode === 'connected' && !care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    return chooseMode(db, c.req.param('id'), body.mode)
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404);
+  });
+  app.get('/api/sites/:id/craftish-care.zip', (c) => {
+    const detail = siteDetail(db, c.req.param('id'), { workerOn, canConnect: Boolean(care?.keys) });
+    if (!detail || detail.site.mode !== 'connected') return c.json({ error: 'not_found' }, 404);
+    if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    const zip = pluginZip(care.pluginDir, care.keys, detail.site.id, new Date(now()));
+    return c.body(new Uint8Array(zip), 200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': 'attachment; filename="craftish-care.zip"',
+      'Cache-Control': 'no-store',
+    });
+  });
+  app.post('/api/sites/:id/handshake', async (c) => {
+    if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    const result = await handshake(db, c.req.param('id'), care.keys, care.send, now);
+    return result ? c.json(result) : c.json({ error: 'not_found' }, 404);
+  });
+  app.post('/api/sites/:id/configure', async (c) => {
+    const body = await readJson(c, ConfigureSiteRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    return configureSite(db, c.req.param('id'), body, now())
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404);
+  });
+  app.post('/api/sites/:id/remove', async (c) => {
+    const body = await readJson(c, RemoveSiteRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = await removeSite(
+      db,
+      c.req.param('id'),
+      body.confirm,
+      care?.keys,
+      care?.send ?? (async () => ({ ok: false, status: null, code: null, problem: 'Not set up' })),
+      now,
+    );
+    if (result === 'not-found') return c.json({ error: 'not_found' }, 404);
+    if (result === 'not-confirmed') return c.json({ error: 'not_confirmed' }, 400);
+    return c.json(result);
+  });
   app.get('/api/servers', (c) => c.json({ servers: serverSummaries(db) }));
   app.get('/api/servers/molcajete/jobs/:name', (c) => {
     const detail = jobFiles ? jobDetail(db, c.req.param('name'), jobFiles) : null;
