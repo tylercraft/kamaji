@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
+import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
 import { createDiscord } from './discord.js';
@@ -48,6 +49,9 @@ if (config.discordUrlInvalid)
 else if (!config.discordUrl) log('DISCORD_WEBHOOK_URL is not set: no alerts');
 if (!config.worker) log('KAMAJI_WORKER_URL or KAMAJI_WORKER_TOKEN is not set: no outside checks');
 
+const localMac = () =>
+  db.prepare("SELECT 1 FROM servers WHERE kind = 'local-mac' AND removed_at IS NULL").get() !==
+  undefined;
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
@@ -59,6 +63,19 @@ const runChecks = async (signal: AbortSignal) => {
     keyPath: config.sshKeyPath,
     knownHostsPath: config.sshKnownHostsPath,
   });
+  if (localMac()) {
+    try {
+      await checkMolcajete(db, {
+        now: Date.now,
+        signal,
+        crashFiles: { path: config.crashLogPath },
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      // The readers don't throw; if one ever does, the rest of the cycle still runs.
+      log(`molcajete readers failed: ${error instanceof Error ? error.name : 'error'}`);
+    }
+  }
   const notify: NotifyOptions = {
     kamajiUrl: config.kamajiUrl,
     workerAlerts: Boolean(config.worker) && workerFresh(readOutside(db), Date.now()),
@@ -89,6 +106,7 @@ const app = createApp({
   login: config.login,
   webDist: config.webDist,
   workerOn: Boolean(config.worker),
+  jobFiles: { crashFiles: { path: config.crashLogPath }, logsDir: config.logsDir },
   log,
   statusInput: () => ({
     version,

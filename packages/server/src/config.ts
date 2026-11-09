@@ -27,6 +27,9 @@ export interface Config {
   /** The SSH key whose only power is running kamaji-report, and the host keys Kamaji trusts. */
   sshKeyPath: string;
   sshKnownHostsPath: string;
+  /** Calcifer's crash log (docs/crash-hook.md) and the folder its jobs log to. */
+  crashLogPath: string;
+  logsDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -52,6 +55,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : undefined,
     sshKeyPath: env.KAMAJI_SSH_KEY ?? `${homedir()}/.ssh/kamaji-report`,
     sshKnownHostsPath: env.KAMAJI_SSH_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji_known_hosts`,
+    crashLogPath: env.KAMAJI_CRASH_LOG ?? `${homedir()}/Library/Logs/calcifer-crashes.jsonl`,
+    logsDir: `${homedir()}/Library/Logs`,
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',

@@ -95,8 +95,9 @@ export const Server = z.object({
 });
 export type Server = z.infer<typeof Server>;
 
-/** What craftish's report (or, later, molcajete's readers) last said. */
-export const ServerHealth = z.object({
+/** What craftish's report last said. */
+export const LinuxHealth = z.object({
+  kind: z.literal('linux-ssh'),
   checkedAt: Timestamp,
   os: z.string(),
   /** End of the OS's standard support, as a date; null when Kamaji doesn't know it. */
@@ -114,7 +115,119 @@ export const ServerHealth = z.object({
   load: z.object({ one: z.number().nullable(), cpus: z.number().int().nullable() }),
   php: z.array(z.string()),
 });
+export type LinuxHealth = z.infer<typeof LinuxHealth>;
+
+export const MacDisk = z.object({
+  name: z.string(),
+  mount: z.string(),
+  mounted: z.boolean(),
+  /** Null when it isn't mounted or couldn't be read. */
+  usedPercent: z.number().int().nullable(),
+  availableBytes: z.number().nullable(),
+  /** diskutil's SMART status, as it says it ("Verified"); null when it gives none. */
+  smart: z.string().nullable(),
+  writable: z.boolean().nullable(),
+});
+export type MacDisk = z.infer<typeof MacDisk>;
+
+/** One LaunchAgent: Calcifer's jobs and Kamaji itself. */
+export const MacJob = z.object({
+  name: z.string(),
+  label: z.string(),
+  state: z.enum(['running', 'idle', 'not-loaded']),
+  keepAlive: z.boolean(),
+  schedule: z.string().nullable(),
+  /** Null until it has exited once. */
+  lastExitCode: z.number().int().nullable(),
+  runs: z.number().int().nullable(),
+  /** When Kamaji last saw it start a run (to within a cycle); null until it has. */
+  lastRunAt: Timestamp.nullable(),
+  /** Its log tail and crash text may be shown: it never reads mail or untrusted text. */
+  fullText: z.boolean(),
+  /** What needs Tyler, in plain words, or null. */
+  attention: z.string().nullable(),
+});
+export type MacJob = z.infer<typeof MacJob>;
+
+export const CrashGroup = z.object({
+  id: z.string(),
+  job: z.string(),
+  type: z.string(),
+  where: z.string().nullable(),
+  line: z.number().int().nullable(),
+  /** The stack, innermost last: file, function and line only. */
+  frames: z.array(
+    z.object({ file: z.string(), function: z.string(), line: z.number().int().nullable() }),
+  ),
+  lastAt: Timestamp,
+  /** Crashes in the last 7 days. */
+  recent: z.number().int(),
+});
+export type CrashGroup = z.infer<typeof CrashGroup>;
+
+/** What molcajete's local readers last said. Each part can be unknown on its own. */
+export const MacHealth = z.object({
+  kind: z.literal('local-mac'),
+  checkedAt: Timestamp,
+  bootedAt: known(Timestamp),
+  disks: z.array(MacDisk),
+  updates: known(
+    z.object({
+      checkedAt: Timestamp,
+      items: z.array(z.object({ label: z.string(), title: z.string(), restart: z.boolean() })),
+    }),
+  ),
+  docker: known(
+    z.object({
+      engine: z.string(),
+      desktop: z.string().nullable(),
+      containers: z.array(
+        z.object({
+          name: z.string(),
+          image: z.string(),
+          state: z.string(),
+          status: z.string(),
+          healthy: z.boolean(),
+        }),
+      ),
+    }),
+  ),
+  tailscale: known(
+    z.object({
+      state: z.string(),
+      online: z.boolean(),
+      health: z.array(z.string()),
+      version: z.string(),
+    }),
+  ),
+  /** Calcifer's repo-pull: when its log last said anything, and since when it's been failing. */
+  repoPull: known(z.object({ lastAt: Timestamp, failingSince: Timestamp.nullable() })),
+  jobs: z.array(MacJob),
+  crashes: z.array(CrashGroup),
+});
+export type MacHealth = z.infer<typeof MacHealth>;
+
+export const ServerHealth = z.discriminatedUnion('kind', [LinuxHealth, MacHealth]);
 export type ServerHealth = z.infer<typeof ServerHealth>;
+
+/** One job's text for the Servers page, read on the mini when asked and never stored. */
+export const JobDetailResponse = z.object({
+  name: z.string(),
+  log: known(z.string()),
+  crash: known(
+    z
+      .object({
+        at: Timestamp,
+        type: z.string(),
+        where: z.string().nullable(),
+        line: z.number().int().nullable(),
+        message: z.string().nullable(),
+        traceback: z.string().nullable(),
+      })
+      .nullable(),
+  ),
+});
+export type JobDetailResponse = z.infer<typeof JobDetailResponse>;
 
 export const ServerSummary = Server.extend({
   /** From the last report that could be read. */

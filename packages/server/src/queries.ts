@@ -5,10 +5,11 @@ import type {
   Certificate,
   Issue,
   Known,
+  LinuxHealth,
+  MacHealth,
   OutsideCheck,
   OverviewResponse,
   Server,
-  ServerHealth,
   ServerSummary,
   Site,
   SiteSummary,
@@ -24,6 +25,9 @@ import { readDiscord } from './discord.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
 import { CYCLE } from './cycle.js';
+import { HEALTH_STATE } from './molcajete/check.js';
+import { recentCrashGroups } from './molcajete/crashes.js';
+import { readState } from './state.js';
 
 type Row = Record<string, unknown>;
 
@@ -138,9 +142,10 @@ export function listServers(db: Db): Server[] {
     .map(toServer);
 }
 
-function health(at: number, r: Extract<ReportReading, { ok: true }>['report']): ServerHealth {
+function health(at: number, r: Extract<ReportReading, { ok: true }>['report']): LinuxHealth {
   const { totalBytes, availableBytes } = r.memory;
   return {
+    kind: 'linux-ssh',
     checkedAt: iso(at),
     os: r.os.name,
     osSupportEnds: (r.os.id === 'ubuntu' && UBUNTU_EOL[r.os.codename]) || null,
@@ -172,8 +177,20 @@ function health(at: number, r: Extract<ReportReading, { ok: true }>['report']): 
 
 function serverSummary(db: Db, server: Server): ServerSummary {
   if (server.kind === 'local-mac') {
-    const reason = 'Not read yet: molcajete’s local readers are still to come';
-    return { ...server, health: { known: false, reason }, lastAttempt: { known: false, reason } };
+    const health = readState<Omit<MacHealth, 'crashes'>>(db, HEALTH_STATE);
+    if (!health) {
+      const reason = 'First reading pending';
+      return { ...server, health: { known: false, reason }, lastAttempt: { known: false, reason } };
+    }
+    const crashes = recentCrashGroups(db, Date.parse(health.checkedAt)).map((g) => ({
+      ...g,
+      lastAt: iso(g.lastAt),
+    }));
+    return {
+      ...server,
+      health: { known: true, value: { ...health, crashes } },
+      lastAttempt: { known: true, value: { ok: true, at: health.checkedAt, problem: null } },
+    };
   }
   const readings = latestObservations<ReportReading>(db, 'server', server.id, 'report', 'ssh', 50);
   const last = readings[0];

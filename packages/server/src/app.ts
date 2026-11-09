@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import type { Db } from './db.js';
+import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
   activity,
   overview,
@@ -22,6 +23,8 @@ export interface AppOptions {
   statusInput: () => StatusInput;
   /** Whether the Worker's outside checks are set up. */
   workerOn?: boolean;
+  /** Where molcajete's job logs and crash log are, for one job's details. */
+  jobFiles?: JobFiles;
   log?: (message: string) => void;
 }
 
@@ -31,6 +34,7 @@ export function createApp({
   webDist,
   statusInput,
   workerOn = false,
+  jobFiles,
   log,
 }: AppOptions): Hono {
   const app = new Hono();
@@ -58,6 +62,10 @@ export function createApp({
   app.get('/api/overview', (c) => c.json(overview(db)));
   app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
   app.get('/api/servers', (c) => c.json({ servers: serverSummaries(db) }));
+  app.get('/api/servers/molcajete/jobs/:name', (c) => {
+    const detail = jobFiles ? jobDetail(db, c.req.param('name'), jobFiles) : null;
+    return detail ? c.json(detail) : c.json({ error: 'not found' }, 404);
+  });
   app.get('/api/activity', (c) => {
     const before = Number(c.req.query('before'));
     const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200);

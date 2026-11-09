@@ -10,6 +10,7 @@
 // next cycle rather than lost.
 import type { Db } from './db.js';
 import type { Discord } from './discord.js';
+import { CRASH_KIND } from './molcajete/kinds.js';
 import { readState, writeState } from './state.js';
 
 export const REMINDER_MS = 24 * 60 * 60 * 1000;
@@ -60,16 +61,17 @@ export async function notifyNow(
     .prepare(`${ISSUES} WHERE resolved_at IS NULL AND severity = 'urgent' AND notified_at IS NULL`)
     .all()
     .filter((r) => oursToAnnounce(r, workerAlerts));
+  // A crash group is announced once and then stays quiet (molcajete/crashes.ts).
   const recovered = db
     .prepare(
       `${ISSUES} WHERE resolved_at IS NOT NULL AND notified_at IS NOT NULL
-       AND recovery_notified_at IS NULL`,
+       AND recovery_notified_at IS NULL AND kind NOT LIKE '${CRASH_KIND}%'`,
     )
     .all();
   const reminders = db
     .prepare(
       `${ISSUES} WHERE resolved_at IS NULL AND notified_at IS NOT NULL
-       AND COALESCE(reminded_at, notified_at) <= ?`,
+       AND COALESCE(reminded_at, notified_at) <= ? AND kind NOT LIKE '${CRASH_KIND}%'`,
     )
     .all(now - REMINDER_MS);
 

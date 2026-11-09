@@ -1,55 +1,16 @@
-import styled from '@emotion/styled';
-import { ServersResponse, type ServerHealth, type ServerSummary } from '@kamaji/shared';
-import type { ReactNode } from 'react';
+import { ServersResponse, type LinuxHealth, type ServerSummary } from '@kamaji/shared';
 import {
-  Dot,
   Empty,
   Grid,
   Muted,
   PageHeading,
   Panel,
   PanelTitle,
-  Pill,
   ResourceView,
   Time,
-  type Tone,
 } from '../components/ui';
 import { useResource } from '../useResource';
-
-const Facts = styled.dl`
-  margin: 0;
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 7px 16px;
-  font-size: 12px;
-  dt {
-    color: var(--muted);
-  }
-  dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-`;
-
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </>
-  );
-}
-
-function Flag({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return (
-    <Pill tone={tone}>
-      <Dot /> {children}
-    </Pill>
-  );
-}
-
-const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(bytes < 10 * 1024 ** 3 ? 1 : 0)} GB`;
+import { Fact, Facts, Flag, gb, MacFacts, MacJobs } from './MolcajeteFacts';
 
 function uptime(seconds: number): string {
   const days = Math.floor(seconds / 86_400);
@@ -58,7 +19,7 @@ function uptime(seconds: number): string {
   return hours >= 1 ? `${hours} h` : `${Math.floor(seconds / 60)} min`;
 }
 
-function HealthFacts({ health }: { health: ServerHealth }) {
+function LinuxFacts({ health }: { health: LinuxHealth }) {
   const security = health.securityUpdates.length;
   return (
     <Facts>
@@ -159,7 +120,11 @@ function ServerCard({ server }: { server: ServerSummary }) {
               <Time iso={server.health.value.checkedAt} />.
             </Muted>
           )}
-          <HealthFacts health={server.health.value} />
+          {server.health.value.kind === 'linux-ssh' ? (
+            <LinuxFacts health={server.health.value} />
+          ) : (
+            <MacFacts health={server.health.value} />
+          )}
         </>
       ) : (
         <Muted>{server.health.reason}</Muted>
@@ -187,11 +152,18 @@ export function ServersPage() {
               </Empty>
             </Panel>
           ) : (
-            <Grid columns="repeat(2, minmax(0, 1fr))">
-              {servers.map((server) => (
-                <ServerCard key={server.id} server={server} />
-              ))}
-            </Grid>
+            <>
+              <Grid columns="repeat(2, minmax(0, 1fr))">
+                {servers.map((server) => (
+                  <ServerCard key={server.id} server={server} />
+                ))}
+              </Grid>
+              {servers.map((server) =>
+                server.health.known && server.health.value.kind === 'local-mac' ? (
+                  <MacJobs key={server.id} health={server.health.value} />
+                ) : null,
+              )}
+            </>
           )
         }
       </ResourceView>

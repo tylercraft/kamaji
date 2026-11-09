@@ -4,14 +4,23 @@ import { migrate, openDb } from './db.js';
 describe('migrate', () => {
   it('applies every migration once', () => {
     const db = openDb(':memory:');
-    expect(migrate(db).map((m) => m.version)).toEqual([1, 2, 3, 4]);
+    expect(migrate(db).map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
     expect(migrate(db)).toEqual([]);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()
       .map((r) => r.name);
     expect(tables).toEqual(
-      expect.arrayContaining(['events', 'issues', 'jobs', 'servers', 'sites', 'state']),
+      expect.arrayContaining([
+        'crash_groups',
+        'crashes',
+        'events',
+        'issues',
+        'jobs',
+        'servers',
+        'sites',
+        'state',
+      ]),
     );
   });
 

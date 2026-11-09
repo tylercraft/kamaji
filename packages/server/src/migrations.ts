@@ -163,4 +163,30 @@ export const migrations: Migration[] = [
         ('molcajete', 'molcajete', 'local-mac', 'localhost', unixepoch() * 1000);
     `,
   },
+  {
+    version: 5,
+    name: 'crashes',
+    // Calcifer's crash log, as groups (job + type + where) and their crash times. Never a
+    // message or traceback (molcajete/crashes.ts).
+    sql: `
+      CREATE TABLE crash_groups (
+        id TEXT PRIMARY KEY,
+        job TEXT NOT NULL,
+        type TEXT NOT NULL,
+        where_at TEXT,
+        line INTEGER,
+        frames TEXT NOT NULL DEFAULT '[]',
+        first_at INTEGER NOT NULL,
+        last_at INTEGER NOT NULL,
+        count INTEGER NOT NULL
+      );
+      CREATE TABLE crashes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL REFERENCES crash_groups (id),
+        at INTEGER NOT NULL,
+        pid INTEGER
+      );
+      CREATE INDEX crashes_group ON crashes (group_id, at);
+    `,
+  },
 ];
