@@ -12,7 +12,7 @@ crons = ["*/5 * * * *"]
 [vars]
 KAMAJI_URL = "https://molcajete.tailb3044a.ts.net:10002"
 
-# Made once with `npx wrangler kv namespace create KAMAJI`; paste its id here.
+# Made once with `npx wrangler kv namespace create KAMAJI` (2026-11-09).
 [[kv_namespaces]]
 binding = "KAMAJI"
-id = "REPLACE_WITH_THE_NAMESPACE_ID"
+id = "b18867da01e14657b1be83e06e8caa99"
