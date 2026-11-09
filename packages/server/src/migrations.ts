@@ -189,4 +189,17 @@ export const migrations: Migration[] = [
       CREATE INDEX crashes_group ON crashes (group_id, at);
     `,
   },
+  {
+    version: 6,
+    name: 'done-test site',
+    seed: true,
+    // TEMPORARY, for M2's done-test (calcifer explore/kamaji/plan.md): one static page on romaji,
+    // taken down and restored by hand. Any non-2xx (a 404 included) or the text missing is a
+    // failed check. Remove it with a later migration that sets removed_at; don't delete this one.
+    sql: `
+      INSERT INTO sites (id, name, url, host_kind, mode, setup, expected_text, tailnet_only, created_at)
+      VALUES ('kamaji-test', 'TEST: Kamaji done-test page', 'https://romaji.craftish.dev/kamaji-test.html',
+        'craftish', 'monitoring', 'done', 'Kamaji test page', 0, unixepoch() * 1000);
+    `,
+  },
 ];

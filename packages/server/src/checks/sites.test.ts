@@ -140,7 +140,12 @@ describe('checkSites', () => {
 
 describe('the estate', () => {
   it('seeds fourteen monitoring-only sites, first check pending', () => {
-    const sites = siteSummaries(testDb({ seed: true }));
+    const all = siteSummaries(testDb({ seed: true }));
+    // Plus M2's temporary done-test page (migration 6) until it's removed.
+    expect(all.filter((s) => s.id === 'kamaji-test').map((s) => s.url)).toEqual([
+      'https://romaji.craftish.dev/kamaji-test.html',
+    ]);
+    const sites = all.filter((s) => s.id !== 'kamaji-test');
     expect(sites).toHaveLength(14);
     expect(sites.every((s) => s.mode === 'monitoring' && s.expectedText)).toBe(true);
     expect(sites.filter((s) => s.tailnetOnly).map((s) => s.id)).toEqual([
