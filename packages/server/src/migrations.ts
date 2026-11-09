@@ -191,14 +191,19 @@ export const migrations: Migration[] = [
   },
   {
     version: 6,
-    name: 'done-test site',
+    name: 'done-test site, romaji on Pages',
     seed: true,
-    // TEMPORARY, for M2's done-test (calcifer explore/kamaji/plan.md): one static page on romaji,
-    // taken down and restored by hand. Any non-2xx (a 404 included) or the text missing is a
-    // failed check. Remove it with a later migration that sets removed_at; don't delete this one.
+    // romaji.craftish.dev is on Cloudflare Pages, built from GitHub, like craftish.dev and
+    // tylercraft.com, not on craftish (migration 3 had it wrong).
+    //
+    // TEMPORARY, for M2's done-test (calcifer explore/kamaji/plan.md): one static page on
+    // craftish (dev.craftish.dev, behind Cloudflare), taken down and restored by hand. Any non-2xx
+    // (a 404 included) or the text missing is a failed check. Remove it with a later migration
+    // that sets removed_at; don't delete this one.
     sql: `
+      UPDATE sites SET host_kind = 'other' WHERE id = 'romaji.craftish.dev';
       INSERT INTO sites (id, name, url, host_kind, mode, setup, expected_text, tailnet_only, created_at)
-      VALUES ('kamaji-test', 'TEST: Kamaji done-test page', 'https://romaji.craftish.dev/kamaji-test.html',
+      VALUES ('kamaji-test', 'TEST: Kamaji done-test page', 'https://dev.craftish.dev/kamaji-test.html',
         'craftish', 'monitoring', 'done', 'Kamaji test page', 0, unixepoch() * 1000);
     `,
   },

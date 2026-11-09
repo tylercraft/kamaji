@@ -143,9 +143,19 @@ describe('the estate', () => {
     const all = siteSummaries(testDb({ seed: true }));
     // Plus M2's temporary done-test page (migration 6) until it's removed.
     expect(all.filter((s) => s.id === 'kamaji-test').map((s) => s.url)).toEqual([
-      'https://romaji.craftish.dev/kamaji-test.html',
+      'https://dev.craftish.dev/kamaji-test.html',
     ]);
     const sites = all.filter((s) => s.id !== 'kamaji-test');
+    // romaji, craftish.dev and tylercraft.com are all on Cloudflare Pages.
+    expect(
+      sites
+        .filter((s) => s.id.endsWith('craftish.dev') || s.id === 'tylercraft.com')
+        .map((s) => [s.id, s.hostKind]),
+    ).toEqual([
+      ['craftish.dev', 'other'],
+      ['romaji.craftish.dev', 'other'],
+      ['tylercraft.com', 'other'],
+    ]);
     expect(sites).toHaveLength(14);
     expect(sites.every((s) => s.mode === 'monitoring' && s.expectedText)).toBe(true);
     expect(sites.filter((s) => s.tailnetOnly).map((s) => s.id)).toEqual([
