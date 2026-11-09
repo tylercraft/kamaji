@@ -13,9 +13,18 @@ const SPECIAL: Record<string, number> = {
   p: 5,
 };
 
+/**
+ * Two habits in Wordfence's data (2026-11-09 feed, 21 of 50,949 ranges): a "v" before the number
+ * ("v1.3.16"), and BulletProof Security's old versions written ".53.4", meaning 0.53.4. Both
+ * sides are read the same way, so an installed ".53.3" still sorts below ".53.4".
+ */
+export function normalizeVersion(version: string): string {
+  const v = version.trim().replace(/^[vV]\.?(?=\d)/, '');
+  return v.startsWith('.') ? `0${v}` : v;
+}
+
 function canonical(version: string): string[] {
-  return version
-    .trim()
+  return normalizeVersion(version)
     .replace(/[-_+]/g, '.')
     .replace(/(\d)(\D)/g, '$1.$2')
     .replace(/(\D)(\d)/g, '$1.$2')

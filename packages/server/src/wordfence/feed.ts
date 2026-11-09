@@ -4,8 +4,9 @@
 // vulnerability with a fix is urgent; one without is shown with Wordfence's advice. A feed that
 // failed or went stale says so: it never reads as "no vulnerabilities".
 //
-// The record shape follows two open-source clients of the feed (typisttech/wordfence-api and
-// szepeviktor/plugin-vulnerability) until a sample captured on the mini replaces the fixture.
+// The record shape is as downloaded on the mini (2026-11-09: 43,741 records, none skipped):
+// fixtures/feed.json holds four real records from it. Ranges are matched on from_version,
+// from_inclusive, to_version and to_inclusive, never on their labels.
 import { createWriteStream } from 'node:fs';
 import { readFile, rename, rm } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -135,7 +136,33 @@ export function parseFeed(feed: unknown): {
       });
     }
   }
-  return { rows, records, skipped };
+  return { rows: mergeDuplicates(rows), records, skipped };
+}
+
+/**
+ * A record can list one product several times, one entry per release line, each with its own
+ * range and fix (20 in the 2026-11-09 feed). They become one row with every range and fix.
+ */
+function mergeDuplicates(rows: VulnerabilityRow[]): VulnerabilityRow[] {
+  const merged = new Map<string, VulnerabilityRow>();
+  for (const row of rows) {
+    const key = `${row.id}\u0000${row.softwareType}\u0000${row.slug}`;
+    const seen = merged.get(key);
+    if (!seen) {
+      merged.set(key, {
+        ...row,
+        affected: [...row.affected],
+        patchedVersions: [...row.patchedVersions],
+      });
+      continue;
+    }
+    seen.affected.push(...row.affected);
+    seen.patchedVersions.push(
+      ...row.patchedVersions.filter((v) => !seen.patchedVersions.includes(v)),
+    );
+    seen.patched = seen.patched || row.patched;
+  }
+  return [...merged.values()];
 }
 
 function storeFeed(db: Db, rows: VulnerabilityRow[]): void {

@@ -1,53 +1,72 @@
 {
-  "00000000-0000-4000-8000-000000000001": {
-    "id": "00000000-0000-4000-8000-000000000001",
-    "title": "TEST Akismet <= 5.3 - Example Stored Cross-Site Scripting",
+  "000229b1-9ea9-4303-a79b-9ff24d1a8532": {
+    "id": "000229b1-9ea9-4303-a79b-9ff24d1a8532",
+    "title": "WPvivid \u2014 Backup, Migration & Staging < 0.9.138 - Authenticated (Administrator+) Path Traversal",
     "software": [
       {
         "type": "plugin",
-        "name": "Akismet Anti-spam: Spam Protection",
-        "slug": "akismet",
+        "name": "WPvivid \u2014 Backup, Migration & Staging",
+        "slug": "wpvivid-backuprestore",
         "affected_versions": {
-          "* - 5.3": {
+          "[*, 0.9.138)": {
             "from_version": "*",
             "from_inclusive": true,
-            "to_version": "5.3",
-            "to_inclusive": true
+            "to_version": "0.9.138",
+            "to_inclusive": false
           }
         },
         "patched": true,
-        "patched_versions": ["5.3.1"],
-        "remediation": "Update to version 5.3.1, or a newer patched version"
+        "patched_versions": ["0.9.138"],
+        "remediation": "Update to version 0.9.138, or a newer patched version"
       }
     ],
     "informational": false,
-    "description": "Invented for Kamaji's tests.",
+    "description": "The WPvivid \u2014 Backup, Migration & Staging plugin for WordPress is vulnerable to Path Traversal in all versions up to 0.9.138. This is due to insufficient validation of a user supplied path. This makes it possible for authenticated attackers, with administrator-level access and above, to access files and directories outside of the intended directory.",
     "references": [
-      "https://www.wordfence.com/threat-intel/vulnerabilities/id/00000000-0000-4000-8000-000000000001?source=api-prod"
+      "https://www.wordfence.com/threat-intel/vulnerabilities/id/000229b1-9ea9-4303-a79b-9ff24d1a8532?source=api-prod"
     ],
-    "cwe": { "id": 79, "name": "Cross-site Scripting" },
+    "cwe": {
+      "id": 22,
+      "name": "Improper Limitation of a Pathname to a Restricted Directory",
+      "description": "The product uses external input to construct a pathname that is intended to identify a file or directory that is located underneath a restricted parent directory, but the product does not properly neutralize special elements within the pathname that can cause the pathname to resolve to a location that is outside of the restricted directory."
+    },
     "cvss": {
-      "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:N",
-      "score": 6.4,
+      "vector": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:N/A:N",
+      "score": 4.9,
       "rating": "Medium"
     },
-    "cve": "CVE-0000-00001",
-    "published": "2026-10-01 00:00:00",
-    "updated": "2026-10-02 00:00:00"
+    "cve": "CVE-2026-115426",
+    "cve_link": "https://www.cve.org/CVERecord?id=CVE-2026-115426",
+    "researchers": ["Karthik Ramakrishnan"],
+    "published": "2026-11-04 00:00:00",
+    "updated": "2026-11-05 13:34:50",
+    "copyrights": {
+      "message": "This record contains material that is subject to copyright",
+      "defiant": {
+        "notice": "Copyright 2012-2026 Defiant Inc.",
+        "license": "Defiant hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute this software vulnerability information. Any copy of the software vulnerability information you make for such purposes is authorized provided that you include a hyperlink to this vulnerability record and reproduce Defiant's copyright designation and this license in any such copy.",
+        "license_url": "https://www.wordfence.com/wordfence-intelligence-terms-and-conditions/"
+      },
+      "mitre": {
+        "notice": "Copyright 1999-2026 The MITRE Corporation",
+        "license": "CVE Usage: MITRE hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute Common Vulnerabilities and Exposures (CVE\u00ae). Any copy you make for such purposes is authorized provided that you reproduce MITRE's copyright designation and this license in any such copy.",
+        "license_url": "https://www.cve.org/Legal/TermsOfUse"
+      }
+    }
   },
-  "00000000-0000-4000-8000-000000000002": {
-    "id": "00000000-0000-4000-8000-000000000002",
-    "title": "TEST Hello Dolly <= 1.7.2 - Example Missing Authorization",
+  "00086b84-c1ec-447a-a536-1c73eac1cc85": {
+    "id": "00086b84-c1ec-447a-a536-1c73eac1cc85",
+    "title": "MOLIE <= 0.5 - SQL Injection",
     "software": [
       {
         "type": "plugin",
-        "name": "Hello Dolly",
-        "slug": "hello-dolly",
+        "name": "MOLIE \u2013 Instructure Canvas Linking tool",
+        "slug": "molie-instructure-canvas-linking-tool",
         "affected_versions": {
-          "* - 1.7.2": {
+          "*-0.5": {
             "from_version": "*",
             "from_inclusive": true,
-            "to_version": "1.7.2",
+            "to_version": "0.5",
             "to_inclusive": true
           }
         },
@@ -56,61 +75,148 @@
         "remediation": "No known patch available. Please review the vulnerability's details in depth and employ mitigations based on your organization's risk tolerance. It may be best to uninstall the affected software and find a replacement."
       }
     ],
-    "references": [],
-    "cvss": { "vector": null, "score": 4.3, "rating": "Medium" },
-    "cve": null,
-    "published": "2026-10-03 00:00:00"
+    "informational": false,
+    "description": "The MOLIE WordPress plugin through 0.5 does not validate and escape a post parameter before using in a SQL statement, leading to an SQL Injection",
+    "references": [
+      "https://www.wordfence.com/threat-intel/vulnerabilities/id/00086b84-c1ec-447a-a536-1c73eac1cc85?source=api-prod"
+    ],
+    "cwe": {
+      "id": 89,
+      "name": "Improper Neutralization of Special Elements used in an SQL Command",
+      "description": "The product constructs all or part of an SQL command using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended SQL command when it is sent to a downstream component. Without sufficient removal or quoting of SQL syntax in user-controllable inputs, the generated SQL query can cause those inputs to be interpreted as SQL instead of ordinary user data."
+    },
+    "cvss": {
+      "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+      "score": 8.8,
+      "rating": "High"
+    },
+    "cve": "CVE-2021-25007",
+    "cve_link": "https://www.cve.org/CVERecord?id=CVE-2021-25007",
+    "researchers": ["Jeremie Amsellem"],
+    "published": "2021-11-29 00:00:00",
+    "updated": "2024-01-22 19:56:02",
+    "copyrights": {
+      "message": "This record contains material that is subject to copyright",
+      "defiant": {
+        "notice": "Copyright 2012-2026 Defiant Inc.",
+        "license": "Defiant hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute this software vulnerability information. Any copy of the software vulnerability information you make for such purposes is authorized provided that you include a hyperlink to this vulnerability record and reproduce Defiant's copyright designation and this license in any such copy.",
+        "license_url": "https://www.wordfence.com/wordfence-intelligence-terms-and-conditions/"
+      },
+      "mitre": {
+        "notice": "Copyright 1999-2026 The MITRE Corporation",
+        "license": "CVE Usage: MITRE hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute Common Vulnerabilities and Exposures (CVE\u00ae). Any copy you make for such purposes is authorized provided that you reproduce MITRE's copyright designation and this license in any such copy.",
+        "license_url": "https://www.cve.org/Legal/TermsOfUse"
+      }
+    }
   },
-  "00000000-0000-4000-8000-000000000003": {
-    "id": "00000000-0000-4000-8000-000000000003",
-    "title": "TEST WordPress Core 6.0 - 6.4.2 - Example Object Injection",
+  "00376356-4a85-4898-a101-710e1cb5c6bb": {
+    "id": "00376356-4a85-4898-a101-710e1cb5c6bb",
+    "title": "WordPress Core <= 3.3 - Cross-Site Scripting",
     "software": [
       {
         "type": "core",
         "name": "WordPress",
         "slug": "wordpress",
-        "affected_versions": [
-          {
-            "from_version": "6.0",
-            "from_inclusive": true,
-            "to_version": "6.4.2",
-            "to_inclusive": true
-          }
-        ],
-        "patched": true,
-        "patched_versions": ["6.4.3"],
-        "remediation": "Update to version 6.4.3, or a newer patched version"
-      }
-    ],
-    "cvss": null,
-    "published": "2024-01-30 00:00:00"
-  },
-  "00000000-0000-4000-8000-000000000004": {
-    "id": "00000000-0000-4000-8000-000000000004",
-    "title": "TEST Twenty Twenty-Four < 1.2 - Example",
-    "software": [
-      {
-        "type": "theme",
-        "name": "Twenty Twenty-Four",
-        "slug": "twentytwentyfour",
         "affected_versions": {
-          "* - 1.2": {
+          "*-3.3": {
             "from_version": "*",
             "from_inclusive": true,
-            "to_version": "1.2",
-            "to_inclusive": false
+            "to_version": "3.3",
+            "to_inclusive": true
           }
         },
         "patched": true,
-        "patched_versions": ["1.2"],
-        "remediation": "Update to version 1.2, or a newer patched version"
-      },
-      { "type": "library", "slug": "example-library", "affected_versions": {} }
+        "patched_versions": ["3.3.1"],
+        "remediation": "Update to version 3.3.1, or a newer patched version"
+      }
     ],
-    "published": "2024-05-01 00:00:00"
+    "informational": false,
+    "description": "Cross-site scripting (XSS) vulnerability in wp-comments-post.php in WordPress 3.3.x before 3.3.1, when Internet Explorer is used, allows remote attackers to inject arbitrary web script or HTML via the query string in a POST operation that is not properly handled by the \"Duplicate comment detected\" feature.",
+    "references": [
+      "https://www.wordfence.com/threat-intel/vulnerabilities/id/00376356-4a85-4898-a101-710e1cb5c6bb?source=api-prod"
+    ],
+    "cwe": {
+      "id": 79,
+      "name": "Improper Neutralization of Input During Web Page Generation",
+      "description": "The product does not neutralize or incorrectly neutralizes user-controllable input before it is placed in output that is used as a web page that is served to other users."
+    },
+    "cvss": {
+      "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:N",
+      "score": 6.4,
+      "rating": "Medium"
+    },
+    "cve": "CVE-2012-0287",
+    "cve_link": "https://www.cve.org/CVERecord?id=CVE-2012-0287",
+    "researchers": ["Joshua H", "Hoang T.", "Stefan Zimmerman", "Chris K."],
+    "published": "2012-01-03 00:00:00",
+    "updated": "2024-01-22 19:56:02",
+    "copyrights": {
+      "message": "This record contains material that is subject to copyright",
+      "defiant": {
+        "notice": "Copyright 2012-2026 Defiant Inc.",
+        "license": "Defiant hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute this software vulnerability information. Any copy of the software vulnerability information you make for such purposes is authorized provided that you include a hyperlink to this vulnerability record and reproduce Defiant's copyright designation and this license in any such copy.",
+        "license_url": "https://www.wordfence.com/wordfence-intelligence-terms-and-conditions/"
+      },
+      "mitre": {
+        "notice": "Copyright 1999-2026 The MITRE Corporation",
+        "license": "CVE Usage: MITRE hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute Common Vulnerabilities and Exposures (CVE\u00ae). Any copy you make for such purposes is authorized provided that you reproduce MITRE's copyright designation and this license in any such copy.",
+        "license_url": "https://www.cve.org/Legal/TermsOfUse"
+      }
+    }
   },
-  "00000000-0000-4000-8000-000000000005": {
-    "id": "00000000-0000-4000-8000-000000000005",
-    "software": []
+  "0012eb8d-4a40-42d4-94af-307ce7d23e5f": {
+    "id": "0012eb8d-4a40-42d4-94af-307ce7d23e5f",
+    "title": "Orpheus <= 1.8 - Unauthenticated PHP Object Injection",
+    "software": [
+      {
+        "type": "theme",
+        "name": "Orpheus",
+        "slug": "orpheus",
+        "affected_versions": {
+          "*-1.8": {
+            "from_version": "*",
+            "from_inclusive": true,
+            "to_version": "1.8",
+            "to_inclusive": true
+          }
+        },
+        "patched": false,
+        "patched_versions": [],
+        "remediation": "No known patch available. Please review the vulnerability's details in depth and employ mitigations based on your organization's risk tolerance. It may be best to uninstall the affected software and find a replacement."
+      }
+    ],
+    "informational": false,
+    "description": "The Orpheus theme for WordPress is vulnerable to PHP Object Injection in all versions up to, and including, 1.8. This is due to deserialization of untrusted input. This makes it possible for unauthenticated attackers to inject a PHP Object. No known POP chain is present in the vulnerable software. If a POP chain is present via an additional plugin or theme installed on the target system, it could allow the attacker to delete arbitrary files, retrieve sensitive data, or execute code.",
+    "references": [
+      "https://www.wordfence.com/threat-intel/vulnerabilities/id/0012eb8d-4a40-42d4-94af-307ce7d23e5f?source=api-prod"
+    ],
+    "cwe": {
+      "id": 502,
+      "name": "Deserialization of Untrusted Data",
+      "description": "The product deserializes untrusted data without sufficiently ensuring that the resulting data will be valid."
+    },
+    "cvss": {
+      "vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "score": 8.1,
+      "rating": "High"
+    },
+    "cve": "CVE-2026-62008",
+    "cve_link": "https://www.cve.org/CVERecord?id=CVE-2026-62008",
+    "researchers": ["johska"],
+    "published": "2026-10-12 00:00:00",
+    "updated": "2026-10-14 19:39:11",
+    "copyrights": {
+      "message": "This record contains material that is subject to copyright",
+      "defiant": {
+        "notice": "Copyright 2012-2026 Defiant Inc.",
+        "license": "Defiant hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute this software vulnerability information. Any copy of the software vulnerability information you make for such purposes is authorized provided that you include a hyperlink to this vulnerability record and reproduce Defiant's copyright designation and this license in any such copy.",
+        "license_url": "https://www.wordfence.com/wordfence-intelligence-terms-and-conditions/"
+      },
+      "mitre": {
+        "notice": "Copyright 1999-2026 The MITRE Corporation",
+        "license": "CVE Usage: MITRE hereby grants you a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute Common Vulnerabilities and Exposures (CVE\u00ae). Any copy you make for such purposes is authorized provided that you reproduce MITRE's copyright designation and this license in any such copy.",
+        "license_url": "https://www.cve.org/Legal/TermsOfUse"
+      }
+    }
   }
 }

@@ -10,11 +10,12 @@ import { notifyNow } from '../notify.js';
 import { recordObservation } from '../observations.js';
 import { testDb } from '../testing.js';
 import { checkWordfence, FEED_URL, matches, parseFeed, readFeedState } from './feed.js';
-import { compareVersions, inRange } from './version.js';
+import { compareVersions, inRange, normalizeVersion } from './version.js';
 
+// Four real records (fixtures/README.md).
 const FEED_FILE = new URL('./fixtures/feed.json', import.meta.url).pathname;
-const FEED = JSON.parse(readFileSync(FEED_FILE, 'utf8')) as unknown;
-const REPORT = CareReport.parse(
+const FEED = JSON.parse(readFileSync(FEED_FILE, 'utf8')) as Record<string, unknown>;
+const BASE = CareReport.parse(
   JSON.parse(
     readFileSync(new URL('../inventory/fixtures/care-report.json', import.meta.url), 'utf8'),
   ),
@@ -22,33 +23,78 @@ const REPORT = CareReport.parse(
 const T = Date.UTC(2026, 10, 9, 0, 0);
 const HOUR = 3_600_000;
 const signal = new AbortController().signal;
+const SITE = { id: 'kamaji-wp.ddev.site', name: 'Kamaji test' };
 
-function site(db: Db) {
-  db.prepare(
-    `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
-     VALUES ('kamaji-wp.ddev.site', 'Kamaji test', 'https://kamaji-wp.ddev.site/', 'other',
-     'connected', 'done', ?)`,
-  ).run(T);
-  storeReport(db, { id: 'kamaji-wp.ddev.site', name: 'Kamaji test' }, REPORT, T);
+const plugin = (slug: string, file: string, version: string, active = true) => ({
+  file,
+  slug,
+  name: slug,
+  version,
+  active,
+  auto_update: false,
+  offer: null,
+});
+
+/** The DDEV site's report, plus what the real records affect: one with a fix, one without. */
+function report(changes: { wpvivid?: string; core?: string } = {}): CareReport {
+  const r = structuredClone(BASE);
+  r.plugins.push(
+    plugin(
+      'wpvivid-backuprestore',
+      'wpvivid-backuprestore/wpvivid-backuprestore.php',
+      changes.wpvivid ?? '0.9.137',
+    ),
+    plugin('molie-instructure-canvas-linking-tool', 'molie/molie.php', '0.5', false),
+  );
+  r.themes.push({
+    stylesheet: 'orpheus',
+    name: 'Orpheus',
+    version: '1.9',
+    active: false,
+    parent: null,
+    auto_update: false,
+    offer: null,
+  });
+  if (changes.core) r.core.version = changes.core;
+  return r;
+}
+
+function site(db: Db, r: CareReport = report(), at = T) {
+  if (!db.prepare('SELECT 1 FROM sites WHERE id = ?').get(SITE.id)) {
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES (?, ?, 'https://kamaji-wp.ddev.site/', 'other', 'connected', 'done', ?)`,
+    ).run(SITE.id, SITE.name, T);
+  }
+  storeReport(db, SITE, r, at);
   recordObservation(db, {
     resourceType: 'site',
-    resourceId: 'kamaji-wp.ddev.site',
+    resourceId: SITE.id,
     check: 'report',
     source: 'plugin',
-    at: T,
+    at,
     ok: true,
     value: {
       ok: true,
       refreshed: true,
       locale: 'en_US',
-      php: REPORT.php,
-      database: REPORT.database.server,
-      checkedAt: REPORT.checked_at,
+      php: r.php,
+      database: r.database.server,
+      checkedAt: r.checked_at,
       siteHealth: [],
-      counts: { plugins: 3, themes: 2, offers: 1 },
+      counts: { plugins: r.plugins.length, themes: r.themes.length, offers: 1 },
     },
   });
 }
+
+const load = (db: Db, now = T) =>
+  checkWordfence(db, {
+    apiKey: undefined,
+    feedPath: '',
+    localFile: FEED_FILE,
+    now: () => now,
+    signal,
+  });
 
 const openIssues = (db: Db) =>
   db
@@ -70,6 +116,16 @@ describe('versions, as PHP compares them', () => {
     ]);
     expect(compareVersions('5.10', '5.9')).toBe(1);
     expect(compareVersions('6.4.2', '6.4.2')).toBe(0);
+  });
+
+  it('reads the feed’s “v” prefixes and BulletProof Security’s leading dots', () => {
+    expect(normalizeVersion('v1.3.16')).toBe('1.3.16');
+    expect(normalizeVersion('v.1.1')).toBe('1.1');
+    expect(normalizeVersion('.53.4')).toBe('0.53.4');
+    expect(compareVersions('1.3.15', 'v1.3.16')).toBe(-1);
+    expect(compareVersions('.53.3', '.53.4')).toBe(-1);
+    // Today's BulletProof Security 6.x isn't caught by a range ending at .53.4.
+    expect(compareVersions('6.3', '.53.4')).toBe(1);
   });
 
   it('reads open-ended and exclusive ranges', () => {
@@ -94,84 +150,115 @@ describe('versions, as PHP compares them', () => {
 });
 
 describe('the feed', () => {
-  it('reads every record it understands and counts the rest', () => {
-    const { rows, records, skipped } = parseFeed(FEED);
-    expect(records).toBe(4);
-    expect(skipped).toBe(2); // the record without a title, and the "library" software
-    expect(rows.map((r) => [r.softwareType, r.slug, r.patched])).toEqual([
-      ['plugin', 'akismet', true],
-      ['plugin', 'hello-dolly', false],
-      ['core', 'wordpress', true],
-      ['theme', 'twentytwentyfour', true],
+  it('reads the real records, and skips what it doesn’t know rather than guessing', () => {
+    const real = parseFeed(FEED);
+    expect(real).toMatchObject({ records: 4, skipped: 0 });
+    expect(real.rows.map((r) => [r.softwareType, r.slug, r.patched, r.patchedVersions])).toEqual([
+      ['plugin', 'wpvivid-backuprestore', true, ['0.9.138']],
+      ['plugin', 'molie-instructure-canvas-linking-tool', false, []],
+      ['core', 'wordpress', true, ['3.3.1']],
+      ['theme', 'orpheus', false, []],
     ]);
-    expect(rows[0]?.reference).toContain('wordfence.com/threat-intel');
+    expect(real.rows[0]?.reference).toContain('wordfence.com/threat-intel');
+
+    const odd = parseFeed({
+      ...FEED,
+      untitled: { id: 'x', software: [] },
+      library: {
+        id: 'y',
+        title: 'A library',
+        software: [{ type: 'library', slug: 'z', affected_versions: {} }],
+      },
+    });
+    expect(odd).toMatchObject({ records: 5, skipped: 2 });
+  });
+
+  it('merges a product listed once per release line, keeping every range and fix', () => {
+    const range = (from: string, to: string) => ({
+      from_version: from,
+      from_inclusive: true,
+      to_version: to,
+      to_inclusive: false,
+    });
+    const entry = (from: string, to: string) => ({
+      type: 'plugin',
+      name: 'Lines',
+      slug: 'lines',
+      affected_versions: { [`[${from}, ${to})`]: range(from, to) },
+      patched: true,
+      patched_versions: [to],
+      remediation: 'Update',
+    });
+    const { rows } = parseFeed({
+      r: { id: 'r', title: 'Lines', software: [entry('12', '12.1.0'), entry('16', '16.0.8')] },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.affected).toHaveLength(2);
+    expect(rows[0]?.patchedVersions).toEqual(['12.1.0', '16.0.8']);
   });
 
   it('matches only what’s installed at an affected version', async () => {
     const db = testDb();
     site(db);
-    await checkWordfence(db, {
-      apiKey: undefined,
-      feedPath: '',
-      localFile: FEED_FILE,
-      now: () => T,
-      signal,
-    });
-    // Akismet 5.3 and Hello Dolly 1.7.2 are affected; WordPress 7.1.4 and Twenty Twenty-Four 1.6 aren't.
-    expect(matches(db).map((m) => [m.slug, m.version, m.fixedIn])).toEqual([
-      ['akismet', '5.3', '5.3.1'],
-      ['hello-dolly', '1.7.2', null],
+    await load(db);
+    // wpvivid 0.9.137 (fixed in 0.9.138) and molie 0.5 (no fix) are affected; WordPress 7.1.4
+    // and Orpheus 1.9 aren't.
+    expect(
+      matches(db)
+        .map((m) => [m.slug, m.version, m.fixedIn])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
+      ['molie-instructure-canvas-linking-tool', '0.5', null],
+      ['wpvivid-backuprestore', '0.9.137', '0.9.138'],
     ]);
+  });
+
+  it('matches WordPress itself', async () => {
+    const db = testDb();
+    site(db, report({ core: '3.3' }));
+    await load(db);
+    expect(matches(db).find((m) => m.type === 'core')).toMatchObject({
+      version: '3.3',
+      fixedIn: '3.3.1',
+    });
   });
 
   it('shows matches in the inventory, and unknown rather than none before any feed', async () => {
     const db = testDb();
     site(db);
-    const before = siteInventory(db, { id: 'kamaji-wp.ddev.site', mode: 'connected' });
+    const before = siteInventory(db, { id: SITE.id, mode: 'connected' });
     expect(before.known && before.value.vulnerabilityData).toEqual({
       known: false,
       reason: 'No Wordfence data yet: vulnerabilities are unknown',
     });
-    await checkWordfence(db, {
-      apiKey: undefined,
-      feedPath: '',
-      localFile: FEED_FILE,
-      now: () => Date.now(),
-      signal,
-    });
-    const after = siteInventory(db, { id: 'kamaji-wp.ddev.site', mode: 'connected' });
+    await load(db, Date.now());
+    const after = siteInventory(db, { id: SITE.id, mode: 'connected' });
     const value = after.known ? after.value : null;
     expect(value?.vulnerabilityData).toMatchObject({ known: true, value: { stale: false } });
-    expect(value?.plugins.find((p) => p.slug === 'akismet')?.vulnerabilities).toEqual([
-      expect.objectContaining({ fixedIn: '5.3.1', cvssRating: 'Medium', cve: 'CVE-0000-00001' }),
-    ]);
+    expect(value?.plugins.find((p) => p.slug === 'wpvivid-backuprestore')?.vulnerabilities).toEqual(
+      [expect.objectContaining({ fixedIn: '0.9.138', cvssRating: 'Medium' })],
+    );
     expect(value?.core.vulnerabilities).toEqual([]);
   });
 
   it('raises one issue per component: urgent with a fix, never naming it', async () => {
     const db = testDb();
     site(db);
-    await checkWordfence(db, {
-      apiKey: undefined,
-      feedPath: '',
-      localFile: FEED_FILE,
-      now: () => T,
-      signal,
-    });
+    await load(db);
     expect(openIssues(db)).toEqual([
       {
-        kind: 'vulnerable:plugin:akismet/akismet.php',
-        severity: 'urgent',
-        summary: 'Kamaji test: a plugin has a known vulnerability, with a fix to update to',
-      },
-      {
-        kind: 'vulnerable:plugin:hello-dolly/hello.php',
+        kind: 'vulnerable:plugin:molie/molie.php',
         severity: 'normal',
         summary: 'Kamaji test: a plugin has a known vulnerability, with no fix yet',
       },
+      {
+        kind: 'vulnerable:plugin:wpvivid-backuprestore/wpvivid-backuprestore.php',
+        severity: 'urgent',
+        summary: 'Kamaji test: a plugin has a known vulnerability, with a fix to update to',
+      },
     ]);
 
-    // The done test, in miniature: one vulnerable plugin, one alert.
+    // The done test, in miniature: one vulnerable plugin with a fix, one alert.
     const sent: string[] = [];
     const discord: Discord = {
       configured: true,
@@ -187,18 +274,10 @@ describe('the feed', () => {
       '**Kamaji**\n- Kamaji test: a plugin has a known vulnerability, with a fix to update to\n<https://kamaji.test>',
     ]);
 
-    // Updating past the fix resolves it on the next cycle.
-    const updated = structuredClone(REPORT);
-    updated.plugins[0]!.version = '5.3.1';
-    storeReport(db, { id: 'kamaji-wp.ddev.site', name: 'Kamaji test' }, updated, T + 2 * HOUR);
-    await checkWordfence(db, {
-      apiKey: undefined,
-      feedPath: '',
-      localFile: FEED_FILE,
-      now: () => T + 2 * HOUR,
-      signal,
-    });
-    expect(openIssues(db).map((i) => i.kind)).toEqual(['vulnerable:plugin:hello-dolly/hello.php']);
+    // Updating to the fix resolves it on the next cycle.
+    site(db, report({ wpvivid: '0.9.138' }), T + 2 * HOUR);
+    await load(db, T + 2 * HOUR);
+    expect(openIssues(db).map((i) => i.kind)).toEqual(['vulnerable:plugin:molie/molie.php']);
   });
 
   it('downloads once a day with the key, and says when the key is refused', async () => {
