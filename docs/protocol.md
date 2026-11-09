@@ -39,24 +39,26 @@ The contract between Kamaji and the WordPress plugin. Written 2026-11-08, before
 3. Key allowed for this endpoint (table below). `401 wrong_key`: the report key can never update.
 4. Time within 300 seconds of the site's clock. → `401 stale`
 5. Signature valid over the string built from **the request as received**. → `401 bad_signature`
-6. Nonce not seen before: stored as an option `craftish_care_n_<sha256(nonce)>` with `add_option` (autoload off), whose unique key makes the check atomic. Nonces older than 15 minutes are swept by WP-Cron and also on each request, since some sites run with cron off. → `401 replay`
+6. Nonce not seen before: stored as an option `craftish_care_n_<sha256(nonce)>` (autoload off) by `INSERT IGNORE`, so the option table's unique key lets exactly one of two racing requests in. Not `add_option`: it inserts with `ON DUPLICATE KEY UPDATE`, so both could succeed (found in the M3 build). Nonces older than 15 minutes are swept by WP-Cron and also on each request, since some sites run with cron off. → `401 replay`
 7. Host matches `home_url()`. → `401 wrong_host`
 
-Only after all seven does the endpoint read the body. Every refusal is logged (below). More than 20 refusals in a minute → `429` for 10 minutes, without checking signatures. Error bodies are `{"error": "<code>"}` and never echo input.
+Before the checks, and not counted as refusals: anything under the namespace that isn't a `POST` to an endpoint in the table → `404 not_found`; the rate limit's block → `429 rate_limited`; after `disconnect` → `410 disconnected`. A plain-HTTP request where `WP_ENVIRONMENT_TYPE` isn't `local` → `403 https_required`, which is counted. The plugin handles its namespace in `rest_pre_dispatch`, so none of WordPress's own REST handling (parameter parsing, its JSON errors, the route index) runs first.
+
+Only after all seven does the endpoint read the body: it must be a JSON object, else `400 bad_body`. Every refusal is logged (below). More than 20 refusals in a minute → `429` for 10 minutes, without checking signatures. Error bodies are `{"error": "<code>"}` and never echo input.
 
 ## Endpoints
 
-| Endpoint     | Key    | Does                                                                                                               |
-| ------------ | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| `hello`      | report | Who and what: plugin, WordPress and PHP versions; multisite (not supported in v1, reported); capabilities (below)  |
-| `report`     | report | The inventory (below). `{"refresh": true}` reruns WordPress's own update checks first, at most once per 10 minutes |
-| `status`     | report | One job's state: `{"job": "<id>"}`                                                                                 |
-| `update`     | update | Start one update job                                                                                               |
-| `disconnect` | update | Delete the stored keys and every nonce; the plugin answers `410 disconnected` to everything after                  |
+| Endpoint     | Key    | Does                                                                                                                                                                                                                        |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`      | report | Who and what: plugin, WordPress and PHP versions; multisite (not supported in v1, reported); capabilities (below)                                                                                                           |
+| `report`     | report | The inventory (below). `{"refresh": true}` reruns WordPress's own update checks first, at most once per 10 minutes                                                                                                          |
+| `status`     | report | One job's state: `{"job": "<id>"}`                                                                                                                                                                                          |
+| `update`     | update | Start one update job                                                                                                                                                                                                        |
+| `disconnect` | update | Delete the stored keys and every nonce; the plugin answers `410 disconnected` to everything after, including after deactivating and activating it again. Reconnecting means deleting the plugin and installing a fresh copy |
 
 ### Capabilities (`hello`)
 
-`can_update` with a reason when false: `DISALLOW_FILE_MODS` set, `get_filesystem_method()` not `direct` (it needs FTP or SSH credentials the plugin will never hold), the plugin or core directory not writable, or below the floor (WordPress 6.6, PHP 8.1). Also: auto-updates allowed by the host, `.maintenance` present and its age, WP-Cron disabled, and whether loopback requests work (Site Health's own test).
+`can_update`, with `update_blockers` listing the reasons when false (codes: `below_floor`, `file_mods_disallowed`, `filesystem_not_direct`, `plugins_not_writable`, `themes_not_writable`, `core_not_writable`): `DISALLOW_FILE_MODS` set, `get_filesystem_method()` not `direct` (it needs FTP or SSH credentials the plugin will never hold), the plugin, theme or core directory not writable, or below the floor (WordPress 6.6, PHP 8.1). Also: auto-updates allowed by the host, `.maintenance` present and its age, WP-Cron disabled, and whether loopback requests work (Site Health's own test).
 
 ### The report
 
@@ -101,5 +103,7 @@ Only its own options. The two public keys are autoloaded; everything else (nonce
 The last 200 entries (time, endpoint, key id, result; for updates the item and versions) in an option, shown read-only under Tools → Craftish Care, along with what the plugin can and can't do in plain words. That page is the client's view of what Tyler's tool did on their site, and needs `manage_options`. Entries are events only: never a request body, header value or IP address.
 
 ## Tests the plugin ships with
+
+In `plugin/tests/`, run by `npm run test:plugin` against the local DDEV WordPress (`dev/README.md`). The `update` cases come with M4.
 
 One per refusal: missing header, unknown key, report key on `update` and `disconnect`, old and future timestamps, a body changed after signing, the host or route changed after signing, a reused nonce, two concurrent requests with the same nonce, a job id reused, a `to` that isn't WordPress's offer, a `from` that isn't installed, a second job while one runs, the rate limit, and every endpoint after `disconnect`. Plus the happy paths against a DDEV WordPress site, and a site with `FS_METHOD` set to `ftpext` and one with `DISALLOW_FILE_MODS`, which must report `can_update: false` with the right reason.

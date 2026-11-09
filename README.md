@@ -6,16 +6,18 @@ The decisions live in calcifer, not here: `explore/kamaji.md` (the source of tru
 
 ## Layout
 
-| Path              | What                                                                          |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `packages/shared` | The API's contract: zod schemas for every response, shared by server and web  |
-| `packages/server` | Node: HTTP API (Hono), job runner, check cycle, SQLite (`node:sqlite`)        |
-| `packages/web`    | React + Vite + Emotion: the six tabs, built to static files the server serves |
-| `worker`          | Cloudflare Worker: the outside checks and their alerts (`worker/README.md`)   |
-| `server-report`   | `kamaji-report`, the read-only JSON report craftish runs for Kamaji's SSH key |
-| `ops`             | The LaunchAgent, deploy script and runbook (`ops/README.md`)                  |
+| Path              | What                                                                              |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `packages/shared` | The API's contract: zod schemas for every response, shared by server and web      |
+| `packages/server` | Node: HTTP API (Hono), job runner, check cycle, SQLite (`node:sqlite`)            |
+| `packages/web`    | React + Vite + Emotion: the six tabs, built to static files the server serves     |
+| `worker`          | Cloudflare Worker: the outside checks and their alerts (`worker/README.md`)       |
+| `server-report`   | `kamaji-report`, the read-only JSON report craftish runs for Kamaji's SSH key     |
+| `ops`             | The LaunchAgent, deploy script and runbook (`ops/README.md`)                      |
+| `plugin`          | `craftish-care`, the WordPress plugin (`docs/protocol.md`), and its request tests |
+| `dev`             | The local DDEV WordPress the plugin is built against (`dev/README.md`)            |
 
-Still to come: `packages/mcp` (M5) and `plugin/craftish-care` (M3).
+Still to come: `packages/mcp` (M5).
 
 ## Commands
 
@@ -23,6 +25,7 @@ Node 22.13 or later.
 
 - `npm run dev`: server on `127.0.0.1:10002` (rebuilt on change, 60-second cycle) and Vite on `http://localhost:5173`. Vite's proxy adds the login header, standing in for tailscale serve.
 - `npm run check`: Prettier, ESLint, TypeScript and the tests. Passes before every push. Writes nothing to `dist`, so it's safe anywhere, including on the mini.
+- `npm run test:plugin`: craftish-care's request tests against the local DDEV WordPress (`dev/README.md`). Laptop only.
 - `npm run build`: what `ops/deploy.sh` runs on the mini. Refused by `scripts/guard.mjs` wherever Kamaji is installed, unless the deploy asks.
 
 ## Rules of the code
