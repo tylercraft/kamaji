@@ -5,7 +5,13 @@ export function ThemeToggle() {
   const [choice, setChoice] = useState<ThemeChoice>(readThemeChoice);
   return (
     <label
-      css={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--muted)' }}
+      css={{
+        display: 'flex',
+        gap: 6,
+        alignItems: 'center',
+        fontSize: 11,
+        color: 'var(--chrome-muted)',
+      }}
     >
       Appearance
       <select
@@ -17,10 +23,10 @@ export function ThemeToggle() {
         }}
         css={{
           font: 'inherit',
-          color: 'var(--ink)',
-          background: 'var(--panel)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
+          color: 'var(--chrome-ink)',
+          background: 'var(--chrome)',
+          border: '1px solid var(--seam)',
+          borderRadius: 3,
           padding: '3px 4px',
         }}
       >
