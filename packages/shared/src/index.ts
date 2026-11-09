@@ -83,6 +83,96 @@ export const SiteSummary = Site.extend({
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
 
+/** Why the plugin couldn't update a site (docs/protocol.md, "Capabilities"). */
+export const UpdateBlocker = z.enum([
+  'below_floor',
+  'file_mods_disallowed',
+  'filesystem_not_direct',
+  'plugins_not_writable',
+  'themes_not_writable',
+  'core_not_writable',
+]);
+export type UpdateBlocker = z.infer<typeof UpdateBlocker>;
+
+/** craftish-care's answer to hello: who it is and what the site lets it do. */
+export const CareHello = z.object({
+  plugin: z.string(),
+  protocol: z.number().int(),
+  wordpress: z.string(),
+  php: z.string(),
+  multisite: z.boolean(),
+  capabilities: z.object({
+    can_report: z.boolean(),
+    can_update: z.boolean(),
+    // An unknown code still reads as a blocker, never as "can update".
+    update_blockers: z.array(z.string()),
+    auto_updates: z.object({
+      all_disabled: z.boolean(),
+      plugins: z.boolean(),
+      themes: z.boolean(),
+    }),
+    maintenance: z.object({ present: z.boolean(), age_seconds: z.number().int().nullable() }),
+    wp_cron_disabled: z.boolean(),
+    loopback: z.object({ ok: z.boolean() }),
+  }),
+});
+export type CareHello = z.infer<typeof CareHello>;
+
+/** The handshake as Kamaji saw it: the plugin's answer, or why there wasn't one. */
+export const Handshake = z.object({
+  at: Timestamp,
+  result: z.discriminatedUnion('ok', [
+    z.object({ ok: z.literal(true), hello: CareHello }),
+    z.object({ ok: z.literal(false), problem: z.string() }),
+  ]),
+});
+export type Handshake = z.infer<typeof Handshake>;
+
+/** Add site, step 1. */
+export const NewSiteRequest = z.object({
+  name: z.string().trim().min(1).max(80),
+  url: z.url({ protocol: /^https?$/ }),
+  hostKind: HostKind,
+  clientSlug: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9-]{1,60}$/)
+    .nullable(),
+});
+export type NewSiteRequest = z.infer<typeof NewSiteRequest>;
+
+export const BackupExpectation = z.enum(['kamaji', 'host', 'client', 'tyler']);
+export type BackupExpectation = z.infer<typeof BackupExpectation>;
+
+/** Add site, step 3. */
+export const ConfigureSiteRequest = z.object({
+  expectedText: z.string().trim().max(200).nullable(),
+  backupExpectation: BackupExpectation.nullable(),
+  notifications: z.enum(['normal', 'digest']),
+});
+export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
+
+/** Remove: the name typed back, as the confirmation. */
+export const RemoveSiteRequest = z.object({ confirm: z.string() });
+export type RemoveSiteRequest = z.infer<typeof RemoveSiteRequest>;
+
+/** One site, for the setup and manage views. */
+export const SiteDetailResponse = z.object({
+  site: SiteSummary,
+  handshake: Handshake.nullable(),
+  backupExpectation: BackupExpectation.nullable(),
+  notifications: z.enum(['normal', 'digest']),
+});
+export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
+
+/** What Remove did: the plugin forgot its keys, or the cleanup Tyler still has to do. */
+export const RemoveSiteResponse = z.object({
+  removed: z.literal(true),
+  disconnect: z.enum(['done', 'not-connected', 'failed', 'no-update-key']),
+  problem: z.string().nullable(),
+});
+export type RemoveSiteResponse = z.infer<typeof RemoveSiteResponse>;
+
 export const ServerKind = z.enum(['linux-ssh', 'local-mac']);
 export type ServerKind = z.infer<typeof ServerKind>;
 
