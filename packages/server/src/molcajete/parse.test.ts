@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  describeCalendar,
   fromLocal,
+  parseCalendar,
   parseBoottime,
   parseDiskutil,
   parseDockerPs,
@@ -56,7 +58,7 @@ describe('launchctl', () => {
       running: false,
       lastExitCode: 0,
       runs: 6,
-      schedule: 'daily, 07:15',
+      schedule: 'on a calendar',
     });
   });
 
@@ -70,6 +72,40 @@ describe('launchctl', () => {
 
   it('says when a job isn’t loaded', () => {
     expect(parseLaunchctlPrint(fixture('launchctl-print-not-loaded.txt'))).toBeNull();
+  });
+});
+
+describe('calendar schedules', () => {
+  const say = (json: string) => describeCalendar(parseCalendar(json)!);
+
+  it('reads a missing hour as every hour', () => {
+    expect(say('{"Minute":0}')).toBe('hourly at :00');
+  });
+
+  it('lists every entry of an array', () => {
+    expect(say('[{"Hour":4,"Minute":30},{"Hour":16,"Minute":30}]')).toBe('daily, 04:30 and 16:30');
+  });
+
+  it('names the weekday', () => {
+    expect(say('{"Weekday":0,"Hour":4,"Minute":0}')).toBe('Sundays, 04:00');
+    expect(say('{"Weekday":7,"Hour":4,"Minute":0}')).toBe('Sundays, 04:00');
+  });
+
+  it('handles any mix of keys', () => {
+    expect(say('{"Hour":7,"Minute":15}')).toBe('daily, 07:15');
+    expect(say('{"Day":1,"Hour":9,"Minute":0}')).toBe('the 1st of each month, 09:00');
+    expect(say('{"Month":3,"Day":22,"Hour":9,"Minute":5}')).toBe('22 March, 09:05');
+    expect(say('{"Month":12}')).toBe('every day in December, every minute');
+    expect(say('{"Hour":3}')).toBe('every minute from 03:00 to 03:59');
+    expect(say('{}')).toBe('every minute');
+    expect(
+      say('[{"Weekday":1,"Hour":8,"Minute":0},{"Weekday":5,"Hour":8,"Minute":0},{"Minute":30}]'),
+    ).toBe('Mondays, 08:00; Fridays, 08:00; hourly at :30');
+  });
+
+  it('gives up on anything else', () => {
+    expect(parseCalendar('')).toBeNull();
+    expect(parseCalendar('{"Hour":"4"}')).toBeNull();
   });
 });
 

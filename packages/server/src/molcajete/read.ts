@@ -6,7 +6,9 @@ import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  describeCalendar,
   parseBoottime,
+  parseCalendar,
   parseDiskutil,
   parseDockerPs,
   parseDockerVersion,
@@ -32,6 +34,7 @@ export const TOOLS = {
   mount: '/sbin/mount',
   softwareupdate: '/usr/sbin/softwareupdate',
   sysctl: '/usr/sbin/sysctl',
+  plutil: '/usr/bin/plutil',
   // Docker Desktop's CLI link and the Tailscale app's own CLI, as calcifer's scripts call them
   // (ops/molcajete/mini-status.py, inbox-mover.sh).
   docker: '/usr/local/bin/docker',
@@ -180,11 +183,19 @@ export async function readJobs(
       timeoutMs: 10_000,
       signal,
     });
-    out.push({
-      label,
-      listed: listed.get(label) ?? null,
-      printed: parseLaunchctlPrint(printed.stdout + printed.stderr),
-    });
+    const job = parseLaunchctlPrint(printed.stdout + printed.stderr);
+    if (job?.schedule === 'on a calendar') {
+      // Only this one key is read from the plist.
+      const plist = join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+      const r = await exec(
+        TOOLS.plutil,
+        ['-extract', 'StartCalendarInterval', 'json', '-o', '-', plist],
+        { timeoutMs: 5_000, signal },
+      );
+      const entries = r.code === 0 ? parseCalendar(r.stdout) : null;
+      if (entries && entries.length > 0) job.schedule = describeCalendar(entries);
+    }
+    out.push({ label, listed: listed.get(label) ?? null, printed: job });
   }
   return out;
 }

@@ -28,6 +28,8 @@ interface Mini {
   /** Labels with a plist in ~/Library/LaunchAgents. */
   plists: string[];
   tails: string[];
+  /** StartCalendarInterval as plutil prints it, by label. */
+  calendars: Record<string, string>;
   /** Tools that fail, by path. */
   fail: Record<string, { code: number | null; stderr: string }>;
   /** The extra environment each call asked for, by tool path. */
@@ -48,6 +50,7 @@ function mini(): Mini {
     dockerVersion: fixture('docker-version.json'),
     plists: LABELS,
     tails: [],
+    calendars: {},
     fail: {},
     envs: [],
   };
@@ -65,6 +68,14 @@ function fake(m: Mini): { exec: Run; fs: Files } {
       const label = String(args[1]).split('/').pop() ?? '';
       if (!LABELS.includes(label)) return out(fixture('launchctl-print-not-loaded.txt'), 113);
       return out(m.prints[label] ?? fixture('launchctl-print-today.txt'));
+    }
+    if (file === TOOLS.plutil) {
+      const label = String(args.at(-1))
+        .split('/')
+        .pop()!
+        .replace(/\.plist$/, '');
+      const json = m.calendars[label];
+      return json ? out(json) : out('', 1);
     }
     if (file === TOOLS.mount) return out(m.mount);
     if (file === TOOLS.diskutil) {
@@ -233,6 +244,23 @@ describe('molcajete', () => {
     );
     await cycle(db, mini(), T0 + 5 * MIN);
     expect(openIssues(db)).toEqual([]);
+  });
+
+  it('labels calendar jobs from their plist’s StartCalendarInterval', async () => {
+    const db = testDb();
+    const m = mini();
+    m.calendars = {
+      'dev.craftish.calcifer.hunt-discogs': '{"Minute":0}',
+      'dev.craftish.calcifer.hunt-ebay': '[{"Hour":4,"Minute":30},{"Hour":16,"Minute":30}]',
+      'dev.craftish.calcifer.update-stack': '{"Weekday":0,"Hour":4,"Minute":0}',
+    };
+    await cycle(db, m, T0);
+    const schedule = (name: string) => health(db).jobs.find((j) => j.name === name)?.schedule;
+    expect(schedule('hunt-discogs')).toBe('hourly at :00');
+    expect(schedule('hunt-ebay')).toBe('daily, 04:30 and 16:30');
+    expect(schedule('update-stack')).toBe('Sundays, 04:00');
+    // plutil failing leaves the plain label rather than a guess.
+    expect(schedule('today')).toBe('on a calendar');
   });
 
   it('notes when a job ran, from launchd’s run count', async () => {

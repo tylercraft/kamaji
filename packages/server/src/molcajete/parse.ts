@@ -71,14 +71,95 @@ function schedule(text: string, top: Map<string, string>, keepAlive: boolean): s
     const n = Number(interval[1]);
     return n % 3600 === 0 ? `every ${n / 3600} h` : `every ${Math.round(n / 60)} min`;
   }
-  if (text.includes('com.apple.launchd.calendarinterval')) {
-    const hour = /"Hour" => (\d+)/.exec(text)?.[1];
-    const minute = /"Minute" => (\d+)/.exec(text)?.[1];
-    const at = `${(hour ?? '0').padStart(2, '0')}:${(minute ?? '0').padStart(2, '0')}`;
-    return /"Weekday" =>/.test(text) ? `weekly, ${at}` : `daily, ${at}`;
-  }
+  // The entries themselves come from the plist (parseCalendar); print shows only that there are some.
+  if (text.includes('com.apple.launchd.calendarinterval')) return 'on a calendar';
   if (text.includes('"WatchPaths"')) return 'when its folders change';
   return null;
+}
+
+// StartCalendarInterval
+
+const CalendarEntry = z.object({
+  Month: z.number().int().optional(),
+  Day: z.number().int().optional(),
+  Weekday: z.number().int().optional(),
+  Hour: z.number().int().optional(),
+  Minute: z.number().int().optional(),
+});
+export type CalendarEntry = z.infer<typeof CalendarEntry>;
+
+/** `plutil -extract StartCalendarInterval json -o - <plist>`: one entry or an array of them. */
+export function parseCalendar(json: string): CalendarEntry[] | null {
+  const v = z.union([CalendarEntry, z.array(CalendarEntry)]).safeParse(safeJson(json));
+  if (!v.success) return null;
+  return Array.isArray(v.data) ? v.data : [v.data];
+}
+
+const WEEKDAYS = [
+  'Sundays',
+  'Mondays',
+  'Tuesdays',
+  'Wednesdays',
+  'Thursdays',
+  'Fridays',
+  'Saturdays',
+];
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+const two = (n: number) => String(n).padStart(2, '0');
+const ordinal = (n: number) =>
+  `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
+
+/** Which days an entry runs on; null for every day. A missing key means every one. */
+function days(e: CalendarEntry): string | null {
+  const parts: string[] = [];
+  if (e.Weekday !== undefined) parts.push(WEEKDAYS[e.Weekday % 7] ?? `weekday ${e.Weekday}`);
+  const month = e.Month === undefined ? null : (MONTHS[e.Month - 1] ?? `month ${e.Month}`);
+  if (e.Day !== undefined && month) parts.push(`${e.Day} ${month}`);
+  else if (e.Day !== undefined) parts.push(`the ${ordinal(e.Day)} of each month`);
+  else if (month) parts.push(`every day in ${month}`);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/** When in the day an entry runs. */
+function times(e: CalendarEntry): string {
+  if (e.Hour !== undefined && e.Minute !== undefined) return `${two(e.Hour)}:${two(e.Minute)}`;
+  if (e.Minute !== undefined) return `hourly at :${two(e.Minute)}`;
+  if (e.Hour !== undefined) return `every minute from ${two(e.Hour)}:00 to ${two(e.Hour)}:59`;
+  return 'every minute';
+}
+
+/**
+ * StartCalendarInterval in words, every entry, in the mini's own time (as the plist has it).
+ * Entries on the same days share one label: "daily, 04:30 and 16:30".
+ */
+export function describeCalendar(entries: CalendarEntry[]): string {
+  const groups = new Map<string, string[]>();
+  for (const e of entries) {
+    const d = days(e);
+    const t = times(e);
+    const at = e.Hour !== undefined && e.Minute !== undefined;
+    const label = d ?? (at ? 'daily' : '');
+    groups.set(label, [...(groups.get(label) ?? []), t]);
+  }
+  return [...groups]
+    .map(([d, ts]) => {
+      const list = ts.length > 1 ? `${ts.slice(0, -1).join(', ')} and ${ts.at(-1)}` : ts[0];
+      return d ? `${d}, ${list}` : String(list);
+    })
+    .join('; ');
 }
 
 // Disks
