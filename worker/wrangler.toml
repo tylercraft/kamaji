@@ -5,6 +5,8 @@ main = "src/index.js"
 account_id = "3c222dfd9f6b06886e25d9240c1f3826"
 compatibility_date = "2026-10-01"
 workers_dev = true
+# No per-version preview addresses: only the one workers.dev address answers.
+preview_urls = false
 
 [triggers]
 crons = ["*/5 * * * *"]
