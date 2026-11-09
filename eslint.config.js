@@ -3,7 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/', 'data/', '**/node_modules/', '**/.wrangler/'] },
+  { ignores: ['**/dist/', 'data/', 'dev/wordpress/', '**/node_modules/', '**/.wrangler/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

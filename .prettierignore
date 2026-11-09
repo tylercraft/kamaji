@@ -4,3 +4,4 @@ package-lock.json
 .wrangler/
 worker/node_modules/
 .claude/
+dev/wordpress/

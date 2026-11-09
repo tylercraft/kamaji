@@ -8,3 +8,7 @@ data/
 .dev.vars
 .claude/settings.local.json
 scratch/
+# The local DDEV WordPress (dev/README.md): only its DDEV config is kept.
+dev/wordpress/*
+!dev/wordpress/.ddev/
+dev/care-keys.env
