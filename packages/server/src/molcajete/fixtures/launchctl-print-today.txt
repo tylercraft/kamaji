@@ -1,0 +1,105 @@
+gui/501/dev.craftish.calcifer.today = {
+	active count = 0
+	path = /Users/tylercraft/Library/LaunchAgents/dev.craftish.calcifer.today.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /opt/homebrew/bin/doppler
+	arguments = {
+		/opt/homebrew/bin/doppler
+		run
+		--
+		/usr/bin/python3
+		-I
+		/Users/tylercraft/calcifer/ops/molcajete/today.py
+	}
+
+	working directory = /Users/tylercraft/calcifer/agent/triage
+
+	stdout path = /Users/tylercraft/Library/Logs/calcifer-today.log
+	stderr path = /Users/tylercraft/Library/Logs/calcifer-today.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.REDACTED/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => dev.craftish.calcifer.today
+	}
+
+	LWCR = {
+		"reqs" => {
+			"cdhash" => {
+				"$in" => [
+					0 = 				]
+			}
+		}
+		"vers" => 1
+		"comp" => 1
+		"ccat" => 0
+	}
+
+	domain = gui/501 [100027]
+	umask = 77
+	asid = 100027
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 6
+	last exit code = 0
+
+	event triggers = {
+		dev.craftish.calcifer.today.268435472 => {
+			keepalive = 0
+			service = dev.craftish.calcifer.today
+			stream = com.apple.launchd.calendarinterval
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"Minute" => 15
+				"Hour" => 7
+			}
+		}
+	}
+
+	event channels = {
+		"com.apple.launchd.calendarinterval" = {
+			port = 0x151563
+			active = 0
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 1
+		}
+	}
+
+	resource coalition = {
+		ID = 9487
+		type = resource
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.today
+	}
+
+	jetsam coalition = {
+		ID = 9488
+		type = jetsam
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.today
+	}
+
+	spawn type = background (5)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	job state = exited
+	sanitizer flags = 0x0
+
+	properties = inferred program | managed LWCR | has LWCR
+}

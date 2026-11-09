@@ -1,0 +1,70 @@
+{
+  "Version": "1.104.4-t938213198-gd38c96d6a",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.1"],
+  "Self": {
+    "HostName": "Molcajete",
+    "DNSName": "molcajete.tailb3044a.ts.net.",
+    "OS": "macOS",
+    "Relay": "syd",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "Online": true,
+    "ExitNode": false,
+    "Active": false
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tailb3044a.ts.net",
+  "CurrentTailnet": {
+    "Name": "tailnet.example",
+    "MagicDNSSuffix": "tailb3044a.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": ["molcajete.tailb3044a.ts.net"],
+  "ExtraRecords": null,
+  "Peer": {
+    "peer0": {
+      "OS": "iOS",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "Active": false,
+      "HostName": "peer0"
+    },
+    "peer1": {
+      "OS": "macOS",
+      "LastSeen": "2026-11-08T16:20:00.1Z",
+      "Online": true,
+      "ExitNode": false,
+      "Active": true,
+      "HostName": "peer1"
+    },
+    "peer2": {
+      "OS": "iOS",
+      "LastSeen": "2026-11-08T22:50:00.1Z",
+      "Online": false,
+      "ExitNode": false,
+      "Active": false,
+      "HostName": "peer2"
+    },
+    "peer3": {
+      "OS": "windows",
+      "LastSeen": "2026-11-08T01:00:47.1Z",
+      "Online": false,
+      "ExitNode": false,
+      "Active": false,
+      "HostName": "peer3"
+    },
+    "peer4": {
+      "OS": "linux",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "Active": false,
+      "HostName": "peer4"
+    }
+  },
+  "ClientVersion": null
+}

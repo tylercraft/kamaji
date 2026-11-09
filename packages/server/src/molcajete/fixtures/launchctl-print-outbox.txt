@@ -1,0 +1,112 @@
+gui/501/dev.craftish.calcifer.outbox = {
+	active count = 0
+	path = /Users/tylercraft/Library/LaunchAgents/dev.craftish.calcifer.outbox.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /opt/homebrew/bin/doppler
+	arguments = {
+		/opt/homebrew/bin/doppler
+		run
+		--
+		/usr/bin/python3
+		-I
+		/Users/tylercraft/calcifer/agent/mcp/fastmail/outbox.py
+	}
+
+	working directory = /Users/tylercraft/calcifer/agent/outbox
+
+	stdout path = /Users/tylercraft/Library/Logs/calcifer-outbox.log
+	stderr path = /Users/tylercraft/Library/Logs/calcifer-outbox.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.REDACTED/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => dev.craftish.calcifer.outbox
+	}
+
+	LWCR = {
+		"reqs" => {
+			"cdhash" => {
+				"$in" => [
+					0 = 				]
+			}
+		}
+		"vers" => 1
+		"comp" => 1
+		"ccat" => 0
+	}
+
+	domain = gui/501 [100027]
+	umask = 77
+	asid = 100027
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1729
+	last exit code = 0
+
+	event triggers = {
+		com.apple.launchd.WatchPaths => {
+			keepalive = 0
+			service = dev.craftish.calcifer.outbox
+			stream = com.apple.fsevents.matching
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"WatchPaths" => [
+					0 = "/Users/tylercraft/calcifer/outbox/general"
+					1 = "/Users/tylercraft/calcifer/outbox/taxes"
+					2 = "/Users/tylercraft/calcifer/outbox/craftish"
+					3 = "/Users/tylercraft/calcifer/outbox/flr"
+					4 = "/Users/tylercraft/calcifer/outbox/yoga"
+					5 = "/Users/tylercraft/calcifer/outbox/life"
+				]
+			}
+		}
+	}
+
+	event channels = {
+		"com.apple.fsevents.matching" = {
+			port = 0xc8f03
+			active = 0
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 1
+		}
+	}
+
+	resource coalition = {
+		ID = 1158
+		type = resource
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.outbox
+	}
+
+	jetsam coalition = {
+		ID = 1159
+		type = jetsam
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.outbox
+	}
+
+	spawn type = background (5)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	run interval = 300 seconds
+	job state = exited
+	sanitizer flags = 0x0
+
+	properties = runatload | inferred program | managed LWCR | has LWCR
+}

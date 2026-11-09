@@ -1,0 +1,87 @@
+gui/501/dev.craftish.calcifer.dashboard = {
+	active count = 1
+	path = /Users/tylercraft/Library/LaunchAgents/dev.craftish.calcifer.dashboard.plist
+	type = LaunchAgent
+	state = running
+
+	program = /usr/bin/python3
+	arguments = {
+		/usr/bin/python3
+		-I
+		/Users/tylercraft/calcifer/agent/dashboard/server.py
+	}
+
+	working directory = /Users/tylercraft/calcifer/agent/dashboard
+
+	stdout path = /Users/tylercraft/Library/Logs/calcifer-dashboard.log
+	stderr path = /Users/tylercraft/Library/Logs/calcifer-dashboard.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.REDACTED/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => dev.craftish.calcifer.dashboard
+	}
+
+	LWCR = {
+		"reqs" => {
+			"signing-identifier" => "com.apple.dt.xcode_select.tool-shim-public"
+			"validation-category" => 1
+		}
+		"vers" => 1
+		"comp" => 1
+		"ccat" => 0
+	}
+
+	domain = gui/501 [100027]
+	umask = 77
+	asid = 100027
+	minimum runtime = 30
+	exit timeout = 5
+	runs = 1
+	pid = 1225
+	immediate reason = speculative
+	forks = 828
+	execs = 69
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last exit code = (never exited)
+
+	resource coalition = {
+		ID = 1200
+		type = resource
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.dashboard
+	}
+
+	jetsam coalition = {
+		ID = 1201
+		type = jetsam
+		state = active
+		active count = 1
+		name = dev.craftish.calcifer.dashboard
+	}
+
+	spawn type = background (5)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	job state = running
+	sanitizer flags = 0x0
+
+	properties = keepalive | inferred program | managed LWCR | has LWCR
+}
