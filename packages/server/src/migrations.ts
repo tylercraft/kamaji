@@ -215,4 +215,11 @@ export const migrations: Migration[] = [
     // Kamaji announces this page going down itself. Removed with the site.
     sql: `UPDATE sites SET tailnet_only = 1 WHERE id = 'kamaji-test';`,
   },
+  {
+    version: 8,
+    name: 'done-test site removed',
+    seed: true,
+    // M2's done-test passed both ways (Worker, then Kamaji). Its history stays; the site goes.
+    sql: `UPDATE sites SET removed_at = unixepoch() * 1000 WHERE id = 'kamaji-test' AND removed_at IS NULL;`,
+  },
 ];

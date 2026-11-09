@@ -141,12 +141,9 @@ describe('checkSites', () => {
 describe('the estate', () => {
   it('seeds fourteen monitoring-only sites, first check pending', () => {
     const all = siteSummaries(testDb({ seed: true }));
-    // Plus M2's temporary done-test page (migration 6) until it's removed.
-    // Tailnet only (migration 7), so Kamaji, not the Worker, announces it.
-    expect(all.filter((s) => s.id === 'kamaji-test').map((s) => [s.url, s.tailnetOnly])).toEqual([
-      ['https://dev.craftish.dev/kamaji-test.html', true],
-    ]);
-    const sites = all.filter((s) => s.id !== 'kamaji-test');
+    // M2's done-test page (migrations 6 to 8) has come and gone.
+    expect(all.map((s) => s.id)).not.toContain('kamaji-test');
+    const sites = all;
     // romaji, craftish.dev and tylercraft.com are all on Cloudflare Pages.
     expect(
       sites
