@@ -78,7 +78,7 @@ final class Admin {
 					</h1>
 					<span class="cc-status<?php echo $connected ? '' : ' cc-status--off'; ?>"><span class="cc-dot" aria-hidden="true"></span><?php echo esc_html( $connected ? 'Connected' : ( $disconnected ? 'Disconnected' : 'Not connected' ) ); ?></span>
 				</div>
-				<p class="cc-intro">A connection to Craftish, so I can keep an eye on this site’s software versions, available updates, and Site Health, and run the updates I approve.</p>
+				<p class="cc-intro">A connection to Craftish, so I can keep an eye on this site’s software versions, available updates, and Site Health, and run the updates Craftish approves.</p>
 			</header>
 
 			<div class="cc-connection">
