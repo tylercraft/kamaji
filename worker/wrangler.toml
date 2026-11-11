@@ -8,6 +8,14 @@ workers_dev = true
 # No per-version preview addresses: only the one workers.dev address answers.
 preview_urls = false
 
+# Craftish Care's signed release channel (docs/protocol.md, "Self-update"): info.json and the
+# zips under channel/craftish-care/, built on the laptop by scripts/care-release.mjs. Served as
+# static files, before the Worker's code runs, on the plugin's Update URI.
+routes = [{ pattern = "care.craftish.dev", custom_domain = true }]
+
+[assets]
+directory = "./channel"
+
 [triggers]
 crons = ["*/5 * * * *"]
 

@@ -4,7 +4,9 @@
 //   PUT /v1/sites     replaces the list of sites to check (JSON: [{id, name, url, expectedText}])
 //   POST /v1/check/<id>  checks one listed site now (the updater, straight after a run)
 //
-// Both need `Authorization: Bearer <KAMAJI_TOKEN>`. Secrets (wrangler secret put):
+// All need `Authorization: Bearer <KAMAJI_TOKEN>`, on the workers.dev address. care.craftish.dev
+// serves only Craftish Care's release channel (static files in channel/, wrangler.toml); the API
+// isn't there at all. Secrets (wrangler secret put):
 // KAMAJI_TOKEN, DISCORD_WEBHOOK_URL. Var: KAMAJI_URL. KV binding: KAMAJI.
 import {
   applyOne,
@@ -17,6 +19,7 @@ import {
 } from './watch.js';
 
 const KEY = 'state';
+const CHANNEL_HOST = 'care.craftish.dev';
 
 async function load(env) {
   return (await env.KAMAJI.get(KEY, 'json')) ?? emptyState();
@@ -57,11 +60,13 @@ export default {
   },
 
   async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.hostname === CHANNEL_HOST) return new Response('Not found', { status: 404 });
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (!(await tokenMatches(token, env.KAMAJI_TOKEN))) return json({ error: 'forbidden' }, 403);
 
-    const { pathname } = new URL(request.url);
+    const { pathname } = url;
     if (pathname === '/v1/results' && request.method === 'GET') return json(await load(env));
     if (pathname === '/v1/sites' && request.method === 'PUT') {
       let sites;
