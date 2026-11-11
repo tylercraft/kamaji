@@ -79,6 +79,7 @@ async function healthy(): Promise<void> {
 }
 
 function install(file: string, version: string): void {
+  synced(); // The upgrader's copy lands here first (ddev.ts, synced).
   const dir = new URL(`${file.split('/')[0]}/`, PLUGINS);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -89,6 +90,7 @@ function install(file: string, version: string): void {
 
 /** A zip the DDEV site serves to itself, and WordPress offering it. */
 function offer(offers: Record<string, { version: string; breaks?: boolean }>): void {
+  synced();
   mkdirSync(FIXTURES, { recursive: true });
   const value: Record<string, { version: string; package: string }> = {};
   for (const [file, o] of Object.entries(offers)) {
@@ -176,7 +178,7 @@ const items = (batchId: string) =>
     );
 
 beforeAll(async () => {
-  freshInstall();
+  reset();
   mkdirSync(MU, { recursive: true });
   writeFileSync(new URL('kamaji-done-offers.php', MU), OFFERS_MU);
   synced();
@@ -204,20 +206,32 @@ beforeAll(async () => {
   });
 }, 600_000);
 
-afterAll(() => {
-  wp('option', 'delete', 'kamaji_done_offers');
-  wp('option', 'delete', 'kamaji_done_slow');
+/**
+ * Everything the done test sets up, removed: run before it starts, so it never depends on what an
+ * earlier run or test file left behind, and again after.
+ */
+function reset(): void {
+  synced();
+  for (const name of ['kamaji_done_offers', 'kamaji_done_slow', 'craftish_care_lock']) {
+    try {
+      wp('option', 'delete', name);
+    } catch {
+      // Not set.
+    }
+  }
   for (const file of [ONE, TWO]) {
     try {
       wp('plugin', 'deactivate', file.split('/')[0]!);
     } catch {
-      // Already gone.
+      // Not installed or not active.
     }
     rmSync(new URL(`${file.split('/')[0]}/`, PLUGINS), { recursive: true, force: true });
   }
   rmSync(FIXTURES, { recursive: true, force: true });
-  rmSync(new URL('kamaji-done-offers.php', MU), { force: true });
-  rmSync(new URL('kamaji-done-no-finish.php', MU), { force: true });
+  for (const mu of ['kamaji-done-offers.php', 'kamaji-done-no-finish.php']) {
+    rmSync(new URL(mu, MU), { force: true });
+  }
+  rmSync(new URL('.maintenance', DOCROOT), { force: true });
   synced();
   try {
     wp('config', 'delete', 'DISABLE_WP_CRON', '--type=constant');
@@ -225,7 +239,9 @@ afterAll(() => {
     // Not set.
   }
   freshInstall();
-});
+}
+
+afterAll(reset);
 
 describe('M4’s done test on DDEV', () => {
   it('a good update: WordPress itself, then a plugin, each checked after', async () => {
