@@ -30,6 +30,12 @@ export function keysFile(keys: CareKeys, site: string, at: Date): string {
     `define( 'CRAFTISH_CARE_REPORT_KEY', ${php(publicKeyBase64(keys.report.privateKey))} );`,
     `define( 'CRAFTISH_CARE_UPDATE_KEY_ID', ${php(keys.updatePublic.id)} );`,
     `define( 'CRAFTISH_CARE_UPDATE_KEY', ${php(keys.updatePublic.publicKey)} );`,
+    ...(keys.releasePublic
+      ? [
+          `define( 'CRAFTISH_CARE_RELEASE_KEY_ID', ${php(keys.releasePublic.id)} );`,
+          `define( 'CRAFTISH_CARE_RELEASE_KEY', ${php(keys.releasePublic.publicKey)} );`,
+        ]
+      : []),
     '',
   ].join('\n');
 }
@@ -92,11 +98,20 @@ export function zip(entries: { name: string; data: Buffer }[], at: Date): Buffer
 }
 
 /** The plugin, from `pluginDir`, with this site's keys file. */
-export function pluginZip(pluginDir: string, keys: CareKeys, site: string, at: Date): Buffer {
-  const entries = pluginFiles(pluginDir).map((path) => ({
+function pluginEntries(pluginDir: string): { name: string; data: Buffer }[] {
+  return pluginFiles(pluginDir).map((path) => ({
     name: `craftish-care/${relative(pluginDir, path).split(sep).join('/')}`,
     data: readFileSync(path),
   }));
+}
+
+/** A release for the signed channel: the plugin alone, with no site's keys file. */
+export function releaseZip(pluginDir: string, at: Date): Buffer {
+  return zip(pluginEntries(pluginDir), at);
+}
+
+export function pluginZip(pluginDir: string, keys: CareKeys, site: string, at: Date): Buffer {
+  const entries = pluginEntries(pluginDir);
   entries.push({
     name: 'craftish-care/craftish-care-keys.php',
     data: Buffer.from(keysFile(keys, site, at), 'utf8'),

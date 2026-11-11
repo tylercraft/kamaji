@@ -24,6 +24,11 @@ export interface CareKeys {
   updatePublic: { id: string; publicKey: string };
   /** Only where disconnect may be signed: the laptop now, the updater from M4. */
   update: SigningKey | undefined;
+  /**
+   * The release key's public half, for the zip: it verifies Craftish Care's own signed packages
+   * (docs/protocol.md, "Self-update"). Its private half is only ever on the laptop.
+   */
+  releasePublic: { id: string; publicKey: string } | undefined;
 }
 
 export function privateKeyFromSeed(seedBase64: string): KeyObject {
@@ -56,6 +61,7 @@ export function newKeyPair(): { seed: string; publicKey: string } {
 export function loadCareKeys(env: NodeJS.ProcessEnv): CareKeys | undefined {
   const reportId = env.KAMAJI_CARE_REPORT_KEY_ID ?? 'r1';
   const updateId = env.KAMAJI_CARE_UPDATE_KEY_ID ?? 'u1';
+  const releaseId = env.KAMAJI_CARE_RELEASE_KEY_ID ?? 'p1';
   const reportSeed = env.KAMAJI_CARE_REPORT_KEY;
   if (!reportSeed || !KEY_ID.test(reportId) || !KEY_ID.test(updateId) || reportId === updateId) {
     return undefined;
@@ -69,5 +75,20 @@ export function loadCareKeys(env: NodeJS.ProcessEnv): CareKeys | undefined {
     ? publicKeyBase64(update.privateKey)
     : env.KAMAJI_CARE_UPDATE_PUBLIC_KEY;
   if (!updatePublicKey || Buffer.from(updatePublicKey, 'base64').length !== 32) return undefined;
-  return { report, update, updatePublic: { id: updateId, publicKey: updatePublicKey } };
+  // From the seed on the laptop (to sign test releases), else the public half from checker.
+  const releasePublicKey = env.KAMAJI_CARE_RELEASE_KEY
+    ? publicKeyBase64(privateKeyFromSeed(env.KAMAJI_CARE_RELEASE_KEY))
+    : env.KAMAJI_CARE_RELEASE_PUBLIC_KEY;
+  const releaseOk =
+    releasePublicKey !== undefined &&
+    Buffer.from(releasePublicKey, 'base64').length === 32 &&
+    KEY_ID.test(releaseId) &&
+    releaseId !== reportId &&
+    releaseId !== updateId;
+  return {
+    report,
+    update,
+    updatePublic: { id: updateId, publicKey: updatePublicKey },
+    releasePublic: releaseOk ? { id: releaseId, publicKey: releasePublicKey } : undefined,
+  };
 }

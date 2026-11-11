@@ -15,13 +15,19 @@ final class Store {
 	const LOG          = 'craftish_care_log';
 	const REFUSALS     = 'craftish_care_refusals';
 	const REFRESHED    = 'craftish_care_refreshed';
+	const RELEASE_KEY  = 'craftish_care_release_key';
+	const RELEASE      = 'craftish_care_release';
+	const JOBS         = 'craftish_care_jobs';
+	const LOCK         = 'craftish_care_lock';
 	const NONCE_PREFIX = 'craftish_care_n_';
 
 	const LOG_SIZE  = 200;
 	const NONCE_TTL = 900; // 15 minutes: longer than the 300-second window either side of now.
+	const JOBS_KEPT = 20;
+	const LOCK_TTL  = 900; // One job at a time; a lock older than 15 minutes is a run that died.
 
 	/** Every option this plugin may write, for uninstall. Nonces are matched by prefix. */
-	const OPTIONS = array( self::REPORT_KEY, self::UPDATE_KEY, self::DISCONNECTED, self::LOG, self::REFUSALS, self::REFRESHED );
+	const OPTIONS = array( self::REPORT_KEY, self::UPDATE_KEY, self::DISCONNECTED, self::LOG, self::REFUSALS, self::REFRESHED, self::RELEASE_KEY, self::RELEASE, self::JOBS, self::LOCK );
 
 	/**
 	 * A key from the keys file: an id like "r1" and a base64 Ed25519 public key.
@@ -48,6 +54,17 @@ final class Store {
 		update_option( self::UPDATE_KEY, $update, true );
 	}
 
+	/** The release key, which signs Craftish Care's own packages. Never a request key. */
+	public static function save_release_key( array $key ): void {
+		update_option( self::RELEASE_KEY, $key, false );
+	}
+
+	/** @return array{use: string, id: string, public: string}|null */
+	public static function release_key(): ?array {
+		$key = get_option( self::RELEASE_KEY );
+		return is_array( $key ) && isset( $key['id'], $key['use'], $key['public'] ) && 'release' === $key['use'] ? $key : null;
+	}
+
 	/** @return array<string, array{use: string, id: string, public: string}> Keys by id. */
 	public static function keys(): array {
 		$keys = array();
@@ -70,7 +87,68 @@ final class Store {
 		update_option( self::DISCONNECTED, time(), false );
 		delete_option( self::REPORT_KEY );
 		delete_option( self::UPDATE_KEY );
+		delete_option( self::RELEASE_KEY );
+		delete_option( self::RELEASE );
 		self::delete_nonces( null );
+	}
+
+	/** @return array<string, array<string, mixed>> The last JOBS_KEPT jobs, by id. */
+	public static function jobs(): array {
+		$jobs = get_option( self::JOBS, array() );
+		return is_array( $jobs ) ? $jobs : array();
+	}
+
+	public static function job( string $id ): ?array {
+		return self::jobs()[ $id ] ?? null;
+	}
+
+	public static function save_job( array $job ): void {
+		$jobs                = self::jobs();
+		$jobs[ $job['job'] ] = $job;
+		update_option( self::JOBS, array_slice( $jobs, -self::JOBS_KEPT, null, true ), false );
+	}
+
+	/**
+	 * Takes the one-job lock, atomically, as use_nonce does: INSERT IGNORE lets exactly one of two
+	 * racing requests in. A lock older than LOCK_TTL is cleared first.
+	 */
+	public static function lock( string $job ): bool {
+		global $wpdb;
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND CAST(SUBSTRING_INDEX(option_value, ' ', 1) AS UNSIGNED) < %d",
+				self::LOCK,
+				time() - self::LOCK_TTL
+			)
+		);
+		$rows = $wpdb->query(
+			$wpdb->prepare(
+				"INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'off')",
+				self::LOCK,
+				time() . ' ' . $job
+			)
+		);
+		wp_cache_delete( self::LOCK, 'options' );
+		return 1 === $rows;
+	}
+
+	/** The job holding the lock and since when, or null. */
+	public static function lock_holder(): ?array {
+		global $wpdb;
+		$value = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::LOCK ) );
+		if ( ! is_string( $value ) || ! preg_match( '/^(\d+) (\S+)$/', $value, $m ) ) {
+			return null;
+		}
+		return array(
+			'at'  => (int) $m[1],
+			'job' => $m[2],
+		);
+	}
+
+	public static function unlock( string $job ): void {
+		global $wpdb;
+		$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value LIKE %s", self::LOCK, '% ' . $wpdb->esc_like( $job ) ) );
+		wp_cache_delete( self::LOCK, 'options' );
 	}
 
 	/**

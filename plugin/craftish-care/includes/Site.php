@@ -11,7 +11,7 @@ defined( 'ABSPATH' ) || exit;
 final class Site {
 	const REFRESH_EVERY = 600;
 
-	private static function load_admin(): void {
+	public static function load_admin(): void {
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		require_once ABSPATH . 'wp-admin/includes/theme.php';
 		require_once ABSPATH . 'wp-admin/includes/file.php';

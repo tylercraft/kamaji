@@ -16,6 +16,7 @@ final class Auth {
 		'hello'      => 'report',
 		'report'     => 'report',
 		'status'     => 'report',
+		'update'     => 'update',
 		'disconnect' => 'update',
 	);
 

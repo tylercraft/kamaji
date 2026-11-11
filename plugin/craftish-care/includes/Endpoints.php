@@ -52,6 +52,7 @@ final class Endpoints {
 			return self::refuse( $endpoint, $check[0], $check[1] );
 		}
 
+		adopt_release_key();
 		$key  = $check['key']['id'];
 		$args = json_decode( $body, true );
 		if ( ! is_array( $args ) || array_is_list( $args ) && array() !== $args ) {
@@ -70,14 +71,10 @@ final class Endpoints {
 				$data = Site::report( true === ( $args['refresh'] ?? false ) );
 				Store::log( 'report', $key, $data['refreshed'] ? 'ok, refreshed' : 'ok' );
 				return self::ok( $data );
+			case 'update':
+				return self::respond( Jobs::start( $args, $key ) );
 			case 'status':
-				$job = $args['job'] ?? null;
-				if ( ! is_string( $job ) || ! preg_match( '/^[A-Za-z0-9-]{1,64}$/', $job ) ) {
-					Store::log( 'status', $key, 'bad_body' );
-					return self::error( 400, 'bad_body' );
-				}
-				Store::log( 'status', $key, 'unknown_job' );
-				return self::error( 404, 'unknown_job' ); // No update jobs until M4.
+				return self::respond( Jobs::status( $args, $key ) );
 			case 'disconnect':
 				Store::log( 'disconnect', $key, 'ok' );
 				Store::disconnect();
@@ -93,6 +90,13 @@ final class Endpoints {
 			Store::log( $endpoint, null, 'rate_limited for 10 minutes' );
 		}
 		return self::error( $status, $code );
+	}
+
+	/** @param array{0: int, 1: array<string, mixed>} $answer */
+	private static function respond( array $answer ): \WP_REST_Response {
+		$response = new \WP_REST_Response( $answer[1], $answer[0] );
+		$response->header( 'Cache-Control', 'no-store' );
+		return $response;
 	}
 
 	private static function ok( array $data ): \WP_REST_Response {
