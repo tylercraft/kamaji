@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { Inventory } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
+import { MU_PLUGINS_UNREAD } from './report.js';
 import { compare, MainwpAbandoned, MainwpList, MainwpSite, type MainwpExport } from './mainwp.js';
 
 const fixture = (name: string): unknown =>
@@ -63,6 +64,7 @@ const inventory = (): Inventory => ({
       vulnerabilities: [],
     },
   ],
+  muPlugins: { known: false, reason: MU_PLUGINS_UNREAD },
   themes: [
     {
       stylesheet: 'example-theme',
@@ -95,6 +97,7 @@ describe('comparing with MainWP', () => {
     expect(result.differences).toEqual([]);
     expect(result.matched).toContain('example-forms/example-forms.php update');
     expect(result.notes).toEqual([
+      'example-mu.php: Must-use; Kamaji reads these from Craftish Care 0.2.0',
       'craftish-care/craftish-care.php: only in Kamaji',
       'mainwp-child/mainwp-child.php: only in MainWP',
       'theme example-theme: MainWP has no version; Kamaji 1.0',
@@ -116,6 +119,21 @@ describe('comparing with MainWP', () => {
     expect(result.notes).toContain(
       'example-forms/example-forms.php: updated 2.1.0 → 2.2.0 since MainWP’s sync',
     );
+  });
+
+  it('compares must-use plugins once Craftish Care reports them', () => {
+    const ours = inventory();
+    ours.muPlugins = {
+      known: true,
+      value: [
+        { file: 'example-mu.php', name: 'Example Must-use', version: '1.0.1' },
+        { file: 'host-mu.php', name: 'Host', version: '3.0' },
+      ],
+    };
+    expect(compare(ours, mainwp).differences).toEqual([
+      'example-mu.php version: Kamaji 1.0.1, MainWP 1.0.0',
+      'host-mu.php: must-use, only in Kamaji',
+    ]);
   });
 
   it('names every difference', () => {

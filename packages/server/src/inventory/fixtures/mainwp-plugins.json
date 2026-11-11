@@ -1,6 +1,6 @@
 {
   "success": 1,
-  "total": 3,
+  "total": 4,
   "data": [
     {
       "slug": "example-forms/example-forms.php",
@@ -22,7 +22,19 @@
       "version": "6.4.1",
       "active": true,
       "update_version": null
+    },
+    {
+      "slug": "example-mu.php",
+      "name": "Example Must-use",
+      "version": "1.0.0",
+      "active": true,
+      "update_version": null
     }
   ],
-  "site": { "id": "1", "name": "example.test", "url": "https://example.test/", "client_id": "0" }
+  "site": {
+    "id": "1",
+    "name": "example.test",
+    "url": "https://example.test/",
+    "client_id": "0"
+  }
 }

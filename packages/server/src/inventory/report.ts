@@ -24,6 +24,7 @@ export const REFRESH_EVERY_MS = 24 * 60 * 60 * 1000;
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export const REPORT_CHECK = 'report';
+export const MU_PLUGINS_UNREAD = 'Must-use; Kamaji reads these from Craftish Care 0.2.0';
 
 export type ReportValue =
   | {
@@ -34,12 +35,14 @@ export type ReportValue =
       database: string;
       checkedAt: CareReport['checked_at'];
       siteHealth: CareReport['site_health'];
+      /** Whether the report listed must-use plugins (Craftish Care 0.2.0 and later). */
+      muPlugins?: boolean;
       counts: { plugins: number; themes: number; offers: number };
     }
   | { ok: false; problem: string };
 
 type Row = Record<string, unknown>;
-type Kind = 'core' | 'plugin' | 'theme';
+type Kind = 'core' | 'plugin' | 'mu-plugin' | 'theme';
 
 interface Component {
   type: Kind;
@@ -81,6 +84,18 @@ function components(report: CareReport): Component[] {
       parent: null,
       offerVersion: p.offer?.version ?? null,
       offerPackage: p.offer ? p.offer.package : null,
+    })),
+    ...(report.mu_plugins ?? []).map((m) => ({
+      type: 'mu-plugin' as const,
+      item: m.file,
+      slug: null,
+      name: m.name,
+      version: m.version,
+      active: true,
+      autoUpdate: null,
+      parent: null,
+      offerVersion: null,
+      offerPackage: null,
     })),
     ...report.themes.map((t) => ({
       type: 'theme' as const,
@@ -177,6 +192,8 @@ export function storeReport(
   );
   for (const [key, row] of current) {
     if (seen.has(key)) continue;
+    // A report from before 0.2.0 says nothing about must-use plugins; that isn't "gone".
+    if (row.type === 'mu-plugin' && !report.mu_plugins) continue;
     gone.run(now, site.id, String(row.type), String(row.item));
     event(`${String(row.name)} is no longer on ${site.name}`, {
       type: String(row.type),
@@ -246,6 +263,7 @@ export async function reportSite(
         database: report.database.server,
         checkedAt: report.checked_at,
         siteHealth: report.site_health,
+        muPlugins: report.mu_plugins !== undefined,
         counts: {
           plugins: report.plugins.length,
           themes: report.themes.length,
@@ -429,6 +447,18 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
           directory: directoryStatus(db, String(r.slug)),
           vulnerabilities: vulns('plugin', String(r.item)),
         })),
+      muPlugins: value.muPlugins
+        ? {
+            known: true,
+            value: rows
+              .filter((r) => r.type === 'mu-plugin')
+              .map((r) => ({
+                file: String(r.item),
+                name: String(r.name),
+                version: String(r.version),
+              })),
+          }
+        : { known: false, reason: MU_PLUGINS_UNREAD },
       themes: rows
         .filter((r) => r.type === 'theme')
         .map((r) => ({

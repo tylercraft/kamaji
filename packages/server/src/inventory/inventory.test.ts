@@ -124,6 +124,44 @@ describe('the report', () => {
     ).toEqual({ gone_at: T + HOUR });
   });
 
+  it('lists must-use plugins from 0.2.0, and an older report leaves them unknown, not gone', async () => {
+    const db = testDb();
+    connectedSite(db);
+    const withMu = {
+      ...structuredClone(REPORT),
+      mu_plugins: [{ file: 'example-mu.php', name: 'Example Must-use', version: '1.0.0' }],
+    };
+    const { send } = plugin([() => good(REPORT), () => good(withMu), () => good(REPORT)]);
+    const inventory = () => {
+      const i = siteInventory(db, { id: SITE.id, mode: 'connected' });
+      return i.known ? i.value : null;
+    };
+
+    await reportSite(db, SITE, keys, send, () => T);
+    expect(inventory()?.muPlugins).toEqual({
+      known: false,
+      reason: 'Must-use; Kamaji reads these from Craftish Care 0.2.0',
+    });
+
+    await reportSite(db, SITE, keys, send, () => T + HOUR);
+    expect(inventory()?.muPlugins).toEqual({
+      known: true,
+      value: [{ file: 'example-mu.php', name: 'Example Must-use', version: '1.0.0' }],
+    });
+    // Listed only: no offer, no wordpress.org lookup, no vulnerability match.
+    expect(inventory()?.plugins.map((p) => p.file)).not.toContain('example-mu.php');
+    expect(updatesWaiting(db, { id: SITE.id, mode: 'connected' })).toEqual({
+      known: true,
+      value: 1,
+    });
+
+    await reportSite(db, SITE, keys, send, () => T + 2 * HOUR);
+    expect(
+      db.prepare("SELECT gone_at FROM components WHERE item = 'example-mu.php'").get(),
+    ).toEqual({ gone_at: null });
+    expect(inventory()?.muPlugins.known).toBe(false);
+  });
+
   it('asks hourly, has WordPress recheck once a day, and keeps the last good inventory on failure', async () => {
     const db = testDb();
     connectedSite(db);

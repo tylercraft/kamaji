@@ -292,4 +292,32 @@ export const migrations: Migration[] = [
       CREATE INDEX vulnerabilities_software ON vulnerabilities (software_type, slug);
     `,
   },
+  {
+    version: 11,
+    name: 'must-use plugins',
+    // Craftish Care 0.2.0 reports must-use plugins (docs/protocol.md): listed only, never
+    // updated, looked up or matched. SQLite can't change a CHECK, so the table is rebuilt.
+    sql: `
+      CREATE TABLE components_new (
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        type TEXT NOT NULL CHECK (type IN ('core', 'plugin', 'mu-plugin', 'theme')),
+        item TEXT NOT NULL,
+        slug TEXT,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        auto_update INTEGER CHECK (auto_update IN (0, 1)),
+        parent TEXT,
+        offer_version TEXT,
+        offer_package INTEGER CHECK (offer_package IN (0, 1)),
+        first_seen_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        gone_at INTEGER,
+        PRIMARY KEY (site_id, type, item)
+      );
+      INSERT INTO components_new SELECT * FROM components;
+      DROP TABLE components;
+      ALTER TABLE components_new RENAME TO components;
+    `,
+  },
 ];

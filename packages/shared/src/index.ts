@@ -159,6 +159,10 @@ export const CareReport = z.object({
       offer: CareOffer,
     }),
   ),
+  /** From Craftish Care 0.2.0: wp-content/mu-plugins' top-level files, as WordPress loads them. */
+  mu_plugins: z
+    .array(z.object({ file: z.string(), name: z.string(), version: z.string() }))
+    .optional(),
   php: z.string(),
   database: z.object({ server: z.string(), version: z.string() }),
   checked_at: z.object({
@@ -239,6 +243,14 @@ export const InventoryTheme = z.object({
 });
 export type InventoryTheme = z.infer<typeof InventoryTheme>;
 
+/** A must-use plugin: listed only. WordPress never updates one, and Kamaji doesn't check it. */
+export const InventoryMuPlugin = z.object({
+  file: z.string(),
+  name: z.string(),
+  version: z.string(),
+});
+export type InventoryMuPlugin = z.infer<typeof InventoryMuPlugin>;
+
 /** A connected site's inventory, from its last good report. */
 export const Inventory = z.object({
   reportedAt: Timestamp,
@@ -264,6 +276,8 @@ export const Inventory = z.object({
   php: z.string(),
   database: z.string(),
   plugins: z.array(InventoryPlugin),
+  /** Unknown when the site's Craftish Care is older than 0.2.0. */
+  muPlugins: known(z.array(InventoryMuPlugin)),
   themes: z.array(InventoryTheme),
   siteHealth: z.array(z.object({ test: z.string(), label: z.string() })),
   /** The latest report failed: what's shown is from reportedAt and must say so. */

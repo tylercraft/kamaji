@@ -92,6 +92,45 @@ function SecurityCell({
   );
 }
 
+/** Listed only: WordPress never updates them, and Kamaji doesn't look them up or match them. */
+function MuPlugins({ muPlugins }: { muPlugins: Inventory['muPlugins'] }) {
+  const caption = (n?: number) => (
+    <caption css={{ textAlign: 'left', fontWeight: 600, padding: '4px 0 8px' }}>
+      Must-use plugins{n === undefined ? '' : ` (${n})`}
+    </caption>
+  );
+  if (!muPlugins.known) return <Muted>{muPlugins.reason}</Muted>;
+  if (muPlugins.value.length === 0) return null;
+  return (
+    <div css={{ overflowX: 'auto' }}>
+      <Table>
+        {caption(muPlugins.value.length)}
+        <thead>
+          <tr>
+            <th scope="col">Plugin</th>
+            <th scope="col">Version</th>
+            <th scope="col">Security</th>
+          </tr>
+        </thead>
+        <tbody>
+          {muPlugins.value.map((p) => (
+            <tr key={p.file}>
+              <td>
+                {p.name}
+                <Muted>{p.file}</Muted>
+              </td>
+              <td>{p.version || <Muted>None given</Muted>}</td>
+              <td>
+                <Muted>Not checked</Muted>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </div>
+  );
+}
+
 export function InventoryPanel({
   detail,
   reload,
@@ -242,7 +281,7 @@ export function InventoryPanel({
                       {p.name}
                       <Muted>{p.file}</Muted>
                     </td>
-                    <td>{p.version}</td>
+                    <td>{p.version || <Muted>None given</Muted>}</td>
                     <td>
                       <OfferCell offer={p.offer} />
                     </td>
@@ -262,6 +301,7 @@ export function InventoryPanel({
               </tbody>
             </Table>
           </div>
+          <MuPlugins muPlugins={inventory.value.muPlugins} />
           <div css={{ overflowX: 'auto' }}>
             <Table>
               <caption css={{ textAlign: 'left', fontWeight: 600, padding: '4px 0 8px' }}>
@@ -287,7 +327,7 @@ export function InventoryPanel({
                         {t.parent ? ` · child of ${t.parent}` : ''}
                       </Muted>
                     </td>
-                    <td>{t.version}</td>
+                    <td>{t.version || <Muted>None given</Muted>}</td>
                     <td>
                       <OfferCell offer={t.offer} />
                     </td>

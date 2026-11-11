@@ -4,6 +4,7 @@
 // 2026-11-09; the fixtures are copies with invented names.
 import type { Inventory } from '@kamaji/shared';
 import { z } from 'zod';
+import { MU_PLUGINS_UNREAD } from './report.js';
 
 const Item = z.object({
   /** For plugins, MainWP's "slug" is the plugin file, like "akismet/akismet.php". */
@@ -92,7 +93,24 @@ export function compare(kamaji: Inventory, mainwp: MainwpExport): Comparison {
   }
 
   const ours = new Map(kamaji.plugins.map((p) => [p.file, p]));
-  const theirs = new Map(mainwp.plugins.data.map((p) => [p.slug, p]));
+  // MainWP lists must-use plugins with the rest, unmarked. One it has that Kamaji's plugins
+  // don't, with no folder, is must-use: WordPress lists every other plugin, single files too.
+  const mu = kamaji.muPlugins.known
+    ? new Map(kamaji.muPlugins.value.map((p) => [p.file, p]))
+    : null;
+  const isMu = (file: string) => !ours.has(file) && !file.includes('/');
+  const theirs = new Map(mainwp.plugins.data.filter((p) => !isMu(p.slug)).map((p) => [p.slug, p]));
+  for (const m of mainwp.plugins.data.filter((p) => isMu(p.slug))) {
+    const k = mu?.get(m.slug);
+    if (!mu) notes.push(`${m.slug}: ${MU_PLUGINS_UNREAD}`);
+    else if (!k) differences.push(`${m.slug}: only in MainWP`);
+    else same(`${m.slug} version`, k.version, m.version);
+  }
+  for (const k of mu?.values() ?? []) {
+    if (!mainwp.plugins.data.some((m) => m.slug === k.file)) {
+      differences.push(`${k.file}: must-use, only in Kamaji`);
+    }
+  }
   for (const file of new Set([...ours.keys(), ...theirs.keys()])) {
     const k = ours.get(file);
     const m = theirs.get(file);

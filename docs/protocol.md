@@ -62,7 +62,7 @@ Only after all seven does the endpoint read the body: it must be a JSON object, 
 
 ### The report
 
-Core (installed, offered updates with version and locale), every plugin (file, slug, name, version, active, auto-update on or off, offered version if any, and whether the offer has a package: a paid plugin with no licence offers a version but no package), every theme (likewise, plus which is active and its parent), PHP and database versions, the last time WordPress checked for updates, and Site Health's critical direct tests. Nothing else: no users, options, content or file lists.
+Core (installed, offered updates with version and locale), every plugin (file, slug, name, version, active, auto-update on or off, offered version if any, and whether the offer has a package: a paid plugin with no licence offers a version but no package), every theme (likewise, plus which is active and its parent), from 0.2.0 every must-use plugin (`mu_plugins`: file, name and version from the header of each top-level file in `wp-content/mu-plugins`, as `get_mu_plugins()` reads them; listed only, since WordPress never updates them; absent before 0.2.0, which Kamaji shows as unknown, never as none), PHP and database versions, the last time WordPress checked for updates, and Site Health's critical direct tests. Nothing else: no users, options, content or file lists.
 
 ### Update jobs
 
