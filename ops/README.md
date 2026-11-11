@@ -10,7 +10,7 @@ One Node process under the LaunchAgent `dev.craftish.kamaji`: the app, the check
   - `DISCORD_WEBHOOK_URL`: the `#kamaji` channel's webhook. The Worker keeps its own copy in Cloudflare's secrets.
   - `KAMAJI_WORKER_URL` and `KAMAJI_WORKER_TOKEN`: the Worker's `workers.dev` address and the bearer token it expects (`worker/README.md`). Outside checks are off until both are set.
   - `WORDFENCE_API_KEY`: the Wordfence Intelligence v3 feed key (wordfence.com, Integrations). Without it, vulnerabilities show as unknown, never as none.
-  - `KAMAJI_CARE_REPORT_KEY`: the base64 seed of craftish-care's report key (`docs/protocol.md`), with `KAMAJI_CARE_UPDATE_PUBLIC_KEY`, the update key's public half (not secret, but kept beside it), and optionally `KAMAJI_CARE_REPORT_KEY_ID` and `KAMAJI_CARE_UPDATE_KEY_ID` (defaults `r1`, `u1`). Made once, on the laptop, by `node scripts/care-keys-doppler.mjs`, which sends each half straight into Doppler and refuses to replace one; until they're set, Add site offers monitoring only. The update key's private half is never in `checker`: it's `KAMAJI_CARE_UPDATE_KEY` in the `updater` config, which nothing reads before M4. `KAMAJI_CARE_RELEASE_PUBLIC_KEY` (and optionally `KAMAJI_CARE_RELEASE_KEY_ID`, default `p1`) is the release key's public half, built into each site's zip from Craftish Care 0.2.0; `node scripts/care-keys-doppler.mjs --release` makes it.
+  - `KAMAJI_CARE_REPORT_KEY`: the base64 seed of craftish-care's report key (`docs/protocol.md`), with `KAMAJI_CARE_UPDATE_PUBLIC_KEY`, the update key's public half (not secret, but kept beside it), and optionally `KAMAJI_CARE_REPORT_KEY_ID` and `KAMAJI_CARE_UPDATE_KEY_ID` (defaults `r1`, `u1`). Made once, on the laptop, by `node scripts/care-keys-doppler.mjs`, which sends each half straight into Doppler and refuses to replace one; until they're set, Add site offers monitoring only. The update key's private half is never in `checker`: it's `KAMAJI_CARE_UPDATE_KEY` in the `updater` config, which only the updater reads ("The updater" below). That config also holds copies of `KAMAJI_CARE_REPORT_KEY` (the updater asks for status and reports with it), `KAMAJI_WORKER_URL` and `KAMAJI_WORKER_TOKEN` (it pauses a site's outside check during its run), and optionally `KAMAJI_BACKUP_SSH_KEY` (default `~/.ssh/kamaji-backup`). `KAMAJI_CARE_RELEASE_PUBLIC_KEY` (and optionally `KAMAJI_CARE_RELEASE_KEY_ID`, default `p1`) is the release key's public half, built into each site's zip from Craftish Care 0.2.0; `node scripts/care-keys-doppler.mjs --release` makes it.
 - **Release secrets:** Doppler project `kamaji`, config `release`, read only on the laptop, never the mini. Names only:
   - `KAMAJI_CARE_RELEASE_KEY`: the base64 seed of the release key, which signs Craftish Care's packages for its self-update channel (`docs/protocol.md`, "Self-update"). Used by `scripts/care-release.mjs`.
 - **Deploy secrets:** Doppler project `kamaji`, config `deploy`, read only on the laptop, where `~/kamaji/worker` is linked to it. The mini never has it, and `checker` never holds Cloudflare credentials. Names only:
@@ -170,9 +170,79 @@ On the mini:
 
 Kamaji picks it up on its next cycle; no restart needed.
 
+## The updater
+
+A second LaunchAgent, `dev.craftish.kamaji-updater` (`ops/dev.craftish.kamaji-updater.plist`), runs approved batches (`packages/server/src/updater/`) and exits. The app starts it with `launchctl kickstart` when a batch is approved (`KAMAJI_UPDATER=launchd` in the app's plist), and again each cycle while a batch has work left, so a restart mid-run is reconciled. It runs under Doppler's `updater` config, scoped to `~/.kamaji-updater`, so the update key is in that process only; the app never has it. Same macOS user for now; a separate user is in M6's plan. It logs to `~/Library/Logs/kamaji-updater.log`.
+
+While it updates a site, it pauses that site's uptime alerts on both paths: the mini's checks skip it (`sites.updating_until`, renewed as it goes, so it lapses by itself if the updater dies), and it sends the Worker the list without that site at once. After the site's run it sends the full list again, has the Worker check that site straight away (`POST /v1/check/<id>`), and re-checks it from the mini.
+
+Not yet: these steps run with M4's release, after the Worker with the release channel is deployed.
+
+In Doppler (the laptop):
+
+1. Copy the three values the updater needs from `checker` into `updater`, straight from one to the other (nothing is shown; run each):
+
+```
+/opt/homebrew/bin/doppler secrets get KAMAJI_CARE_REPORT_KEY --plain --project kamaji --config checker | /opt/homebrew/bin/doppler secrets set KAMAJI_CARE_REPORT_KEY --project kamaji --config updater --silent > /dev/null
+```
+
+```
+/opt/homebrew/bin/doppler secrets get KAMAJI_WORKER_URL --plain --project kamaji --config checker | /opt/homebrew/bin/doppler secrets set KAMAJI_WORKER_URL --project kamaji --config updater --silent > /dev/null
+```
+
+```
+/opt/homebrew/bin/doppler secrets get KAMAJI_WORKER_TOKEN --plain --project kamaji --config checker | /opt/homebrew/bin/doppler secrets set KAMAJI_WORKER_TOKEN --project kamaji --config updater --silent > /dev/null
+```
+
+2. Check the names (expect the three above and `KAMAJI_CARE_UPDATE_KEY`, plus Doppler's own):
+
+```
+/opt/homebrew/bin/doppler secrets --only-names --project kamaji --config updater
+```
+
+3. In Doppler's dashboard, make a service token for `kamaji` → `updater` (read only), to paste in step 5.
+
+On the mini:
+
+4. Make the scope folder:
+
+```
+/bin/mkdir -p -m 700 /Users/tylercraft/.kamaji-updater
+```
+
+5. Give it the updater token, pasted at the silent prompt:
+
+```
+read -rs T && /opt/homebrew/bin/doppler configure set token "$T" --scope /Users/tylercraft/.kamaji-updater && unset T
+```
+
+6. Check the names it sees (expect the same as step 2):
+
+```
+/opt/homebrew/bin/doppler secrets --only-names --scope /Users/tylercraft/.kamaji-updater
+```
+
+7. Install the updater's LaunchAgent (loaded, not started):
+
+```
+/bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-updater.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-updater.plist
+```
+
+8. Install the app's plist again, with `KAMAJI_UPDATER=launchd`, and restart the app with it:
+
+```
+/bin/launchctl bootout gui/501/dev.craftish.kamaji && /bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji.plist
+```
+
+9. Start the updater once by hand; with nothing approved it says so and exits (expect `nothing left to run`):
+
+```
+/bin/launchctl kickstart gui/501/dev.craftish.kamaji-updater && /bin/sleep 5 && /usr/bin/tail -n 3 /Users/tylercraft/Library/Logs/kamaji-updater.log
+```
+
 ## craftish's database export
 
-Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. Nothing uses it until M4's updater; these steps can run any time. They follow "craftish's report" above.
+Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. The updater uses it before each run on a craftish site; Tyler runs these steps with the updater's. They follow "craftish's report" above.
 
 On the mini:
 

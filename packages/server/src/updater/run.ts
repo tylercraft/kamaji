@@ -543,6 +543,18 @@ async function runItem(
         signal: deps.signal,
       });
     let answer = await ask();
+    // Busy is another job holding the plugin's lock (one a dead run left lasts 15 minutes):
+    // keep offering this one until the deadline. It was never accepted, so nothing changed.
+    while (!answer.ok && answer.code === 'busy') {
+      if (deps.now() - sentAt > timing.jobTimeoutMs) {
+        return {
+          outcome: 'update_failed',
+          detail: 'the plugin stayed busy with another update the whole time; nothing was changed',
+        };
+      }
+      await deps.sleep(timing.pollMs, deps.signal);
+      answer = await ask();
+    }
     if (
       !answer.ok &&
       answer.code !== null &&
@@ -554,7 +566,6 @@ async function runItem(
 
     let finished: ReturnType<typeof StatusAnswer> = answer.ok ? StatusAnswer(answer.data) : null;
     let lastProblem = answer.ok ? null : answer.problem;
-    let resent = false;
     let maintenanceSince: number | null =
       answer.ok || answer.code !== 'maintenance' ? null : deps.now();
     while (!finished || finished.state === 'queued' || finished.state === 'running') {
@@ -587,10 +598,9 @@ async function runItem(
         maintenanceSince ??= deps.now();
       } else {
         maintenanceSince = null;
-        // The plugin never got the job (the request was lost): send it again, once. The same id
-        // can never run twice.
-        if (status.code === 'unknown_job' && !resent) {
-          resent = true;
+        // The plugin never got the job (the request was lost, or it was busy): offer it again.
+        // The same id can never run twice.
+        if (status.code === 'unknown_job') {
           answer = await ask();
           if (answer.ok) finished = StatusAnswer(answer.data);
         }

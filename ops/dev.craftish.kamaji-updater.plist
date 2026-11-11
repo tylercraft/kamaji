@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Kamaji's updater on molcajete: runs approved batches, then exits. Not kept alive and not run
+     at load: the app starts it with `launchctl kickstart` when a batch is approved, and again
+     each cycle while a batch has work left (a restart mid-run). Doppler's scope for
+     ~/.kamaji-updater holds the updater config's service token, so this process, and only this
+     one, gets the update key. Runbook: ops/README.md, "The updater". -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.craftish.kamaji-updater</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/doppler</string>
+    <string>run</string>
+    <string>--scope</string>
+    <string>/Users/tylercraft/.kamaji-updater</string>
+    <string>--</string>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>packages/server/dist/updater/main.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/tylercraft/kamaji</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-updater.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-updater.log</string>
+</dict>
+</plist>

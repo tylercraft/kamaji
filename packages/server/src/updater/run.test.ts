@@ -39,6 +39,8 @@ class FakeSite {
     /** The process dies mid-upgrade: maintenance mode from then on. */
     diesMidUpgrade?: boolean;
     pollsToFinish?: number;
+    /** Updates refused as busy before one is taken; Infinity for a lock that never frees. */
+    busyFor?: number;
   } = {};
   homeOk = true;
   maintenance = false;
@@ -92,6 +94,10 @@ class FakeSite {
       const id = String(body.job);
       const known = this.jobs.get(id);
       if (known) return ok({ job: id, state: known.state });
+      if ((this.behave.busyFor ?? 0) > 0) {
+        this.behave.busyFor = (this.behave.busyFor ?? 0) - 1;
+        return { ok: false, status: 409, code: 'busy', problem: 'busy' };
+      }
       if (this.behave.versionChanged) {
         return { ok: false, status: 409, code: 'version_changed', problem: 'version changed' };
       }
@@ -337,6 +343,27 @@ describe('the updater', () => {
     expect(batchViews(changed.db)[0]!.sites[0]!.items[0]).toMatchObject({
       outcome: 'update_failed',
       detail: 'version changed; nothing was changed',
+    });
+  });
+
+  it('offers a job again while the plugin is busy with another, and gives up at the deadline', async () => {
+    const waits = setup();
+    waits.site.behave.busyFor = 3;
+    await approve(waits.db);
+    await runUpdater(waits.deps());
+    expect(outcomes(waits.db)).toEqual([
+      ['core', 'done', 'passed'],
+      ['plugin', 'done', 'passed'],
+    ]);
+
+    const stuck = setup();
+    stuck.site.behave.busyFor = Infinity;
+    await approve(stuck.db);
+    let now = T;
+    await runUpdater({ ...stuck.deps(), now: () => (now += 10_000) });
+    expect(batchViews(stuck.db)[0]!.sites[0]!.items[0]).toMatchObject({
+      outcome: 'update_failed',
+      detail: 'the plugin stayed busy with another update the whole time; nothing was changed',
     });
   });
 
