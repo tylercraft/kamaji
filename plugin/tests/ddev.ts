@@ -43,13 +43,19 @@ export function sql(query: string): string {
   return wp('db', 'query', query, '--skip-column-names');
 }
 
-/** Waits until the container sees the files written on this side (DDEV's Mutagen sync). */
+/**
+ * Flushes DDEV's Mutagen sync both ways. After writing on this side: the container sees it. Before
+ * writing on this side: anything written in the container (WordPress's upgrader) has landed here
+ * first. Otherwise, writing back a file's last-synced content (an update undone by hand) looks
+ * like no change here, and the container's newer copy is synced back over it.
+ */
 export function synced(): void {
   execFileSync('ddev', ['mutagen', 'sync'], { cwd: WORDPRESS, stdio: 'ignore' });
 }
 
 /** The repo's plugin copied into the site, with a keys file built as Kamaji builds it. */
 export function copyPlugin(): void {
+  synced();
   execFileSync('rsync', [
     '-a',
     '--delete',
