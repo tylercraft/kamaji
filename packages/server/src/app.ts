@@ -128,7 +128,10 @@ export function createApp({
   });
   app.get('/api/sites/:id/craftish-care.zip', (c) => {
     const detail = siteDetail(db, c.req.param('id'), { workerOn, canConnect: Boolean(care?.keys) });
-    if (!detail || detail.site.mode !== 'connected') return c.json({ error: 'not_found' }, 404);
+    // Connecting: a new site that chose to, or one already set up as monitoring only.
+    if (!detail || (detail.site.mode !== 'connected' && detail.site.setup !== 'done')) {
+      return c.json({ error: 'not_found' }, 404);
+    }
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
     const zip = pluginZip(care.pluginDir, care.keys, detail.site.id, new Date(now()));
     return c.body(new Uint8Array(zip), 200, {

@@ -80,7 +80,12 @@ function latestHandshake(db: Db, id: string): Handshake | null {
   return last ? { at: new Date(last.at).toISOString(), result: last.value } : null;
 }
 
-/** The handshake: craftish-care's hello, signed with the report key. A partial answer is a site with gaps, not a failure. */
+/**
+ * The handshake: craftish-care's hello, signed with the report key. A partial answer is a site
+ * with gaps, not a failure. A site already set up as monitoring only (M2's estate, like the M3
+ * pilot) connects the same way: it keeps its checks and settings, and becomes connected only
+ * once the handshake succeeds, so a half-finished install never shows as a failing report.
+ */
 export async function handshake(
   db: Db,
   id: string,
@@ -89,7 +94,7 @@ export async function handshake(
   now: () => number,
 ): Promise<Handshake | null> {
   const row = siteRow(db, id);
-  if (!row || row.mode !== 'connected') return null;
+  if (!row || (row.mode !== 'connected' && row.setup !== 'done')) return null;
   const result = await send(new URL(String(row.url)), keys.report, 'hello', {});
   let value: HandshakeValue;
   if (!result.ok) {
@@ -119,7 +124,11 @@ export async function handshake(
     resourceId: id,
   });
   if (value.ok) {
-    db.prepare("UPDATE sites SET setup = 'configure' WHERE id = ? AND setup = 'connect'").run(id);
+    db.prepare(
+      `UPDATE sites SET mode = 'connected',
+         setup = CASE WHEN setup = 'connect' THEN 'configure' ELSE setup END
+       WHERE id = ?`,
+    ).run(id);
   }
   return { at: new Date(at).toISOString(), result: value };
 }

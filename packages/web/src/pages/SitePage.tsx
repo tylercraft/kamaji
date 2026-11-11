@@ -3,7 +3,14 @@ import { SiteDetailResponse } from '@kamaji/shared';
 import { Button, Muted, PageHeading, Panel, PanelTitle, ResourceView } from '../components/ui';
 import { useLink } from '../router';
 import { useResource } from '../useResource';
-import { Capabilities, ConfigureStep, ConnectStep, RemovePanel, Steps } from './SiteSetup';
+import {
+  Capabilities,
+  ConfigureStep,
+  ConnectStep,
+  InstallSteps,
+  RemovePanel,
+  Steps,
+} from './SiteSetup';
 import { postJson } from '../api';
 import { Handshake } from '@kamaji/shared';
 import { useState } from 'react';
@@ -71,7 +78,15 @@ export function SitePage({ id }: { id: string }) {
                       <Recheck id={site.id} reload={reload} />
                     </>
                   ) : (
-                    <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
+                    <>
+                      <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
+                      {d.canConnect && (
+                        <details>
+                          <summary>Connect with Craftish Care</summary>
+                          <InstallSteps detail={d} reload={reload} />
+                        </details>
+                      )}
+                    </>
                   )}
                 </Panel>
                 {site.mode === 'connected' && <InventoryPanel detail={d} reload={reload} />}

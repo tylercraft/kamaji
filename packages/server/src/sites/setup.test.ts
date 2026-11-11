@@ -185,6 +185,36 @@ describe('Add site', () => {
     });
   });
 
+  it('connects a site already set up as monitoring only, keeping its settings', async () => {
+    let answer: CareResult = { ok: false, status: 404, code: null, problem: 'Not installed' };
+    const { post, get, detail, sent } = setup(reportOnly, () => answer);
+    await post('/api/sites', NEW);
+    await post('/api/sites/kamaji-wp.ddev.site/mode', { mode: 'monitoring' });
+    await post('/api/sites/kamaji-wp.ddev.site/configure', {
+      expectedText: 'Kamaji test',
+      backupExpectation: 'host',
+      notifications: 'digest',
+    });
+    expect((await get('/api/sites/kamaji-wp.ddev.site/craftish-care.zip')).status).toBe(200);
+
+    await post('/api/sites/kamaji-wp.ddev.site/handshake');
+    expect((await detail('kamaji-wp.ddev.site')).site).toMatchObject({
+      mode: 'monitoring',
+      setup: 'done',
+    });
+
+    answer = ok(HELLO);
+    await post('/api/sites/kamaji-wp.ddev.site/handshake');
+    const site = await detail('kamaji-wp.ddev.site');
+    expect(site.site).toMatchObject({
+      mode: 'connected',
+      setup: 'done',
+      expectedText: 'Kamaji test',
+    });
+    expect(site.backupExpectation).toBe('host');
+    expect(sent.map((s) => s.endpoint)).toEqual(['hello', 'hello']);
+  });
+
   it('can’t connect where this Kamaji has no keys', async () => {
     const { post, detail } = setup(undefined, () => ok(HELLO));
     await post('/api/sites', NEW);

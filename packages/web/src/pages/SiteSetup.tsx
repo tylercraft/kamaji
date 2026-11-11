@@ -240,6 +240,33 @@ export function ConnectStep({
   return (
     <Panel aria-labelledby="connect">
       <PanelTitle id="connect">Connect with Craftish Care</PanelTitle>
+      <InstallSteps detail={detail} reload={reload}>
+        <Button type="button" onClick={() => mode('monitoring')}>
+          Use monitoring only instead
+        </Button>
+      </InstallSteps>
+      {error && <FormError>{error}</FormError>}
+    </Panel>
+  );
+}
+
+/**
+ * The zip, the install, and the first signed request: step 2 for a new site, and the way a site
+ * already set up as monitoring only connects (it becomes connected once the handshake succeeds).
+ */
+export function InstallSteps({
+  detail,
+  reload,
+  children,
+}: {
+  detail: SiteDetailResponse;
+  reload: () => void;
+  children?: ReactNode;
+}) {
+  const { site } = detail;
+  const { busy, error, run } = useAction();
+  return (
+    <>
       <ol css={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 8 }}>
         <li>
           <a href={`/api/sites/${site.id}/craftish-care.zip`} download="craftish-care.zip">
@@ -264,13 +291,11 @@ export function ConnectStep({
         >
           {busy ? 'Checking…' : 'Check the connection'}
         </PrimaryButton>
-        <Button type="button" disabled={busy} onClick={() => mode('monitoring')}>
-          Use monitoring only instead
-        </Button>
+        {children}
       </div>
       {error && <FormError>{error}</FormError>}
       {detail.handshake && <Capabilities handshake={detail.handshake} detail={detail} />}
-    </Panel>
+    </>
   );
 }
 
