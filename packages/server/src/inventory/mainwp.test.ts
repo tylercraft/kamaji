@@ -103,6 +103,21 @@ describe('comparing with MainWP', () => {
     ]);
   });
 
+  it('notes an update installed between the two reads, and a theme neither knows a version for', () => {
+    const ours = inventory();
+    ours.plugins[2]!.version = '2.2.0';
+    ours.plugins[2]!.offer = null;
+    ours.themes[0]!.version = '';
+    const theirs = structuredClone(mainwp);
+    theirs.themes.data[0]!.version = '';
+    const result = compare(ours, theirs);
+    expect(result.differences).toEqual([]);
+    expect(result.matched).toContain('theme example-theme version');
+    expect(result.notes).toContain(
+      'example-forms/example-forms.php: updated 2.1.0 → 2.2.0 since MainWP’s sync',
+    );
+  });
+
   it('names every difference', () => {
     const ours = inventory();
     ours.core.version = '7.1.3';

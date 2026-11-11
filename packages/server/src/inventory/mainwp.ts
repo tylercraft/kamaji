@@ -46,6 +46,25 @@ export interface Comparison {
   notes: string[];
 }
 
+/**
+ * One side installed the update the other still offers: the two were read either side of it
+ * (MainWP syncs on its own schedule, Kamaji reports hourly). Not a mismatch; worth a line.
+ */
+function updatedSince(
+  ours: string,
+  ourOffer: string | undefined,
+  theirs: string,
+  theirOffer: string | null,
+): string | null {
+  if (ours !== theirs && ours === theirOffer) {
+    return `updated ${theirs} → ${ours} since MainWP’s sync${ourOffer ? `; Kamaji now offers ${ourOffer}` : ''}`;
+  }
+  if (ours !== theirs && theirs === ourOffer) {
+    return `updated ${ours} → ${theirs} since Kamaji’s report${theirOffer ? `; MainWP now offers ${theirOffer}` : ''}`;
+  }
+  return null;
+}
+
 export function compare(kamaji: Inventory, mainwp: MainwpExport): Comparison {
   const matched: string[] = [];
   const differences: string[] = [];
@@ -82,9 +101,13 @@ export function compare(kamaji: Inventory, mainwp: MainwpExport): Comparison {
       (OWN_PLUGINS.has(file) ? notes : differences).push(`${file}: only in ${where}`);
       continue;
     }
-    same(`${file} version`, k.version, m.version);
     same(`${file} active`, k.active, m.active);
-    same(`${file} update`, k.offer?.version ?? 'none', m.update_version ?? 'none');
+    const behind = updatedSince(k.version, k.offer?.version, m.version, m.update_version);
+    if (behind) notes.push(`${file}: ${behind}`);
+    else {
+      same(`${file} version`, k.version, m.version);
+      same(`${file} update`, k.offer?.version ?? 'none', m.update_version ?? 'none');
+    }
   }
 
   const ourThemes = new Map(kamaji.themes.map((t) => [t.stylesheet, t]));
@@ -100,8 +123,10 @@ export function compare(kamaji: Inventory, mainwp: MainwpExport): Comparison {
       );
       continue;
     }
-    if (m.version === '') notes.push(`theme ${slug}: MainWP has no version; Kamaji ${k.version}`);
-    else same(`theme ${slug} version`, k.version, m.version);
+    // A theme without a Version header: MainWP and Kamaji both say "".
+    if (m.version === '' && k.version !== '') {
+      notes.push(`theme ${slug}: MainWP has no version; Kamaji ${k.version}`);
+    } else same(`theme ${slug} version`, k.version || 'none', m.version || 'none');
     same(`theme ${slug} active`, k.active, m.active);
     same(`theme ${slug} update`, k.offer?.version ?? 'none', m.update_version ?? 'none');
   }
