@@ -1,4 +1,3 @@
-# Customised for kamaji (dev/README.md): the plugin is bind-mounted from the repo, so Mutagen skips it.
 # To override this file remove the line above
 # and add your own configuration. If you override it you will
 # probably want to check it in.
@@ -23,7 +22,6 @@ sync:
         - ".DS_Store"
         - ".idea"
         - "/wp-content/uploads"
-        - "/wp-content/plugins/craftish-care"
 
         # You can also exclude other directories from mutagen-syncing
         # For example /var/www/html/var does not need to sync in TYPO3

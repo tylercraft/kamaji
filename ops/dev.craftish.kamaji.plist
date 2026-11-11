@@ -26,6 +26,9 @@
     <!-- Tyler's Tailscale login, as serve's Tailscale-User-Login header has it. Not a secret. -->
     <key>KAMAJI_LOGIN</key>
     <string>tylercraft@github</string>
+    <!-- Start the updater LaunchAgent when a batch is approved (updates/launcher.ts). -->
+    <key>KAMAJI_UPDATER</key>
+    <string>launchd</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

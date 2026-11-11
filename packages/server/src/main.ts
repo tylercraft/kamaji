@@ -12,6 +12,8 @@ import { checkDirectory } from './inventory/directory.js';
 import { checkReports } from './inventory/report.js';
 import { checkWordfence } from './wordfence/feed.js';
 import { checkEndOfLife } from './endOfLife/check.js';
+import { updaterLauncher } from './updates/launcher.js';
+import { pendingWork } from './updates/batches.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -61,6 +63,7 @@ if (!config.care)
 const localMac = () =>
   db.prepare("SELECT 1 FROM servers WHERE kind = 'local-mac' AND removed_at IS NULL").get() !==
   undefined;
+const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
@@ -77,6 +80,8 @@ const runChecks = async (signal: AbortSignal) => {
     log,
   });
   checkEndOfLife(db, Date.now());
+  // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
+  if (pendingWork(db)) startUpdater();
   const servers = await checkServers(db, {
     now: Date.now,
     signal,
@@ -128,6 +133,7 @@ const app = createApp({
   workerOn: Boolean(config.worker),
   jobFiles: { crashFiles: { path: config.crashLogPath }, logsDir: config.logsDir },
   care: { keys: config.care, pluginDir: config.pluginDir, send: careRequest },
+  startUpdater,
   log,
   statusInput: () => ({
     version,

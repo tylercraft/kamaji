@@ -70,14 +70,16 @@ export interface OutsideClient {
   fetch?: typeof fetch;
 }
 
-function publicSites(db: Db) {
+/** The Worker's list: public, live sites, leaving out any the updater has paused (sites.ts). */
+function publicSites(db: Db, now: number) {
   return db
     .prepare(
       `SELECT id, name, url, expected_text FROM sites
        WHERE removed_at IS NULL AND paused_at IS NULL AND setup = 'done' AND tailnet_only = 0
+       AND (updating_until IS NULL OR updating_until <= ?)
        ORDER BY id`,
     )
-    .all()
+    .all(now)
     .map((r) => ({
       id: String(r.id),
       name: String(r.name),
@@ -105,7 +107,7 @@ export async function syncOutside(
     });
 
   const state = readOutside(db);
-  const sites = publicSites(db);
+  const sites = publicSites(db, now());
   const body = JSON.stringify(sites);
   const hash = createHash('sha256').update(body).digest('hex');
 
@@ -175,4 +177,56 @@ function quietSince(state: OutsideState, at: number): number {
     return state.firstTriedAt ?? at;
   }
   return Math.min(state.lastPullOkAt, state.workerCheckedAt);
+}
+
+/**
+ * The updater's part: sends the Worker the current list straight away, so a site it has just
+ * paused (or resumed) leaves (or rejoins) the outside checks now, not at the app's next cycle.
+ * Returns whether the Worker took it.
+ */
+export async function pushOutsideSites(
+  db: Db,
+  client: OutsideClient,
+  options: { now: () => number; signal: AbortSignal },
+): Promise<boolean> {
+  const sites = publicSites(db, options.now());
+  const body = JSON.stringify(sites);
+  try {
+    const response = await (client.fetch ?? fetch)(`${client.url.replace(/\/$/, '')}/v1/sites`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${client.token}`, 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.any([options.signal, AbortSignal.timeout(20_000)]),
+    });
+    if (!response.ok) return false;
+  } catch {
+    if (options.signal.aborted) throw options.signal.reason;
+    return false;
+  }
+  const state = readOutside(db);
+  state.sitesHash = createHash('sha256').update(body).digest('hex');
+  writeState(db, KEY, state, options.now());
+  return true;
+}
+
+/** Has the Worker check one listed site now; its result arrives with the next pull. */
+export async function checkOutsideNow(
+  client: OutsideClient,
+  siteId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const response = await (client.fetch ?? fetch)(
+      `${client.url.replace(/\/$/, '')}/v1/check/${encodeURIComponent(siteId)}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${client.token}` },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      },
+    );
+    return response.ok;
+  } catch {
+    if (signal.aborted) throw signal.reason;
+    return false;
+  }
 }

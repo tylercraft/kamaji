@@ -2,12 +2,24 @@
 //
 //   GET /v1/results   the state: each site's last day of checks
 //   PUT /v1/sites     replaces the list of sites to check (JSON: [{id, name, url, expectedText}])
+//   POST /v1/check/<id>  checks one listed site now (the updater, straight after a run)
 //
-// Both need `Authorization: Bearer <KAMAJI_TOKEN>`. Secrets (wrangler secret put):
+// All need `Authorization: Bearer <KAMAJI_TOKEN>`, on the workers.dev address. care.craftish.dev
+// serves only Craftish Care's release channel (static files in channel/, wrangler.toml); the API
+// isn't there at all. Secrets (wrangler secret put):
 // KAMAJI_TOKEN, DISCORD_WEBHOOK_URL. Var: KAMAJI_URL. KV binding: KAMAJI.
-import { applyResults, checkSite, emptyState, message, parseSites, tokenMatches } from './watch.js';
+import {
+  applyOne,
+  applyResults,
+  checkSite,
+  emptyState,
+  message,
+  parseSites,
+  tokenMatches,
+} from './watch.js';
 
 const KEY = 'state';
+const CHANNEL_HOST = 'care.craftish.dev';
 
 async function load(env) {
   return (await env.KAMAJI.get(KEY, 'json')) ?? emptyState();
@@ -48,11 +60,13 @@ export default {
   },
 
   async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.hostname === CHANNEL_HOST) return new Response('Not found', { status: 404 });
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (!(await tokenMatches(token, env.KAMAJI_TOKEN))) return json({ error: 'forbidden' }, 403);
 
-    const { pathname } = new URL(request.url);
+    const { pathname } = url;
     if (pathname === '/v1/results' && request.method === 'GET') return json(await load(env));
     if (pathname === '/v1/sites' && request.method === 'PUT') {
       let sites;
@@ -64,6 +78,17 @@ export default {
       const state = await load(env);
       await env.KAMAJI.put(KEY, JSON.stringify({ ...state, sites }));
       return json({ sites: sites.length });
+    }
+    const one = /^\/v1\/check\/([^/]+)$/.exec(pathname);
+    if (one && request.method === 'POST') {
+      const state = await load(env);
+      const site = state.sites.find((s) => s.id === decodeURIComponent(one[1]));
+      if (!site) return json({ error: 'not_listed' }, 404);
+      const result = await checkSite(site);
+      const { state: next, lines } = applyOne(state, site.id, result, Date.now());
+      await env.KAMAJI.put(KEY, JSON.stringify(next));
+      await post(env, message(lines, env.KAMAJI_URL));
+      return json(result);
     }
     return json({ error: 'not_found' }, 404);
   },

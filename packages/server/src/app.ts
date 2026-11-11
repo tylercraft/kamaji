@@ -4,12 +4,23 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { ConfigureSiteRequest, NewSiteRequest, RemoveSiteRequest } from '@kamaji/shared';
+import {
+  ApproveRequest,
+  ConfigureSiteRequest,
+  NewSiteRequest,
+  RemoveSiteRequest,
+  type UpdatesResponse,
+} from '@kamaji/shared';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportSite } from './inventory/report.js';
+import { checkSites } from './checks/sites.js';
+import { latestObservations } from './observations.js';
+import { approveBatch, batchViews, carryOn } from './updates/batches.js';
+import type { UpdaterStart } from './updates/launcher.js';
+import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
@@ -41,6 +52,8 @@ export interface AppOptions {
   jobFiles?: JobFiles;
   /** craftish-care: Kamaji's keys (undefined where connecting isn't set up), the plugin's source and the sender. */
   care?: { keys: CareKeys | undefined; pluginDir: string; send: CareSend };
+  /** Starts the updater after an approval (updates/launcher.ts). */
+  startUpdater?: UpdaterStart;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -77,6 +90,7 @@ export function createApp({
   workerOn = false,
   jobFiles,
   care,
+  startUpdater = () => {},
   now = Date.now,
   log,
 }: AppOptions): Hono {
@@ -177,6 +191,54 @@ export function createApp({
     if (result === 'not-confirmed') return c.json({ error: 'not_confirmed' }, 400);
     return c.json(result);
   });
+  // Updates: the queue, approving a batch, and a held site's options (updates/).
+  app.get('/api/updates', (c) => {
+    const body: UpdatesResponse = { ...queue(db), batches: batchViews(db) };
+    return c.json(body);
+  });
+  app.post('/api/batches', async (c) => {
+    const body = await readJson(c, ApproveRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    const keys = care.keys;
+    const result = await approveBatch(db, body, login, now, async (siteId) => {
+      const site = db.prepare('SELECT id, name, url FROM sites WHERE id = ?').get(siteId);
+      if (!site) return false;
+      return reportSite(
+        db,
+        { id: String(site.id), name: String(site.name), url: String(site.url) },
+        keys,
+        care.send,
+        now,
+        { refresh: true },
+      );
+    });
+    if (result.ok) startUpdater();
+    // 200 either way: "changed" is an answer to show, with its list, not an error.
+    return c.json(result, result.ok ? 201 : 200);
+  });
+  app.post('/api/batches/:id/sites/:site/carry-on', (c) => {
+    if (!carryOn(db, c.req.param('id'), c.req.param('site'), login, now())) {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    startUpdater();
+    return c.json({ ok: true });
+  });
+  // Re-run the checks: the home page from the mini, recorded like any check.
+  app.post('/api/batches/:id/sites/:site/recheck', async (c) => {
+    const siteId = c.req.param('site');
+    await checkSites(db, { now, signal: AbortSignal.timeout(60_000), only: [siteId] });
+    const [last] = latestObservations<{ problem: string | null }>(
+      db,
+      'site',
+      siteId,
+      'http',
+      'mini',
+      1,
+    );
+    return c.json({ ok: last?.ok ?? false, problem: last?.value.problem ?? null });
+  });
+
   app.get('/api/servers', (c) => c.json({ servers: serverSummaries(db) }));
   app.get('/api/servers/molcajete/jobs/:name', (c) => {
     const detail = jobFiles ? jobDetail(db, c.req.param('name'), jobFiles) : null;

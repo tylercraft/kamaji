@@ -1,98 +1,26 @@
 // craftish-care's request checks, against the local DDEV WordPress (dev/README.md): one test per
 // refusal in docs/protocol.md, "Tests the plugin ships with", plus the happy paths. Opt-in, since
 // it needs DDEV running: `npm run test:plugin`. Never pointed at a real site.
-import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { rmSync } from 'node:fs';
+import { CareReport } from '@kamaji/shared';
+import { beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { careRequest } from '../../packages/server/src/care/client.js';
+import { newNonce } from '../../packages/server/src/care/sign.js';
 import {
-  loadCareKeys,
-  type CareKeys,
-  type SigningKey,
-} from '../../packages/server/src/care/keys.js';
-import { newNonce, signRequest } from '../../packages/server/src/care/sign.js';
-import { keysFile } from '../../packages/server/src/care/zip.js';
+  freshInstall,
+  HOME,
+  ALIAS,
+  KEYS_FILE,
+  refused,
+  report,
+  send,
+  sql,
+  synced,
+  update,
+  wp,
+} from './ddev.js';
 
-const HOME = new URL('https://kamaji-wp.ddev.site');
-const ALIAS = new URL('https://kamaji-wp-alias.ddev.site');
-const WORDPRESS = new URL('../../dev/wordpress/', import.meta.url);
-const KEYS_FILE = new URL('../craftish-care/craftish-care-keys.php', import.meta.url);
-
-function readEnv(): NodeJS.ProcessEnv {
-  const text = readFileSync(new URL('../../dev/care-keys.env', import.meta.url), 'utf8');
-  return Object.fromEntries(
-    text
-      .split('\n')
-      .filter((l) => /^[A-Z_]+=/.test(l))
-      .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
-  );
-}
-
-const keys = loadCareKeys(readEnv()) as CareKeys;
-const report = keys.report;
-const update = keys.update as SigningKey;
-
-function wp(...args: string[]): string {
-  return execFileSync('ddev', ['wp', ...args], { cwd: WORDPRESS, encoding: 'utf8' }).trim();
-}
-
-function sql(query: string): string {
-  return wp('db', 'query', query, '--skip-column-names');
-}
-
-/** A fresh install: everything the plugin stored deleted, then activated with the dev keys. */
-function freshInstall(): void {
-  writeFileSync(KEYS_FILE, keysFile(keys, HOME.host, new Date()));
-  try {
-    wp('plugin', 'deactivate', 'craftish-care');
-  } catch {
-    // Not active yet.
-  }
-  sql("DELETE FROM wp_options WHERE option_name LIKE 'craftish\\_care\\_%'");
-  wp('plugin', 'activate', 'craftish-care');
-}
-
-interface Sent {
-  status: number;
-  body: unknown;
-}
-
-/** One request, built by hand so a test can change any part of it after signing. */
-async function send(
-  endpoint: string,
-  options: {
-    key?: SigningKey;
-    body?: string;
-    sentBody?: string;
-    signedHost?: URL;
-    to?: URL;
-    sentEndpoint?: string;
-    now?: number;
-    nonce?: string;
-    headers?: (h: Record<string, string>) => Record<string, string>;
-    restRoute?: boolean;
-  } = {},
-): Promise<Sent> {
-  const body = options.body ?? '{}';
-  let headers = signRequest(options.key ?? report, options.signedHost ?? HOME, endpoint, body, {
-    ...(options.now !== undefined ? { now: options.now } : {}),
-    ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
-  });
-  if (options.headers) headers = options.headers(headers);
-  const base = options.to ?? HOME;
-  const route = `/craftish-care/v1/${options.sentEndpoint ?? endpoint}`;
-  const url = options.restRoute
-    ? new URL(`/?rest_route=${route}`, base)
-    : new URL(`/wp-json${route}`, base);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: options.sentBody ?? body,
-  });
-  return { status: response.status, body: await response.json().catch(() => null) };
-}
-
-const refused = (status: number, error: string) => ({ status, body: { error } });
+const MU_PLUGIN = `wp_mkdir_p(WPMU_PLUGIN_DIR); file_put_contents(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php", "<?php\n/*\n * Plugin Name: Kamaji test must-use\n * Version: 1.2.3\n */\n");`;
 
 beforeAll(() => {
   freshInstall();
@@ -102,17 +30,25 @@ describe('happy paths', () => {
   it('says hello, by either URL form', async () => {
     const hello = await send('hello');
     expect(hello.status).toBe(200);
-    expect(hello.body).toMatchObject({ plugin: '0.1.0', protocol: 1, multisite: false });
+    expect(hello.body).toMatchObject({ plugin: '0.2.0', protocol: 1, multisite: false });
     expect((await send('hello', { restRoute: true })).status).toBe(200);
   });
 
   it('reports the inventory, and refreshes at most once per 10 minutes', async () => {
+    // A must-use plugin, written inside the container (no file sync to wait on), removed after.
+    wp('eval', MU_PLUGIN);
+    onTestFinished(() => {
+      wp('eval', 'unlink(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php");');
+    });
     const first = await send('report', { body: '{"refresh":true}' });
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ refreshed: true, core: { version: expect.any(String) } });
     const body = first.body as { plugins: { file: string }[]; themes: { active: boolean }[] };
     expect(body.plugins.map((p) => p.file)).toContain('craftish-care/craftish-care.php');
     expect(body.themes.some((t) => t.active)).toBe(true);
+    expect(CareReport.parse(first.body).mu_plugins).toEqual([
+      { file: 'kamaji-test-mu.php', name: 'Kamaji test must-use', version: '1.2.3' },
+    ]);
     expect((await send('report', { body: '{"refresh":true}' })).body).toMatchObject({
       refreshed: false,
     });
@@ -154,8 +90,8 @@ describe('refusals, in the protocol’s order', () => {
     expect(await send('hello', { key: update })).toEqual(refused(401, 'wrong_key'));
   });
 
-  it('has no update endpoint yet, nor anything else outside the table', async () => {
-    expect(await send('update', { key: update })).toEqual(refused(404, 'not_found'));
+  it('never lets the report key update, and answers nothing outside the table', async () => {
+    expect(await send('update', { body: '{"job":"x"}' })).toEqual(refused(401, 'wrong_key'));
     expect(await send('users')).toEqual(refused(404, 'not_found'));
   });
 
@@ -326,7 +262,18 @@ describe('disconnect', () => {
     wp('plugin', 'deactivate', 'craftish-care');
     sql("DELETE FROM wp_options WHERE option_name LIKE 'craftish\\_care\\_%'");
     rmSync(KEYS_FILE);
+    synced();
     expect(() => wp('plugin', 'activate', 'craftish-care')).toThrow();
+    freshInstall();
+  });
+
+  it('reactivates without a keys file when its keys are stored, as after a self-update', async () => {
+    freshInstall();
+    rmSync(KEYS_FILE);
+    synced();
+    wp('plugin', 'deactivate', 'craftish-care');
+    wp('plugin', 'activate', 'craftish-care');
+    expect((await send('hello')).status).toBe(200);
     freshInstall();
   });
 });

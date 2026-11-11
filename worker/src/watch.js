@@ -132,6 +132,15 @@ export function applyResults(state, results, now) {
   return { state: next, lines };
 }
 
+/**
+ * One site's check outside the cron pass (Kamaji's updater, re-checking a site straight after
+ * its run): folded in like a pass's result, without claiming a whole pass ran.
+ */
+export function applyOne(state, id, result, now) {
+  const { state: next, lines } = applyResults(state, { [id]: result }, now);
+  return { state: { ...next, checkedAt: state.checkedAt }, lines };
+}
+
 /** The Discord message for a pass's lines, or null when there's nothing to say. */
 export function message(lines, kamajiUrl) {
   if (lines.length === 0) return null;

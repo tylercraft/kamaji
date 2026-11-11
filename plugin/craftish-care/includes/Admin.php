@@ -44,12 +44,14 @@ final class Admin {
 			<h2>What it can do</h2>
 			<ul class="ul-disc">
 				<li>Report this site’s WordPress, plugin and theme versions, the updates WordPress offers for them, the PHP and database versions, and Site Health’s critical results.</li>
+				<li>Update WordPress, a plugin or a theme to the version WordPress itself offers, one at a time, when Craftish approves it. WordPress’s own updater does the work.</li>
+				<li>Update itself, only to a release Craftish has signed.</li>
 				<li>Forget its keys when Craftish disconnects the site.</li>
 			</ul>
 			<h2>What it can’t do</h2>
 			<ul class="ul-disc">
 				<li>Read users, posts, pages, settings, files or anything else on the site.</li>
-				<li>Install, activate, deactivate, delete or update anything (updates come in a later version, only to versions WordPress itself offers).</li>
+				<li>Install, activate, deactivate or delete anything, or update to any version WordPress doesn’t offer.</li>
 				<li>Accept code, files or download links, change settings, or export data.</li>
 			</ul>
 			<?php

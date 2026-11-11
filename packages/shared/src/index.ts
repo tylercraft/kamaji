@@ -607,3 +607,115 @@ export type ActivityResponse = z.infer<typeof ActivityResponse>;
 
 export const ErrorResponse = z.object({ error: z.string() });
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
+
+// Updates (M4): the queue, approved batches and their outcomes (calcifer explore/kamaji.md,
+// "Selecting and approving a batch").
+
+export const ComponentType = z.enum(['core', 'plugin', 'theme']);
+export type ComponentType = z.infer<typeof ComponentType>;
+
+export const BackupKind = z.enum(['kamaji', 'host', 'client', 'tyler']);
+export type BackupKind = z.infer<typeof BackupKind>;
+
+/** One update WordPress offers on one site, ready to tick. */
+export const QueueItem = z.object({
+  siteId: z.string(),
+  siteName: z.string(),
+  type: ComponentType,
+  /** "core", the plugin file, or the theme stylesheet. */
+  item: z.string(),
+  name: z.string(),
+  from: z.string(),
+  to: z.string(),
+  /** A known vulnerability that this version fixes. */
+  security: z.boolean(),
+  /** A major version: never in "all routine". */
+  major: z.boolean(),
+});
+export type QueueItem = z.infer<typeof QueueItem>;
+
+export const QueueSite = z.object({
+  siteId: z.string(),
+  siteName: z.string(),
+  backupKind: BackupKind,
+  /** Why this site's offers can't be queued, or null when they can. */
+  blocked: z.string().nullable(),
+});
+export type QueueSite = z.infer<typeof QueueSite>;
+
+export const Outcome = z.enum(['passed', 'checks_failed', 'update_failed', 'incomplete']);
+export type Outcome = z.infer<typeof Outcome>;
+
+export const BatchItemView = z.object({
+  id: z.string(),
+  type: ComponentType,
+  item: z.string(),
+  name: z.string(),
+  from: z.string(),
+  to: z.string(),
+  state: z.enum(['waiting', 'sent', 'running', 'checking', 'done', 'held']),
+  outcome: Outcome.nullable(),
+  /** What happened, in plain words. */
+  detail: z.string().nullable(),
+});
+export type BatchItemView = z.infer<typeof BatchItemView>;
+
+export const BatchSiteView = z.object({
+  siteId: z.string(),
+  siteName: z.string(),
+  state: z.enum(['waiting', 'running', 'done', 'held']),
+  heldReason: z.string().nullable(),
+  backupKind: BackupKind,
+  /** The backup evidence as recorded for this run. */
+  backup: z.string().nullable(),
+  items: z.array(BatchItemView),
+});
+export type BatchSiteView = z.infer<typeof BatchSiteView>;
+
+export const BatchView = z.object({
+  id: z.string(),
+  approvedAt: Timestamp,
+  state: z.enum(['approved', 'running', 'finished']),
+  oneSiteFirst: z.boolean(),
+  sites: z.array(BatchSiteView),
+});
+export type BatchView = z.infer<typeof BatchView>;
+
+export const UpdatesResponse = z.object({
+  items: z.array(QueueItem),
+  sites: z.array(QueueSite),
+  /** Connected sites whose offers aren't known yet. */
+  unknown: z.number().int(),
+  batches: z.array(BatchView),
+});
+export type UpdatesResponse = z.infer<typeof UpdatesResponse>;
+
+export const ApproveRequest = z.object({
+  items: z
+    .array(
+      z.object({
+        siteId: z.string(),
+        type: ComponentType,
+        item: z.string(),
+        from: z.string(),
+        to: z.string(),
+      }),
+    )
+    .min(1)
+    .max(200),
+  /** Sites whose backup is Tyler's word, confirmed for this run. */
+  confirmedBackups: z.array(z.string()),
+  oneSiteFirst: z.boolean(),
+});
+export type ApproveRequest = z.infer<typeof ApproveRequest>;
+
+export const ApproveResponse = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), batchId: z.string() }),
+  z.object({
+    ok: z.literal(false),
+    /** Items whose versions changed since they were shown, or sites needing a confirmed backup. */
+    changed: z.array(z.string()),
+    needsBackup: z.array(z.string()),
+  }),
+]);
+export type ApproveResponse = z.infer<typeof ApproveResponse>;

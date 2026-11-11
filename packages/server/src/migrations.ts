@@ -320,4 +320,59 @@ export const migrations: Migration[] = [
       ALTER TABLE components_new RENAME TO components;
     `,
   },
+  {
+    version: 12,
+    name: 'batches',
+    // Approved updates (updater/, calcifer explore/kamaji.md, "Selecting and approving a batch").
+    // A batch is the approval itself, bound to its exact items; each item's id is the job id sent
+    // to the plugin, stored before it's sent, so a double click or a restart can't run it twice.
+    // batch_sites holds each site's run: backup evidence, baseline checks, and whether it's held.
+    // sites.updating_until is the updater's own pause of a site's uptime alerts (the mini's and
+    // the Worker's), renewed as it goes, so it lapses by itself if the updater dies. It's apart
+    // from paused_at, which is Tyler's.
+    sql: `
+      ALTER TABLE sites ADD COLUMN updating_until INTEGER;
+
+      CREATE TABLE batches (
+        id TEXT PRIMARY KEY,
+        approved_at INTEGER NOT NULL,
+        approved_by TEXT NOT NULL,
+        one_site_first INTEGER NOT NULL CHECK (one_site_first IN (0, 1)),
+        state TEXT NOT NULL CHECK (state IN ('approved', 'running', 'finished')),
+        finished_at INTEGER
+      );
+
+      CREATE TABLE batch_sites (
+        batch_id TEXT NOT NULL REFERENCES batches (id),
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        position INTEGER NOT NULL,
+        backup_kind TEXT NOT NULL CHECK (backup_kind IN ('kamaji', 'host', 'client', 'tyler')),
+        backup TEXT,
+        baseline TEXT,
+        state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'held')),
+        held_reason TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        PRIMARY KEY (batch_id, site_id)
+      );
+
+      CREATE TABLE batch_items (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES batches (id),
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        position INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('core', 'plugin', 'theme')),
+        item TEXT NOT NULL,
+        name TEXT NOT NULL,
+        from_version TEXT NOT NULL,
+        to_version TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('waiting', 'sent', 'running', 'checking', 'done', 'held')),
+        outcome TEXT CHECK (outcome IN ('passed', 'checks_failed', 'update_failed', 'incomplete')),
+        detail TEXT,
+        sent_at INTEGER,
+        finished_at INTEGER
+      );
+      CREATE INDEX batch_items_batch ON batch_items (batch_id, site_id, position);
+    `,
+  },
 ];

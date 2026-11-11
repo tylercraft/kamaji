@@ -1,8 +1,9 @@
-// Laptop only, once: makes craftish-care's two real key pairs (docs/protocol.md, "Keys") and
-// sends each half straight into Doppler, project kamaji, so no key is ever shown, saved or
-// pasted. checker gets the report key's seed and the update key's public half; updater (M4's)
-// gets the update key's seed and nothing else. Refuses to replace a key: sites installed with
-// the old public keys would stop answering.
+// Laptop only, once: makes craftish-care's real key pairs (docs/protocol.md, "Keys") and sends
+// each half straight into Doppler, project kamaji, so no key is ever shown, saved or pasted.
+// checker gets the report key's seed and the update key's public half; updater gets the update
+// key's seed and nothing else. With --release, only the release key: its seed to release (read
+// on the laptop only), its public half to checker, for the zips. Refuses to replace a key: sites
+// installed with the old public keys would stop answering.
 import { spawnSync } from 'node:child_process';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 
@@ -36,15 +37,24 @@ const names = (config) => {
   return new Set(Object.keys(JSON.parse(r.stdout)));
 };
 
+const releaseOnly = process.argv.includes('--release');
 const report = pair();
 const update = pair();
-const plan = [
-  ['updater', 'KAMAJI_CARE_UPDATE_KEY', update.seed],
-  ['checker', 'KAMAJI_CARE_UPDATE_PUBLIC_KEY', update.publicKey],
-  ['checker', 'KAMAJI_CARE_REPORT_KEY', report.seed],
-];
+const release = pair();
+const plan = releaseOnly
+  ? [
+      ['release', 'KAMAJI_CARE_RELEASE_KEY', release.seed],
+      ['checker', 'KAMAJI_CARE_RELEASE_PUBLIC_KEY', release.publicKey],
+    ]
+  : [
+      ['updater', 'KAMAJI_CARE_UPDATE_KEY', update.seed],
+      ['checker', 'KAMAJI_CARE_UPDATE_PUBLIC_KEY', update.publicKey],
+      ['checker', 'KAMAJI_CARE_REPORT_KEY', report.seed],
+    ];
 
-const existing = { checker: names('checker'), updater: names('updater') };
+const existing = Object.fromEntries(
+  [...new Set(plan.map(([config]) => config))].map((config) => [config, names(config)]),
+);
 const taken = plan.filter(([config, name]) => existing[config].has(name));
 if (taken.length > 0) {
   for (const [config, name] of taken) console.error(`${PROJECT}/${config} already has ${name}.`);

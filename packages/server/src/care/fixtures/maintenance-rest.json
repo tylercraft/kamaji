@@ -1,0 +1,6 @@
+{
+  "code": "wp_die",
+  "message": "Briefly unavailable for scheduled maintenance. Check back in a minute.",
+  "data": { "status": 503 },
+  "additional_errors": []
+}
