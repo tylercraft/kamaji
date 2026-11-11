@@ -140,7 +140,11 @@ export function Capabilities({
       </Fact>
       <Fact label="SSH">{SSH[detail.site.hostKind]}</Fact>
       <Fact label="Backups">
-        {detail.backupExpectation ? BACKUPS[detail.backupExpectation] : 'Chosen in step 3'}
+        {detail.backupExpectation
+          ? BACKUPS[detail.backupExpectation]
+          : detail.site.setup === 'done'
+            ? 'Not set yet: choose it under Configure'
+            : 'Chosen in step 3'}
       </Fact>
       <Fact label="Versions">
         WordPress {hello.wordpress}, PHP {hello.php}, Craftish Care {hello.plugin}

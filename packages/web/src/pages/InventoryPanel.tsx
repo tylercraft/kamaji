@@ -72,7 +72,8 @@ function SecurityCell({
           <Pill tone={v.informational ? 'neutral' : v.fixedIn ? 'red' : 'amber'}>
             <Dot />{' '}
             {v.informational ? 'Informational' : v.fixedIn ? `Fixed in ${v.fixedIn}` : 'No fix yet'}
-            {v.cvssRating ? ` · ${v.cvssRating}` : ''}
+            {/* An informational record's CVSS isn't a risk to this site: no severity shown. */}
+            {v.cvssRating && !v.informational ? ` · ${v.cvssRating}` : ''}
           </Pill>
           <span css={{ whiteSpace: 'normal', maxWidth: 360 }}>
             {v.reference ? (
