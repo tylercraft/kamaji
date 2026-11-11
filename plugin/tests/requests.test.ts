@@ -112,7 +112,9 @@ describe('happy paths', () => {
   it('reports the inventory, and refreshes at most once per 10 minutes', async () => {
     // A must-use plugin, written inside the container (no file sync to wait on), removed after.
     wp('eval', MU_PLUGIN);
-    onTestFinished(() => wp('eval', 'unlink(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php");'));
+    onTestFinished(() => {
+      wp('eval', 'unlink(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php");');
+    });
     const first = await send('report', { body: '{"refresh":true}' });
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ refreshed: true, core: { version: expect.any(String) } });
