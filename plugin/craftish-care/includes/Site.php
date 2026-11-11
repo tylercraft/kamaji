@@ -114,6 +114,7 @@ final class Site {
 				'offers'  => self::core_offers(),
 			),
 			'plugins'     => self::plugins( $plugin_updates ),
+			'mu_plugins'  => self::mu_plugins(),
 			'themes'      => self::themes( $theme_updates ),
 			'php'         => PHP_VERSION,
 			'database'    => array(
@@ -182,6 +183,19 @@ final class Site {
 			);
 		}
 		return $plugins;
+	}
+
+	/** Must-use plugins, as WordPress loads them: listed only, never updated. */
+	private static function mu_plugins(): array {
+		$mu = array();
+		foreach ( get_mu_plugins() as $file => $data ) {
+			$mu[] = array(
+				'file'    => (string) $file,
+				'name'    => wp_strip_all_tags( (string) $data['Name'] ),
+				'version' => (string) $data['Version'],
+			);
+		}
+		return $mu;
 	}
 
 	private static function themes( mixed $updates ): array {
