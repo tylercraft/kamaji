@@ -120,6 +120,12 @@ cd /Users/tyler/kamaji && /usr/bin/git checkout care-0.2.1 && /usr/bin/git pull 
 cd /Users/tyler/kamaji && /opt/homebrew/bin/doppler run --project kamaji --config release -- node scripts/care-release.mjs --out worker/channel/craftish-care && /usr/bin/git add worker/channel/craftish-care && /usr/bin/git commit -m "Craftish Care 0.2.1 on the release channel" && /usr/bin/git push
 ```
 
+24a. **laptop.** Merge it into `main`, so the channel deploys from `main` from here on (a Worker deployed without 0.2.1's files would serve 0.2.0 again):
+
+```
+cd /Users/tyler/kamaji && /usr/bin/git checkout main && /usr/bin/git pull --rebase && /usr/bin/git merge --no-ff care-0.2.1 -m "Merge care-0.2.1: Craftish Care 0.2.1" && /usr/bin/git push
+```
+
 25. **laptop, Cloudflare.** Deploy the Worker, and check the channel offers 0.2.1 (expect `"version": "0.2.1"`):
 
 ```
