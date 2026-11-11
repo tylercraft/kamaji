@@ -124,9 +124,14 @@ final class Jobs {
 		}
 		self::$pending = null;
 		ignore_user_abort( true );
-		if ( function_exists( 'fastcgi_finish_request' ) ) {
+		/**
+		 * Whether to close the connection before running, where PHP can. False runs the job before
+		 * the answer is sent, as on a host without PHP-FPM; the DDEV tests use it to test that path.
+		 */
+		$finish = (bool) apply_filters( 'craftish_care_finish_request', true );
+		if ( $finish && function_exists( 'fastcgi_finish_request' ) ) {
 			fastcgi_finish_request();
-		} elseif ( function_exists( 'litespeed_finish_request' ) ) {
+		} elseif ( $finish && function_exists( 'litespeed_finish_request' ) ) {
 			litespeed_finish_request();
 		}
 		self::run( $job );

@@ -212,6 +212,32 @@ describe('update jobs', () => {
     ).toEqual(['craftish_care_sweep']);
   });
 
+  it('runs inline where PHP can’t finish the request early, as without PHP-FPM', async () => {
+    installTestPlugin('1.0.0');
+    offer('1.1.0', testPackage('1.1.0'));
+    writeFileSync(
+      new URL('kamaji-test-no-finish.php', MU),
+      "<?php\n/* Plugin Name: Kamaji test: no early finish (DDEV only) */\nadd_filter( 'craftish_care_finish_request', '__return_false' );\n",
+    );
+    synced();
+    wp('option', 'update', 'kamaji_test_slow', '4');
+    try {
+      const started = Date.now();
+      const answer = await startUpdate(job('i1', {}));
+      // The answer waits for the job: the 4-second upgrade ran before it was sent.
+      expect(Date.now() - started).toBeGreaterThanOrEqual(4000);
+      expect(answer).toEqual({ status: 202, body: { job: 'i1', state: 'queued' } });
+      expect(await finished('i1')).toMatchObject({
+        state: 'succeeded',
+        result: { installed: '1.1.0' },
+      });
+    } finally {
+      wp('option', 'delete', 'kamaji_test_slow');
+      rmSync(new URL('kamaji-test-no-finish.php', MU), { force: true });
+      synced();
+    }
+  });
+
   it('runs one job at a time', async () => {
     installTestPlugin('1.0.0');
     offer('1.1.0', testPackage('1.1.0'));
@@ -242,9 +268,9 @@ describe('update jobs', () => {
       endpoint: string;
       result: string;
     }[];
-    // b1 and c2 each ran once; asking for b1 again started nothing.
-    expect(log.filter((e) => e.result.startsWith('succeeded: plugin'))).toHaveLength(2);
-    expect(log.filter((e) => e.result.startsWith('queued:'))).toHaveLength(2);
+    // b1, i1 and c2 each ran once; asking for b1 again started nothing.
+    expect(log.filter((e) => e.result.startsWith('succeeded: plugin'))).toHaveLength(3);
+    expect(log.filter((e) => e.result.startsWith('queued:'))).toHaveLength(3);
   });
 
   it('reports a run that died as failed, with what’s installed', async () => {

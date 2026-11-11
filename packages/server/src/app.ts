@@ -214,7 +214,8 @@ export function createApp({
       );
     });
     if (result.ok) startUpdater();
-    return c.json(result, result.ok ? 201 : 409);
+    // 200 either way: "changed" is an answer to show, with its list, not an error.
+    return c.json(result, result.ok ? 201 : 200);
   });
   app.post('/api/batches/:id/sites/:site/carry-on', (c) => {
     if (!carryOn(db, c.req.param('id'), c.req.param('site'), login, now())) {
