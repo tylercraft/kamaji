@@ -108,7 +108,7 @@ cd /Users/tyler/kamaji && /usr/bin/git checkout main && /usr/bin/git pull --reba
 
 0.2.1 is TY-162's admin page, on the branch `care-0.2.1`. Kamaji updates it like any plugin, once WordPress offers it. WordPress's automatic updates stay off for it, but the offer shows on all three sites' Plugins pages from step 25, so a client could click it; the approvals keep the order.
 
-23. **laptop.** Get the branch, and DDEV first (expect `39 passed`; the tests self-update from a local channel):
+23. **laptop.** Get the branch, and DDEV first (expect `42 passed`, with the admin page's three; the tests self-update from a local channel):
 
 ```
 cd /Users/tyler/kamaji && /usr/bin/git checkout care-0.2.1 && /usr/bin/git pull --rebase && npm run build && npm run test:plugin
