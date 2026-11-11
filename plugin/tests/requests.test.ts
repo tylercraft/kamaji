@@ -17,6 +17,7 @@ import {
   sql,
   synced,
   update,
+  VERSION,
   wp,
 } from './ddev.js';
 
@@ -30,7 +31,7 @@ describe('happy paths', () => {
   it('says hello, by either URL form', async () => {
     const hello = await send('hello');
     expect(hello.status).toBe(200);
-    expect(hello.body).toMatchObject({ plugin: '0.2.0', protocol: 1, multisite: false });
+    expect(hello.body).toMatchObject({ plugin: VERSION, protocol: 1, multisite: false });
     expect((await send('hello', { restRoute: true })).status).toBe(200);
   });
 
@@ -275,5 +276,45 @@ describe('disconnect', () => {
     wp('plugin', 'activate', 'craftish-care');
     expect((await send('hello')).status).toBe(200);
     freshInstall();
+  });
+});
+
+describe('Tools → Craftish Care', () => {
+  const page = () =>
+    wp('eval', 'wp_set_current_user( 1 ); CraftishCare\\Admin::render();', '--skip-themes');
+  const styled = (hook: string) =>
+    wp(
+      'eval',
+      `do_action( 'admin_enqueue_scripts', '${hook}' ); echo wp_style_is( 'craftish-care-admin' ) ? 'yes' : 'no';`,
+    );
+
+  it('shows the connection, and every log line escaped', async () => {
+    freshInstall();
+    expect((await send('report')).status).toBe(200);
+    wp('eval', "CraftishCare\\Store::log( 'report', 'r1', '<b>bad_signature</b>' );");
+    const html = page();
+    expect(html).toContain('<span class="cc-dot" aria-hidden="true"></span>Connected');
+    expect(html).toContain('<code>r1</code> <code>u1</code>');
+    expect(html).toMatch(/cc-result--done">.*Completed/);
+    expect(html).toContain('&lt;b&gt;bad_signature&lt;/b&gt;');
+    expect(html).not.toContain('<b>bad_signature');
+  });
+
+  it('says when it has disconnected, with no active keys', async () => {
+    expect((await send('disconnect', { key: update })).status).toBe(200);
+    const html = page();
+    expect(html).toContain('cc-status--off');
+    expect(html).toContain('</span>Disconnected</span>');
+    expect(html).not.toContain('Active keys');
+    freshInstall();
+  });
+
+  it('loads its styles and font on its own screen only', async () => {
+    expect(styled('tools_page_craftish-care')).toBe('yes');
+    expect(styled('index.php')).toBe('no');
+    for (const file of ['admin.css', 'fraunces-latin.woff2']) {
+      const r = await fetch(new URL(`/wp-content/plugins/craftish-care/assets/${file}`, HOME));
+      expect(r.status).toBe(200);
+    }
   });
 });

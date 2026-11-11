@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Craftish Care
  * Description:       Lets Craftish see this site's versions and run the updates WordPress itself offers, when Craftish approves them. It can report, update, and forget its keys. Nothing else.
- * Version:           0.2.0
+ * Version:           0.2.1
  * Requires at least: 6.6
  * Requires PHP:      8.1
  * Author:            Craftish
@@ -20,7 +20,7 @@ namespace CraftishCare;
 
 defined( 'ABSPATH' ) || exit;
 
-const VERSION  = '0.2.0';
+const VERSION  = '0.2.1';
 const PROTOCOL = 1;
 const MIN_WP   = '6.6';
 const MIN_PHP  = '8.1';
@@ -108,6 +108,7 @@ function wp_schedule_event_if_absent(): void {
 add_action( 'craftish_care_sweep', array( Store::class, 'sweep_nonces' ) );
 add_filter( 'rest_pre_dispatch', array( Endpoints::class, 'pre_dispatch' ), 10, 3 );
 add_action( 'admin_menu', array( Admin::class, 'menu' ) );
+add_action( 'admin_enqueue_scripts', array( Admin::class, 'enqueue' ) );
 // In wp-admin (after the upload) and on Kamaji's requests, never on a visitor's page load.
 add_action( 'admin_init', __NAMESPACE__ . '\\adopt_release_key' );
 Release::hooks();
