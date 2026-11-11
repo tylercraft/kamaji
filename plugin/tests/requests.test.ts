@@ -244,30 +244,44 @@ describe('where it can’t update', () => {
         capabilities: { can_update: boolean; update_blockers: string[] };
       }
     ).capabilities;
+  /**
+   * The capabilities once the site runs the edited wp-config.php. PHP-FPM's opcache can keep
+   * running the old copy for a few seconds (it rechecks timestamps every 2 seconds by default,
+   * as on DDEV), so this asks again for up to 10 seconds.
+   */
+  const settled = async (canUpdate: boolean) => {
+    let last = await blockers();
+    for (let i = 0; i < 20 && last.can_update !== canUpdate; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      last = await blockers();
+    }
+    return last;
+  };
 
   it('says why with FS_METHOD set to ftpext', async () => {
     wp('config', 'set', 'FS_METHOD', 'ftpext', '--type=constant');
     try {
-      expect(await blockers()).toMatchObject({
+      expect(await settled(false)).toMatchObject({
         can_update: false,
         update_blockers: expect.arrayContaining(['filesystem_not_direct']),
       });
     } finally {
       wp('config', 'delete', 'FS_METHOD', '--type=constant');
     }
+    expect((await settled(true)).can_update).toBe(true);
   });
 
   it('says why with DISALLOW_FILE_MODS', async () => {
     wp('config', 'set', 'DISALLOW_FILE_MODS', 'true', '--raw', '--type=constant');
     try {
-      expect(await blockers()).toMatchObject({
+      expect(await settled(false)).toMatchObject({
         can_update: false,
         update_blockers: expect.arrayContaining(['file_mods_disallowed']),
       });
     } finally {
       wp('config', 'delete', 'DISALLOW_FILE_MODS', '--type=constant');
     }
-    expect((await blockers()).can_update).toBe(true);
+    expect((await settled(true)).can_update).toBe(true);
   });
 });
 
