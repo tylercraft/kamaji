@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -147,6 +148,29 @@ describe('the client', () => {
       status: 401,
       code: 'wrong_host',
       problem: 'The site’s address in WordPress doesn’t match this URL (HTTP 401)',
+    });
+  });
+
+  it('knows WordPress’s maintenance mode, as captured mid-update, and doesn’t try the other form', async () => {
+    const seen: string[] = [];
+    const body: unknown = JSON.parse(
+      readFileSync(new URL('./fixtures/maintenance-rest.json', import.meta.url), 'utf8'),
+    );
+    const result = await careRequest(
+      SITE,
+      keys.report,
+      'status',
+      { job: 'x' },
+      {
+        fetch: reply(503, body, seen),
+      },
+    );
+    expect(seen).toHaveLength(1);
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      code: 'maintenance',
+      problem: 'The site is in maintenance mode: WordPress is mid-update',
     });
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyOne,
   applyResults,
   checkSite,
   emptyState,
@@ -108,5 +109,25 @@ describe('message and token', () => {
     expect(await tokenMatches('abd', 'abc')).toBe(false);
     expect(await tokenMatches('', 'abc')).toBe(false);
     expect(await tokenMatches('abc', undefined)).toBe(false);
+  });
+});
+
+describe('applyOne', () => {
+  it('folds in one site’s check without claiming a pass', () => {
+    const sites = [
+      { id: 'a', name: 'A', url: 'https://a.test/', expectedText: null },
+      { id: 'b', name: 'B', url: 'https://b.test/', expectedText: null },
+    ];
+    const state = { ...emptyState(), sites, checkedAt: 1000 };
+    const { state: next, lines } = applyOne(
+      state,
+      'a',
+      { t: 2000, ok: false, status: 503, ms: 10, problem: 'HTTP 503' },
+      2000,
+    );
+    expect(next.checkedAt).toBe(1000);
+    expect(next.results.a.failures).toBe(1);
+    expect(next.results.b).toEqual({ history: [], failures: 0, downSince: null, alertedAt: null });
+    expect(lines).toEqual([]);
   });
 });

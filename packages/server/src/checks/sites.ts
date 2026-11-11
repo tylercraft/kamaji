@@ -40,14 +40,20 @@ export const realCheckers: SiteCheckers = {
   certificate: (host, signal) => checkCertificate(host, { signal }),
 };
 
-export function liveSites(db: Db): LiveSite[] {
+/**
+ * Sites to check: set up, not paused by Tyler, and not mid-update. The updater pauses a site's
+ * uptime checks for its run (its upgrades answer 503 while WordPress is in maintenance mode), and
+ * re-checks it straight after; the pause lapses by itself if the updater dies.
+ */
+export function liveSites(db: Db, now: number = Date.now()): LiveSite[] {
   return db
     .prepare(
       `SELECT id, name, url, expected_text FROM sites
        WHERE removed_at IS NULL AND paused_at IS NULL AND setup = 'done'
+       AND (updating_until IS NULL OR updating_until <= ?)
        ORDER BY name COLLATE NOCASE`,
     )
-    .all()
+    .all(now)
     .map((r) => ({
       id: String(r.id),
       name: String(r.name),
@@ -84,11 +90,13 @@ export async function checkSites(
     signal: AbortSignal;
     checkers?: SiteCheckers;
     concurrency?: number;
+    /** Only these sites (the updater's re-check after a run). */
+    only?: string[];
   },
 ): Promise<number> {
   const { now, signal } = options;
   const checkers = options.checkers ?? realCheckers;
-  const sites = liveSites(db);
+  const sites = liveSites(db, now()).filter((s) => !options.only || options.only.includes(s.id));
   if (sites.length === 0) return 0;
 
   const results = await mapLimit(sites, options.concurrency ?? 4, async (site) => {

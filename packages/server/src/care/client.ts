@@ -19,7 +19,14 @@ const PLUGIN_CODES = new Set([
   'not_found',
   'bad_body',
   'unknown_job',
+  'busy',
+  'version_changed',
+  'no_package',
+  'job_id_reused',
 ]);
+
+/** WordPress's maintenance mode answers every request with this (fixtures/maintenance-rest.json). */
+export const MAINTENANCE_TEXT = 'Briefly unavailable for scheduled maintenance';
 
 const WORDS: Record<string, string> = {
   malformed: 'The plugin said the request was malformed',
@@ -36,6 +43,11 @@ const WORDS: Record<string, string> = {
   not_found: 'The plugin doesn’t offer that request',
   bad_body: 'The plugin couldn’t read the request',
   unknown_job: 'The plugin doesn’t know that job',
+  busy: 'The plugin is already running another update',
+  version_changed: 'WordPress no longer offers that version, or a different version is installed',
+  no_package: 'WordPress offers that version without a download: a licence may be missing',
+  job_id_reused: 'The plugin already ran a different update under that job id',
+  maintenance: 'The site is in maintenance mode: WordPress is mid-update',
 };
 
 export type CareResult =
@@ -110,6 +122,15 @@ export async function careRequest(
         : null;
     if (response.ok && data !== null && code === null) {
       return { ok: true, status: response.status, data };
+    }
+    // Maintenance mode is the whole site's answer, so the other URL form would get it too.
+    if (
+      response.status === 503 &&
+      data &&
+      typeof data === 'object' &&
+      String((data as { message?: unknown }).message ?? '').includes(MAINTENANCE_TEXT)
+    ) {
+      return { ok: false, status: 503, code: 'maintenance', problem: `${WORDS.maintenance}` };
     }
     if (code !== null && PLUGIN_CODES.has(code)) {
       return {
