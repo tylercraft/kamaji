@@ -336,6 +336,7 @@ describe('the feed', () => {
       seen.push({ url: String(url), auth: new Headers(init?.headers).get('Authorization') });
       return new Response(status === 200 ? JSON.stringify(FEED) : '{}', { status });
     }) as typeof fetch;
+    const logged: string[] = [];
     const run = (now: number) =>
       checkWordfence(db, {
         apiKey: 'test-key',
@@ -343,6 +344,7 @@ describe('the feed', () => {
         now: () => now,
         signal,
         fetch: fake,
+        log: (line) => logged.push(line),
       });
 
     await run(T);
@@ -358,6 +360,13 @@ describe('the feed', () => {
       problem: 'Wordfence refused the API key (HTTP 401)',
     });
     expect(JSON.stringify(readFeedState(db))).not.toContain('test-key');
+    expect(logged).toEqual([
+      'wordfence: 4 records, 0 skipped',
+      `wordfence: Wordfence refused the API key (HTTP 401); next try ${new Date(T + 31 * HOUR)
+        .toISOString()
+        .slice(0, 16)
+        .replace('T', ' ')} UTC`,
+    ]);
     expect(matches(db)).toHaveLength(2);
 
     // Retried 6 hours later, not every cycle; stale after two days says so.

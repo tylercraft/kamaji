@@ -275,8 +275,11 @@ export async function checkWordfence(
     now: () => number;
     signal: AbortSignal;
     fetch?: typeof fetch;
+    /** One line per attempt: counts or a fixed problem, never the key or the feed's content. */
+    log?: (message: string) => void;
   },
 ): Promise<void> {
+  const log = options.log ?? (() => {});
   const state = readFeedState(db);
   if ((options.apiKey || options.localFile) && feedDue(state, options.now())) {
     const at = options.now();
@@ -312,8 +315,11 @@ export async function checkWordfence(
         },
         at,
       );
+      log(`wordfence: ${parsed.records} records, ${parsed.skipped} skipped`);
     } else {
       writeState(db, FEED_STATE, { ...state, lastAttemptAt: at, problem }, at);
+      const retry = new Date(at + RETRY_AFTER_MS).toISOString().slice(0, 16).replace('T', ' ');
+      log(`wordfence: ${problem ?? 'no records'}; next try ${retry} UTC`);
     }
   }
   judgeFeed(db, options.now(), Boolean(options.apiKey || options.localFile));

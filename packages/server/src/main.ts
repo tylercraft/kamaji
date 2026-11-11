@@ -73,6 +73,7 @@ const runChecks = async (signal: AbortSignal) => {
     localFile: config.wordfenceFeedFile,
     now: Date.now,
     signal,
+    log,
   });
   const servers = await checkServers(db, {
     now: Date.now,
