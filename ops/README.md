@@ -168,6 +168,114 @@ On the mini:
 
 Kamaji picks it up on its next cycle; no restart needed.
 
+## craftish's database export
+
+Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. Nothing uses it until M4's updater; these steps can run any time. They follow "craftish's report" above.
+
+On the mini:
+
+1. Make the backup key (no passphrase: the updater can't type one):
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-backup@molcajete -f /Users/tylercraft/.ssh/kamaji-backup
+```
+
+2. Show the public key, to paste in step 10:
+
+```
+/bin/cat /Users/tylercraft/.ssh/kamaji-backup.pub
+```
+
+On the laptop:
+
+3. Copy both scripts up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/server-export/kamaji-db-export /Users/tyler/kamaji/server-export/db-export craftish:/tmp/
+```
+
+On craftish (`ssh craftish`):
+
+4. Install them, owned by root:
+
+```
+sudo install -m 755 -o root -g root /tmp/kamaji-db-export /usr/local/bin/kamaji-db-export && sudo install -D -m 755 -o root -g root /tmp/db-export /usr/local/lib/kamaji/db-export && rm /tmp/kamaji-db-export /tmp/db-export
+```
+
+5. The allowlist, with the one craftish site in the pilot:
+
+```
+sudo install -d -m 755 -o root -g root /etc/kamaji && echo aleyahoerlein.com | sudo tee /etc/kamaji/db-export.sites && sudo chmod 644 /etc/kamaji/db-export.sites
+```
+
+6. The folder the exports go in, readable by www-data only:
+
+```
+sudo install -d -m 700 -o www-data -g www-data /var/backups/kamaji
+```
+
+7. Make its user:
+
+```
+sudo adduser --system --group --home /var/lib/kamaji-backup --shell /bin/sh kamaji-backup
+```
+
+8. The one sudo rule, written to a file:
+
+```
+echo 'kamaji-backup ALL=(www-data) NOPASSWD: /usr/local/lib/kamaji/db-export' | sudo tee /etc/sudoers.d/kamaji-db-export && sudo chmod 440 /etc/sudoers.d/kamaji-db-export
+```
+
+9. Check sudo accepts it (expect `parsed OK`; if not, delete the file before anything else):
+
+```
+sudo visudo -cf /etc/sudoers.d/kamaji-db-export
+```
+
+10. Give the user the key, with the line from `server-export/README.md` (paste the whole line between the quotes, with step 2's key at the end):
+
+```
+sudo install -d -m 700 -o kamaji-backup -g kamaji-backup /var/lib/kamaji-backup/.ssh && echo 'PASTE-THE-LINE-HERE' | sudo tee /var/lib/kamaji-backup/.ssh/authorized_keys && sudo chown kamaji-backup: /var/lib/kamaji-backup/.ssh/authorized_keys && sudo chmod 600 /var/lib/kamaji-backup/.ssh/authorized_keys
+```
+
+11. Check sshd will let that user in (if this prints an `allowusers` or `allowgroups` line, add `kamaji-backup` to it and reload sshd):
+
+```
+sudo sshd -T | grep -i -E '^(allowusers|allowgroups|denyusers)'
+```
+
+12. Run an export as that user (expect `{"format":1,"ok":true,"site":"aleyahoerlein.com",…}`):
+
+```
+sudo -u kamaji-backup env SSH_ORIGINAL_COMMAND=aleyahoerlein.com /usr/local/bin/kamaji-db-export
+```
+
+13. Check it refuses a site off the list (expect `"problem":"not on the allowlist"`):
+
+```
+sudo -u kamaji-backup env SSH_ORIGINAL_COMMAND=example.com /usr/local/bin/kamaji-db-export
+```
+
+14. Check the export is there, and only www-data can read it:
+
+```
+sudo ls -l /var/backups/kamaji/aleyahoerlein.com
+```
+
+On the mini (craftish's host key is already in `kamaji_known_hosts`, from "craftish's report"):
+
+15. Ask for an export as Kamaji will (expect the same JSON as step 12):
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-backup -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-backup@100.77.122.31 aleyahoerlein.com
+```
+
+16. Check the key can't do anything else: asking for a shell command is refused (expect `"problem":"not a site name"`, not `uid=…`):
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-backup -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-backup@100.77.122.31 id
+```
+
 ## Deploying a change
 
 On the mini, after the change is on `main`:

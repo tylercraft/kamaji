@@ -1,0 +1,43 @@
+#!/bin/bash
+# db-export: one site's database exported with wp-cli, gzipped, kept on craftish. Installed at
+# /usr/local/lib/kamaji/db-export, owned by root, and run only as www-data through the one sudo
+# rule kamaji-db-export uses (README.md). The site must be a line of /etc/kamaji/db-export.sites;
+# its WordPress is /var/www/<site>/public. Exports go to /var/backups/kamaji/<site>/, readable
+# by www-data only, and anything older than 14 days is deleted, always keeping the newest 3.
+# Prints one JSON line for Kamaji: the evidence, never the data.
+set -u -o pipefail
+export LC_ALL=C PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+
+fail() {
+  printf '{"format":1,"ok":false,"problem":"%s"}\n' "$1"
+  exit "${2:-1}"
+}
+
+site=${1:-}
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail 'not a site name' 2
+grep -qxF -- "$site" /etc/kamaji/db-export.sites 2>/dev/null || fail 'not on the allowlist' 2
+root=/var/www/$site/public
+[ -f "$root/wp-config.php" ] || fail 'no WordPress there' 2
+
+dir=/var/backups/kamaji/$site
+mkdir -p "$dir" || fail 'the export folder could not be made'
+at=$(date -u +%Y%m%dT%H%M%SZ)
+file=$dir/$at.sql.gz
+export WP_CLI_CACHE_DIR=/var/backups/kamaji/.wp-cli-cache
+
+# --single-transaction: a consistent export of InnoDB tables without locking the site.
+if ! wp --path="$root" --skip-plugins --skip-themes db export - --single-transaction --quick 2>/dev/null \
+  | gzip -c >"$file.partial"; then
+  rm -f "$file.partial"
+  fail 'the export failed'
+fi
+mv "$file.partial" "$file"
+
+ls -1t "$dir"/*.sql.gz 2>/dev/null | tail -n +4 | while IFS= read -r old; do
+  find "$old" -maxdepth 0 -mtime +14 -delete
+done
+
+bytes=$(stat -c %s "$file")
+sha=$(sha256sum "$file" | cut -d' ' -f1)
+printf '{"format":1,"ok":true,"site":"%s","at":"%s","bytes":%s,"sha256":"%s"}\n' "$site" "$at" "$bytes" "$sha"
