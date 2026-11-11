@@ -16,9 +16,28 @@ const log = (message: string) => console.log(`${new Date().toISOString()} ${mess
 const env = process.env;
 const repoRoot = new URL('../../../../', import.meta.url).pathname;
 
+// The report key and the Worker's URL and token are Doppler references to checker's
+// (ops/README.md, "The updater"). One Doppler can't resolve is passed through as its literal
+// `${config.NAME}` text: refuse it by name, never its value.
+const unresolved = Object.keys(env).filter(
+  (name) => name.startsWith('KAMAJI_') && /^\$\{.+\}$/.test(env[name] ?? ''),
+);
+if (unresolved.length) {
+  log(`updater: Doppler didn't resolve ${unresolved.join(', ')}; not running`);
+  process.exit(1);
+}
 const keys = loadCareKeys(env);
 if (!keys?.update) {
   log('updater: KAMAJI_CARE_REPORT_KEY and KAMAJI_CARE_UPDATE_KEY are needed; not running');
+  process.exit(1);
+}
+// Without the Worker, a site's outside alerts couldn't be paused during its run.
+const worker =
+  env.KAMAJI_WORKER_URL?.startsWith('https://') && env.KAMAJI_WORKER_TOKEN
+    ? { url: env.KAMAJI_WORKER_URL, token: env.KAMAJI_WORKER_TOKEN }
+    : undefined;
+if (!worker) {
+  log('updater: KAMAJI_WORKER_URL and KAMAJI_WORKER_TOKEN are needed; not running');
   process.exit(1);
 }
 const db = openDb(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`);
@@ -63,10 +82,7 @@ try {
     keys: { report: keys.report, update: keys.update },
     send,
     homePage: realCheckers.homePage,
-    worker:
-      env.KAMAJI_WORKER_URL?.startsWith('https://') && env.KAMAJI_WORKER_TOKEN
-        ? { url: env.KAMAJI_WORKER_URL, token: env.KAMAJI_WORKER_TOKEN }
-        : undefined,
+    worker,
     backup: craftishBackup(
       craftish
         ? {
