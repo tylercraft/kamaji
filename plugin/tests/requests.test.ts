@@ -3,7 +3,8 @@
 // it needs DDEV running: `npm run test:plugin`. Never pointed at a real site.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { CareReport } from '@kamaji/shared';
+import { beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { careRequest } from '../../packages/server/src/care/client.js';
 import {
   loadCareKeys,
@@ -51,6 +52,8 @@ function freshInstall(): void {
   sql("DELETE FROM wp_options WHERE option_name LIKE 'craftish\\_care\\_%'");
   wp('plugin', 'activate', 'craftish-care');
 }
+
+const MU_PLUGIN = `wp_mkdir_p(WPMU_PLUGIN_DIR); file_put_contents(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php", "<?php\n/*\n * Plugin Name: Kamaji test must-use\n * Version: 1.2.3\n */\n");`;
 
 interface Sent {
   status: number;
@@ -102,17 +105,23 @@ describe('happy paths', () => {
   it('says hello, by either URL form', async () => {
     const hello = await send('hello');
     expect(hello.status).toBe(200);
-    expect(hello.body).toMatchObject({ plugin: '0.1.0', protocol: 1, multisite: false });
+    expect(hello.body).toMatchObject({ plugin: '0.2.0', protocol: 1, multisite: false });
     expect((await send('hello', { restRoute: true })).status).toBe(200);
   });
 
   it('reports the inventory, and refreshes at most once per 10 minutes', async () => {
+    // A must-use plugin, written inside the container (no file sync to wait on), removed after.
+    wp('eval', MU_PLUGIN);
+    onTestFinished(() => wp('eval', 'unlink(WPMU_PLUGIN_DIR . "/kamaji-test-mu.php");'));
     const first = await send('report', { body: '{"refresh":true}' });
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ refreshed: true, core: { version: expect.any(String) } });
     const body = first.body as { plugins: { file: string }[]; themes: { active: boolean }[] };
     expect(body.plugins.map((p) => p.file)).toContain('craftish-care/craftish-care.php');
     expect(body.themes.some((t) => t.active)).toBe(true);
+    expect(CareReport.parse(first.body).mu_plugins).toEqual([
+      { file: 'kamaji-test-mu.php', name: 'Kamaji test must-use', version: '1.2.3' },
+    ]);
     expect((await send('report', { body: '{"refresh":true}' })).body).toMatchObject({
       refreshed: false,
     });
