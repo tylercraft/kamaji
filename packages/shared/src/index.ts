@@ -251,6 +251,17 @@ export const InventoryMuPlugin = z.object({
 });
 export type InventoryMuPlugin = z.infer<typeof InventoryMuPlugin>;
 
+/** Where a PHP or database release line stands, from Kamaji's end-of-life list. */
+export const EndOfLife = z.object({
+  product: z.enum(['PHP', 'MySQL', 'MariaDB']),
+  /** The release line, like "8.2"; null when the version couldn't be read. */
+  line: z.string().nullable(),
+  /** Security support ends on this day (UTC); null when the line isn't on the list. */
+  endsOn: z.string().nullable(),
+  state: z.enum(['supported', 'ending', 'ended', 'unknown']),
+});
+export type EndOfLife = z.infer<typeof EndOfLife>;
+
 /** A connected site's inventory, from its last good report. */
 export const Inventory = z.object({
   reportedAt: Timestamp,
@@ -275,6 +286,7 @@ export const Inventory = z.object({
   ),
   php: z.string(),
   database: z.string(),
+  endOfLife: z.object({ php: EndOfLife, database: EndOfLife }),
   plugins: z.array(InventoryPlugin),
   /** Unknown when the site's Craftish Care is older than 0.2.0. */
   muPlugins: known(z.array(InventoryMuPlugin)),

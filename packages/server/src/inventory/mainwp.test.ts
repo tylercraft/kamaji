@@ -29,6 +29,10 @@ const inventory = (): Inventory => ({
   vulnerabilityData: { known: false, reason: 'test' },
   php: '8.3.6',
   database: '10.11.14-MariaDB',
+  endOfLife: {
+    php: { product: 'PHP', line: '8.3', endsOn: '2027-12-31', state: 'supported' },
+    database: { product: 'MariaDB', line: '10.11', endsOn: '2028-02-16', state: 'supported' },
+  },
   plugins: [
     {
       file: 'craftish-care/craftish-care.php',

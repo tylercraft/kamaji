@@ -1,6 +1,7 @@
 // A connected site's inventory: core, plugins and themes (inactive ones too), what WordPress
 // offers for each, and what wordpress.org says about each plugin. Old data always says how old.
 import type {
+  EndOfLife,
   Inventory,
   InventoryPlugin,
   Offer,
@@ -90,6 +91,22 @@ function SecurityCell({
         </div>
       ))}
     </div>
+  );
+}
+
+/** Where the release line's security support stands, from Kamaji's end-of-life list. */
+function SupportNote({ e }: { e: EndOfLife }) {
+  const line = `${e.product} ${e.line ?? ''}`.trim();
+  if (e.state === 'unknown')
+    return <Muted>{line}: not on Kamaji’s end-of-life list, so unknown</Muted>;
+  if (e.state === 'supported') return <Muted>Security support until {e.endsOn}</Muted>;
+  return (
+    <Pill tone={e.state === 'ended' ? 'red' : 'amber'}>
+      <Dot />{' '}
+      {e.state === 'ended'
+        ? `${line} past end of support (${e.endsOn})`
+        : `${line} support ends ${e.endsOn}`}
+    </Pill>
   );
 }
 
@@ -231,9 +248,13 @@ export function InventoryPanel({
               )}
             </dd>
             <dt>PHP</dt>
-            <dd>{inventory.value.php}</dd>
+            <dd>
+              {inventory.value.php} <SupportNote e={inventory.value.endOfLife.php} />
+            </dd>
             <dt>Database</dt>
-            <dd>{inventory.value.database}</dd>
+            <dd>
+              {inventory.value.database} <SupportNote e={inventory.value.endOfLife.database} />
+            </dd>
             <dt>Reported</dt>
             <dd>
               <Time iso={inventory.value.reportedAt} />

@@ -11,6 +11,7 @@ import { checkSites } from './checks/sites.js';
 import { checkDirectory } from './inventory/directory.js';
 import { checkReports } from './inventory/report.js';
 import { checkWordfence } from './wordfence/feed.js';
+import { checkEndOfLife } from './endOfLife/check.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
 import { migrate, openDb } from './db.js';
@@ -75,6 +76,7 @@ const runChecks = async (signal: AbortSignal) => {
     signal,
     log,
   });
+  checkEndOfLife(db, Date.now());
   const servers = await checkServers(db, {
     now: Date.now,
     signal,

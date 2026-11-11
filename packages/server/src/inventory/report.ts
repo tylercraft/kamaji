@@ -16,6 +16,7 @@ import {
   STALE_AFTER_MS as FEED_STALE_AFTER_MS,
   type Match,
 } from '../wordfence/feed.js';
+import { databaseEndOfLife, phpEndOfLife } from '../endOfLife/check.js';
 import { directoryStatus } from './directory.js';
 
 export const REPORT_EVERY_MS = 60 * 60 * 1000;
@@ -434,6 +435,10 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
       vulnerabilityData: vulnerabilityData(db),
       php: value.php,
       database: value.database,
+      endOfLife: {
+        php: phpEndOfLife(value.php, Date.now()),
+        database: databaseEndOfLife(value.database, Date.now()),
+      },
       plugins: rows
         .filter((r) => r.type === 'plugin')
         .map((r) => ({
