@@ -12,12 +12,14 @@ import {
   copyPlugin,
   freshInstall,
   HOME,
+  NEXT,
   readEnv,
   refused,
   send,
   SOURCE,
   synced,
   update,
+  VERSION,
   wp,
   WORDPRESS,
   type Sent,
@@ -299,9 +301,9 @@ describe('self-update', () => {
     seed: env.KAMAJI_CARE_RELEASE_KEY ?? '',
   };
 
-  /** The repo's plugin as version 0.2.1, published to the DDEV channel. */
+  /** The repo's plugin as the next version, published to the DDEV channel. */
   function publish(options: { tamper?: boolean; badSignature?: boolean; version?: string } = {}) {
-    const version = options.version ?? '0.2.1';
+    const version = options.version ?? NEXT;
     const dir = join(tmpdir(), `kamaji-release-${Date.now()}`);
     cpSync(SOURCE.pathname, dir, { recursive: true });
     rmSync(join(dir, 'craftish-care-keys.php'), { force: true });
@@ -350,23 +352,23 @@ describe('self-update', () => {
 
   it('refuses a package that doesn’t match its signed hash', async () => {
     publish({ tamper: true });
-    expect(await offeredSelf()).toBe('0.2.1');
+    expect(await offeredSelf()).toBe(NEXT);
     expect(
       await startUpdate(
         JSON.stringify({
           job: 's1',
           type: 'plugin',
           item: 'craftish-care/craftish-care.php',
-          from: '0.2.0',
-          to: '0.2.1',
+          from: VERSION,
+          to: NEXT,
         }),
       ),
     ).toMatchObject({ status: 202 });
     expect(await finished('s1')).toMatchObject({
       state: 'failed',
-      result: { installed: '0.2.0', error: 'craftish_care_bad_package' },
+      result: { installed: VERSION, error: 'craftish_care_bad_package' },
     });
-    expect((await send('hello')).body).toMatchObject({ plugin: '0.2.0' });
+    expect((await send('hello')).body).toMatchObject({ plugin: VERSION });
   });
 
   // After the test above, which shows the channel answers.
@@ -379,23 +381,23 @@ describe('self-update', () => {
 
   it('updates itself to a signed release through an ordinary job, and keeps its keys', async () => {
     publish();
-    expect(await offeredSelf()).toBe('0.2.1');
+    expect(await offeredSelf()).toBe(NEXT);
     expect(
       await startUpdate(
         JSON.stringify({
           job: 's2',
           type: 'plugin',
           item: 'craftish-care/craftish-care.php',
-          from: '0.2.0',
-          to: '0.2.1',
+          from: VERSION,
+          to: NEXT,
         }),
       ),
     ).toMatchObject({ status: 202 });
     expect(await finished('s2')).toMatchObject({
       state: 'succeeded',
-      result: { installed: '0.2.1', error: null },
+      result: { installed: NEXT, error: null },
     });
-    expect((await send('hello')).body).toMatchObject({ plugin: '0.2.1' });
+    expect((await send('hello')).body).toMatchObject({ plugin: NEXT });
     expect(wp('plugin', 'get', 'craftish-care', '--field=status')).toBe('active');
     // The release carries no site's keys file; the stored keys carry on.
     expect(
