@@ -76,6 +76,16 @@ export function SitePage({ id }: { id: string }) {
                     <>
                       <Capabilities handshake={d.handshake} detail={d} />
                       <Recheck id={site.id} reload={reload} />
+                      <Muted>
+                        <a
+                          href={`/api/sites/${site.id}/craftish-care.zip`}
+                          download="craftish-care.zip"
+                        >
+                          Download this site’s copy of Craftish Care
+                        </a>
+                        , with its keys built in, to upload over the installed one (Plugins → Add
+                        New Plugin → Upload Plugin, then “Replace current with uploaded”).
+                      </Muted>
                     </>
                   ) : (
                     <>
