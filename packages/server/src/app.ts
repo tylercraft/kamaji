@@ -193,8 +193,13 @@ export function createApp({
     return c.json(result);
   });
   // Updates: the queue, approving a batch, and a held site's options (updates/).
+  // With ?site=, one site's page: what's waiting there and its latest run.
   app.get('/api/updates', (c) => {
-    const body: UpdatesResponse = { ...queue(db), batches: batchViews(db) };
+    const site = c.req.query('site');
+    const body: UpdatesResponse =
+      site === undefined
+        ? { ...queue(db), batches: batchViews(db) }
+        : { ...queue(db, site), batches: batchViews(db, 1, site) };
     return c.json(body);
   });
   app.post('/api/batches', async (c) => {

@@ -277,6 +277,40 @@ describe('the queue and approval', () => {
   });
 });
 
+describe('one site’s updates', () => {
+  it('narrows the queue to the site, and the runs to its latest, with only its part', async () => {
+    const { db, site } = setup();
+    const TWO = 'two.test';
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, backup_expectation, expected_text, created_at)
+       VALUES (?, 'Two', 'https://two.test/', 'craftish', 'connected', 'done', 'host', 'Two', 0)`,
+    ).run(TWO);
+    recordObservation(db, {
+      resourceType: 'site',
+      resourceId: TWO,
+      check: 'hello',
+      source: 'plugin',
+      at: T,
+      ok: true,
+      value: { ok: true, hello: site.hello() },
+    });
+    storeReport(db, { id: TWO, name: 'Two' }, CareReport.parse(site.report()), T);
+
+    const two = queue(db, TWO);
+    expect(two.sites.map((s) => s.siteId)).toEqual([TWO]);
+    expect(two.items.length).toBeGreaterThan(0);
+    expect(two.items.every((i) => i.siteId === TWO)).toBe(true);
+    expect(batchViews(db, 1, TWO)).toEqual([]);
+
+    expect((await approve(db)).ok).toBe(true);
+    expect(batchViews(db)[0]!.sites.map((s) => s.siteId)).toEqual([SITE, TWO]);
+    const latest = batchViews(db, 1, TWO);
+    expect(latest).toHaveLength(1);
+    expect(latest[0]!.sites.map((s) => s.siteId)).toEqual([TWO]);
+    expect(queue(db, TWO).items).toEqual([]);
+  });
+});
+
 describe('the updater', () => {
   it('runs core first, then each component, with checks after each, inside a pause on both paths', async () => {
     const { db, site, deps, worker, pausedDuring } = setup();
