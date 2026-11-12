@@ -72,7 +72,7 @@ const SSH: Record<HostKind, string> = {
 };
 
 const BACKUPS: Record<BackupExpectation, string> = {
-  kamaji: 'Kamaji checks for a backup before updating',
+  kamaji: 'Kamaji exports the database on craftish first',
   host: 'Handled by the host',
   client: 'Handled by the client',
   tyler: 'Tyler confirms before each run',
@@ -316,6 +316,10 @@ export function InstallSteps({
   );
 }
 
+const CONFIGURE_WORDS: Record<string, string> = {
+  not_craftish: 'Kamaji’s own backup is the export on craftish, and this site isn’t hosted there',
+};
+
 /** Step 3: what to check on the home page, the backup expectation, and notifications. */
 export function ConfigureStep({
   detail,
@@ -338,7 +342,8 @@ export function ConfigureStep({
       backupExpectation: backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
     });
-    if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK))) reload();
+    if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK), CONFIGURE_WORDS))
+      reload();
   }
   return (
     <Panel aria-labelledby="configure">
@@ -360,17 +365,19 @@ export function ConfigureStep({
         </Field>
         <Choices>
           <legend>Backups</legend>
-          {(Object.entries(BACKUPS) as [BackupExpectation, string][]).map(([value, label]) => (
-            <label key={value}>
-              <input
-                type="radio"
-                name="backup"
-                value={value}
-                defaultChecked={detail.backupExpectation === value}
-              />
-              {label}
-            </label>
-          ))}
+          {(Object.entries(BACKUPS) as [BackupExpectation, string][])
+            .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
+            .map(([value, label]) => (
+              <label key={value}>
+                <input
+                  type="radio"
+                  name="backup"
+                  value={value}
+                  defaultChecked={detail.backupExpectation === value}
+                />
+                {label}
+              </label>
+            ))}
           <label>
             <input
               type="radio"

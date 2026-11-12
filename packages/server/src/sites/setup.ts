@@ -133,15 +133,19 @@ export async function handshake(
   return { at: new Date(at).toISOString(), result: value };
 }
 
-/** Step 3. Finishing grants no update permission: every update is still approved. */
+/**
+ * Step 3. Finishing grants no update permission: every update is still approved. Kamaji's own
+ * backup is the database export on craftish, so only a site hosted there can have it.
+ */
 export function configureSite(
   db: Db,
   id: string,
   request: ConfigureSiteRequest,
   now: number,
-): boolean {
+): 'saved' | 'not-found' | 'not-craftish' {
   const row = siteRow(db, id);
-  if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return false;
+  if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return 'not-found';
+  if (request.backupExpectation === 'kamaji' && row.host_kind !== 'craftish') return 'not-craftish';
   db.prepare(
     `UPDATE sites SET expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done'
      WHERE id = ?`,
@@ -154,7 +158,7 @@ export function configureSite(
       resourceId: id,
     });
   }
-  return true;
+  return 'saved';
 }
 
 export function siteDetail(

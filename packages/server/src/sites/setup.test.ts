@@ -185,6 +185,26 @@ describe('Add site', () => {
     });
   });
 
+  it('offers Kamaji’s own backup only to a site hosted on craftish', async () => {
+    const { post, detail } = setup(reportOnly, () => ok(HELLO));
+    await post('/api/sites', NEW);
+    await post('/api/sites/kamaji-wp.ddev.site/mode', { mode: 'monitoring' });
+    const config = { expectedText: null, backupExpectation: 'kamaji', notifications: 'normal' };
+    const refused = await post('/api/sites/kamaji-wp.ddev.site/configure', config);
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: 'not_craftish' });
+    expect((await detail('kamaji-wp.ddev.site')).site.setup).toBe('configure');
+
+    await post('/api/sites', {
+      ...NEW,
+      url: 'https://kamaji-wp-alias.ddev.site',
+      hostKind: 'craftish',
+    });
+    await post('/api/sites/kamaji-wp-alias.ddev.site/mode', { mode: 'monitoring' });
+    expect((await post('/api/sites/kamaji-wp-alias.ddev.site/configure', config)).status).toBe(200);
+    expect((await detail('kamaji-wp-alias.ddev.site')).backupExpectation).toBe('kamaji');
+  });
+
   it('connects a site already set up as monitoring only, keeping its settings', async () => {
     let answer: CareResult = { ok: false, status: 404, code: null, problem: 'Not installed' };
     const { post, get, detail, sent } = setup(reportOnly, () => answer);
