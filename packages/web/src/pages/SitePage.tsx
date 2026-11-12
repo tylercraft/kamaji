@@ -22,6 +22,7 @@ import {
 import { postJson } from '../api';
 import { Handshake } from '@kamaji/shared';
 import { useState } from 'react';
+import { failed, reason, saved } from '../components/toast';
 import { InventoryPanel } from './InventoryPanel';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
@@ -32,8 +33,12 @@ function Recheck({ id, reload }: { id: string; reload: () => void }) {
       disabled={busy}
       onClick={async () => {
         setBusy(true);
-        await postJson(`/api/sites/${id}/handshake`, {}, Handshake);
+        const answer = await postJson(`/api/sites/${id}/handshake`, {}, Handshake);
         setBusy(false);
+        if (!answer.ok) failed(`The check didn’t run: ${reason(answer.error)}.`);
+        else if (answer.data.result.ok)
+          saved(`Connected: Craftish Care ${answer.data.result.hello.plugin} answered`);
+        else failed(`Not connected: ${answer.data.result.problem}.`);
         reload();
       }}
       css={{ justifySelf: 'start' }}

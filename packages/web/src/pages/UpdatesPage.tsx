@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
+import { saved } from '../components/toast';
 import {
   Button,
   Dot,
@@ -308,6 +309,9 @@ function Review({
       done();
       return;
     }
+    saved(
+      `Approved ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}: follow it under Runs`,
+    );
     done();
   }
 

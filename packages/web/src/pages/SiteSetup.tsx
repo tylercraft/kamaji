@@ -14,6 +14,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { Choices, Field, Form, FormError, PrimaryButton } from '../components/forms';
+import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
 
@@ -181,7 +182,11 @@ export function Capabilities({
   );
 }
 
-function useAction() {
+/**
+ * Runs a write and shows how it went. With `toasts`, the result is a toast (for a save that
+ * changes nothing on the page); without, a failure shows in the panel.
+ */
+function useAction(toasts?: { saved: string; failed: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const run = async (
@@ -192,8 +197,13 @@ function useAction() {
     setError(null);
     const result = await action();
     setBusy(false);
-    if (!result.ok)
+    if (result.ok) {
+      if (toasts) saved(toasts.saved);
+    } else if (toasts) {
+      failed(`${toasts.failed}: ${words[result.error ?? ''] ?? reason(result.error ?? '')}.`);
+    } else {
       setError(words[result.error ?? ''] ?? `Kamaji couldn’t do that (${result.error}).`);
+    }
     return result.ok;
   };
   return { busy, error, run };
@@ -312,7 +322,10 @@ export function ConfigureStep({
   reload: () => void;
 }) {
   const { site } = detail;
-  const { busy, error, run } = useAction();
+  const { busy, run } = useAction({
+    saved: `Saved ${site.name}’s settings`,
+    failed: 'Not saved',
+  });
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -390,7 +403,6 @@ export function ConfigureStep({
           Finishing starts the checks. It grants no update permission: every update is still
           approved.
         </Muted>
-        {error && <FormError>{error}</FormError>}
         <PrimaryButton type="submit" disabled={busy}>
           {site.setup === 'done' ? 'Save' : 'Finish'}
         </PrimaryButton>
