@@ -71,7 +71,7 @@ const SSH: Record<HostKind, string> = {
   other: 'Unknown for this host',
 };
 
-const BACKUPS: Record<BackupExpectation, string> = {
+export const BACKUPS: Record<BackupExpectation, string> = {
   kamaji: 'Kamaji exports the database on craftish first',
   host: 'Handled by the host',
   client: 'Handled by the client',
