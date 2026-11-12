@@ -1,6 +1,14 @@
 // One site: its unfinished setup to resume, or once done, its connection and Remove.
 import { SiteDetailResponse } from '@kamaji/shared';
-import { Button, Muted, PageHeading, Panel, PanelTitle, ResourceView } from '../components/ui';
+import {
+  Button,
+  Grid,
+  Muted,
+  PageHeading,
+  Panel,
+  PanelTitle,
+  ResourceView,
+} from '../components/ui';
 import { useLink } from '../router';
 import { useResource } from '../useResource';
 import {
@@ -70,37 +78,40 @@ export function SitePage({ id }: { id: string }) {
             )}
             {site.setup === 'done' && (
               <>
-                <Panel aria-labelledby="connection">
-                  <PanelTitle id="connection">Connection</PanelTitle>
-                  {site.mode === 'connected' && d.handshake ? (
-                    <>
-                      <Capabilities handshake={d.handshake} detail={d} />
-                      <Recheck id={site.id} reload={reload} />
-                      <Muted>
-                        <a
-                          href={`/api/sites/${site.id}/craftish-care.zip`}
-                          download="craftish-care.zip"
-                        >
-                          Download this site’s copy of Craftish Care
-                        </a>
-                        , with its keys built in, to upload over the installed one (Plugins → Add
-                        New Plugin → Upload Plugin, then “Replace current with uploaded”).
-                      </Muted>
-                    </>
-                  ) : (
-                    <>
-                      <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
-                      {d.canConnect && (
-                        <details>
-                          <summary>Connect with Craftish Care</summary>
-                          <InstallSteps detail={d} reload={reload} />
-                        </details>
-                      )}
-                    </>
-                  )}
-                </Panel>
+                {/* Connection and Configure side by side, stacked on narrow screens. */}
+                <Grid columns="repeat(2, minmax(0, 1fr))">
+                  <Panel aria-labelledby="connection">
+                    <PanelTitle id="connection">Connection</PanelTitle>
+                    {site.mode === 'connected' && d.handshake ? (
+                      <>
+                        <Capabilities handshake={d.handshake} detail={d} />
+                        <Recheck id={site.id} reload={reload} />
+                        <Muted>
+                          <a
+                            href={`/api/sites/${site.id}/craftish-care.zip`}
+                            download="craftish-care.zip"
+                          >
+                            Download this site’s copy of Craftish Care
+                          </a>
+                          , with its keys built in, to upload over the installed one (Plugins → Add
+                          New Plugin → Upload Plugin, then “Replace current with uploaded”).
+                        </Muted>
+                      </>
+                    ) : (
+                      <>
+                        <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
+                        {d.canConnect && (
+                          <details>
+                            <summary>Connect with Craftish Care</summary>
+                            <InstallSteps detail={d} reload={reload} />
+                          </details>
+                        )}
+                      </>
+                    )}
+                  </Panel>
+                  <ConfigureStep detail={d} reload={reload} />
+                </Grid>
                 {site.mode === 'connected' && <InventoryPanel detail={d} reload={reload} />}
-                <ConfigureStep detail={d} reload={reload} />
               </>
             )}
             <RemovePanel detail={d} />
