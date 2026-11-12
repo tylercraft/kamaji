@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Craftish Care
  * Description:       Lets Craftish see this site's versions and run the updates WordPress itself offers, when Craftish approves them. It can report, update, and forget its keys. Nothing else.
- * Version:           0.2.1
+ * Version:           0.2.2
  * Requires at least: 6.6
  * Requires PHP:      8.1
  * Author:            Craftish
@@ -20,7 +20,7 @@ namespace CraftishCare;
 
 defined( 'ABSPATH' ) || exit;
 
-const VERSION  = '0.2.1';
+const VERSION  = '0.2.2';
 const PROTOCOL = 1;
 const MIN_WP   = '6.6';
 const MIN_PHP  = '8.1';

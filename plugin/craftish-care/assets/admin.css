@@ -161,6 +161,8 @@
   margin: 0 0 8px;
 }
 .craftish-care ul {
+  /* wp-admin's common.css sets ul { list-style: none }. */
+  list-style: disc outside;
   padding-left: 17px;
   margin: 0;
   color: var(--cc-muted);

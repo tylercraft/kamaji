@@ -317,4 +317,11 @@ describe('Tools → Craftish Care', () => {
       expect(r.status).toBe(200);
     }
   });
+
+  it('puts the bullets back on its lists, which wp-admin takes off', async () => {
+    const css = await (
+      await fetch(new URL('/wp-content/plugins/craftish-care/assets/admin.css', HOME))
+    ).text();
+    expect(css.match(/\.craftish-care ul \{[^}]*\}/)?.[0]).toContain('list-style: disc outside;');
+  });
 });
