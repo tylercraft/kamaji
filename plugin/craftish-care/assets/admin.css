@@ -1,0 +1,358 @@
+/*
+ * Tools → Craftish Care, from Tyler's design (TY-162). Loaded on that screen only, and every
+ * selector is scoped to .craftish-care. The font is a local file, just for the wordmark: no
+ * external requests. Fraunces is under the SIL Open Font License (fraunces-OFL.txt).
+ */
+@font-face {
+  font-family: CraftishFraunces;
+  src: url('fraunces-latin.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+}
+.craftish-care {
+  --cc-ink: #242721;
+  --cc-muted: #60645c;
+  --cc-line: #deded6;
+  --cc-paper: #fff;
+  --cc-warm: #f6f4ec;
+  max-width: 1100px;
+  color: var(--cc-ink);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.craftish-care * {
+  box-sizing: border-box;
+}
+.craftish-care h1,
+.craftish-care h2,
+.craftish-care p {
+  padding: 0;
+}
+.craftish-care h2 {
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--cc-ink);
+}
+.craftish-care p {
+  margin: 0;
+}
+.craftish-care a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.craftish-care a:hover {
+  text-decoration-thickness: 2px;
+}
+.craftish-care a:focus-visible,
+.craftish-care summary:focus-visible,
+.craftish-care [tabindex]:focus-visible {
+  outline: 2px solid #2271b1;
+  outline-offset: 4px;
+}
+.craftish-care .cc-header {
+  position: relative;
+  overflow: hidden;
+  background: var(--cc-warm);
+  border: 1px solid var(--cc-line);
+  padding: 32px 36px;
+}
+.craftish-care .cc-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  position: relative;
+}
+.craftish-care h1 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+.craftish-care .cc-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.craftish-care .cc-mark {
+  width: 29px;
+  height: 29px;
+  flex: none;
+}
+.craftish-care .cc-wordmark {
+  font:
+    700 36px/1 CraftishFraunces,
+    Georgia,
+    serif;
+  letter-spacing: -1.5px;
+  font-variant-ligatures: none;
+  white-space: nowrap;
+}
+.craftish-care .cc-wordmark span {
+  font-weight: 300;
+}
+.craftish-care .cc-product {
+  font-size: 20px;
+  letter-spacing: -0.3px;
+  margin-left: 2px;
+}
+.craftish-care .cc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #c3d0bd;
+  border-radius: 99px;
+  padding: 5px 12px;
+  background: #eef3e9;
+  color: #354a2c;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.craftish-care .cc-dot {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+.craftish-care .cc-intro {
+  max-width: 570px;
+  margin-top: 23px;
+  color: #50554c;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.craftish-care .cc-connection {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+  padding: 18px 36px;
+  background: white;
+  border: 1px solid var(--cc-line);
+  border-top: 0;
+  font-size: 12px;
+  color: var(--cc-muted);
+}
+.craftish-care .cc-connection strong {
+  color: var(--cc-ink);
+  font-weight: 500;
+}
+.craftish-care code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  background: #f0f0eb;
+  padding: 2px 5px;
+  border-radius: 2px;
+}
+.craftish-care .cc-scope {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 44px;
+  padding: 32px 36px;
+  margin: 0 0 8px;
+}
+.craftish-care ul {
+  padding-left: 17px;
+  margin: 0;
+  color: var(--cc-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.craftish-care li {
+  margin: 0 0 8px;
+  padding-left: 3px;
+}
+.craftish-care li::marker {
+  color: #8c9085;
+}
+.craftish-care .cc-activity {
+  background: white;
+  border: 1px solid var(--cc-line);
+}
+.craftish-care .cc-section-head {
+  padding: 24px 28px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 20px;
+}
+.craftish-care .cc-section-head h2 {
+  margin: 0 0 5px;
+}
+.craftish-care .cc-section-head p {
+  color: var(--cc-muted);
+  font-size: 12px;
+}
+.craftish-care .cc-count {
+  font-size: 11px;
+  color: var(--cc-muted);
+  white-space: nowrap;
+}
+.craftish-care .cc-table-wrap {
+  overflow-x: auto;
+}
+.craftish-care table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.craftish-care th {
+  font-weight: 500;
+  color: var(--cc-muted);
+  background: #fafaf7;
+  border-top: 1px solid var(--cc-line);
+  border-bottom: 1px solid var(--cc-line);
+  padding: 10px 28px;
+  font-size: 11px;
+}
+.craftish-care td {
+  padding: 13px 28px;
+  border-bottom: 1px solid #eeeee8;
+}
+.craftish-care tbody tr:last-child td {
+  border-bottom: 0;
+}
+.craftish-care tbody tr:hover {
+  background: #fafaf7;
+}
+.craftish-care .cc-time {
+  color: var(--cc-muted);
+  margin-left: 12px;
+}
+.craftish-care .cc-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #435d37;
+}
+.craftish-care .cc-result svg {
+  width: 13px;
+  height: 13px;
+}
+.craftish-care .cc-table-note {
+  padding: 12px 28px;
+  border-top: 1px solid var(--cc-line);
+  color: var(--cc-muted);
+  font-size: 11px;
+}
+.craftish-care .cc-security {
+  margin-top: 20px;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--cc-muted);
+}
+.craftish-care summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--cc-ink);
+}
+.craftish-care .cc-security p {
+  margin-top: 10px;
+  max-width: 680px;
+}
+.craftish-care .cc-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 38px;
+  padding-top: 17px;
+  border-top: 1px solid var(--cc-line);
+  font-size: 11px;
+  color: var(--cc-muted);
+}
+@media (max-width: 900px) {
+  .craftish-care .cc-scope {
+    padding: 28px 0;
+    gap: 28px;
+  }
+  .craftish-care .cc-header {
+    padding: 28px;
+  }
+  .craftish-care .cc-connection {
+    padding: 16px 28px;
+  }
+}
+@media (max-width: 600px) {
+  .craftish-care .cc-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .craftish-care .cc-header {
+    padding: 24px;
+  }
+  .craftish-care .cc-wordmark {
+    font-size: 32px;
+  }
+  .craftish-care .cc-scope {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .craftish-care .cc-connection {
+    padding: 16px 24px;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .craftish-care .cc-section-head {
+    padding: 20px;
+    display: block;
+  }
+  .craftish-care .cc-count {
+    display: block;
+    margin-top: 8px;
+  }
+  .craftish-care th,
+  .craftish-care td {
+    padding: 12px 20px;
+  }
+  .craftish-care .cc-time {
+    display: block;
+    margin-left: 0;
+  }
+  .craftish-care .cc-footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+.craftish-care .cc-status--off {
+  border-color: var(--cc-line);
+  background: #f0f0eb;
+  color: var(--cc-muted);
+}
+.craftish-care .cc-result--pending {
+  color: var(--cc-muted);
+}
+.craftish-care .cc-result--refused {
+  color: #8a3324;
+}
+.craftish-care .cc-empty {
+  padding: 0 28px 24px;
+  color: var(--cc-muted);
+  font-size: 12px;
+}
+.craftish-care .cc-blockers {
+  padding: 0 36px 32px;
+  margin-top: -16px;
+}
+.craftish-care .cc-blockers p {
+  color: var(--cc-ink);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+@media (max-width: 900px) {
+  .craftish-care .cc-blockers {
+    padding: 0 0 28px;
+  }
+}

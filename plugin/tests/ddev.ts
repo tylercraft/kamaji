@@ -21,6 +21,12 @@ export const INSTALLED = new URL(
 );
 export const KEYS_FILE = new URL('craftish-care-keys.php', INSTALLED);
 
+/** The repo's plugin version, and the next patch release, which the self-update tests publish. */
+export const VERSION = /^const VERSION {2}= '([^']+)';$/m.exec(
+  readFileSync(new URL('craftish-care.php', SOURCE), 'utf8'),
+)![1]!;
+export const NEXT = VERSION.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+
 export function readEnv(): NodeJS.ProcessEnv {
   const text = readFileSync(new URL('../../dev/care-keys.env', import.meta.url), 'utf8');
   return Object.fromEntries(
