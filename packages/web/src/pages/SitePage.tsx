@@ -24,6 +24,7 @@ import { Handshake } from '@kamaji/shared';
 import { useState } from 'react';
 import { failed, reason, saved } from '../components/toast';
 import { InventoryPanel } from './InventoryPanel';
+import { SiteUpdatesPanel } from './SiteUpdatesPanel';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -116,6 +117,7 @@ export function SitePage({ id }: { id: string }) {
                   </Panel>
                   <ConfigureStep detail={d} reload={reload} />
                 </Grid>
+                {site.mode === 'connected' && <SiteUpdatesPanel siteId={site.id} />}
                 {site.mode === 'connected' && <InventoryPanel detail={d} reload={reload} />}
               </>
             )}

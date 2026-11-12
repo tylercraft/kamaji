@@ -55,7 +55,7 @@ const STATE_WORDS = {
   held: 'Held',
 } as const;
 
-function Flags({ item }: { item: QueueItem }) {
+export function Flags({ item }: { item: QueueItem }) {
   return (
     <>
       {item.security && (
@@ -259,14 +259,31 @@ function Queue({
   );
 }
 
-function Review({
+function Review(props: Parameters<typeof ReviewBody>[0]) {
+  const chosen = props.data.items.some((i) => props.ticked.has(key(i)));
+  if (!chosen) return null;
+  return (
+    <Panel aria-labelledby="review">
+      <PanelTitle id="review">Review</PanelTitle>
+      <ReviewBody {...props} />
+    </Panel>
+  );
+}
+
+/**
+ * The ticked updates by site, each site's backup, and Approve, bound to exactly that scope: here
+ * and on a site's page. `runsAt` says where the run shows once approved.
+ */
+export function ReviewBody({
   data,
   ticked,
   done,
+  runsAt = 'under Runs',
 }: {
   data: UpdatesResponse;
   ticked: Set<string>;
   done: () => void;
+  runsAt?: string;
 }) {
   const chosen = data.items.filter((i) => ticked.has(key(i)));
   const siteIds = [...new Set(chosen.map((i) => i.siteId))];
@@ -310,14 +327,13 @@ function Review({
       return;
     }
     saved(
-      `Approved ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}: follow it under Runs`,
+      `Approved ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}: follow it ${runsAt}`,
     );
     done();
   }
 
   return (
-    <Panel aria-labelledby="review">
-      <PanelTitle id="review">Review</PanelTitle>
+    <>
       {siteIds.map((id) => {
         const s = site(id);
         const items = chosen.filter((i) => i.siteId === id);
@@ -381,7 +397,7 @@ function Review({
           : `Approve and run ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}`}
       </PrimaryButton>
       {error && <FormError>{error}</FormError>}
-    </Panel>
+    </>
   );
 }
 
@@ -428,6 +444,54 @@ function HeldActions({
   );
 }
 
+/** One site's part of a run: its state, backup, each update's outcome, and a held site's options. */
+export function RunSite({
+  batch: b,
+  site: s,
+  reload,
+}: {
+  batch: BatchView;
+  site: BatchSiteView;
+  reload: () => void;
+}) {
+  return (
+    <div css={{ display: 'grid', gap: 6 }}>
+      <strong>
+        {s.siteName}{' '}
+        <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
+          <Dot /> {STATE_WORDS[s.state]}
+        </Pill>
+      </strong>
+      {s.backup && <Muted>Backup: {s.backup}</Muted>}
+      {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
+      <div css={{ overflowX: 'auto' }}>
+        <Table>
+          <tbody>
+            {s.items.map((i) => (
+              <tr key={i.id}>
+                <td>
+                  {i.name} {i.from} → {i.to}
+                </td>
+                <td>
+                  {i.outcome ? (
+                    <Pill tone={OUTCOMES[i.outcome][1]}>
+                      <Dot /> {OUTCOMES[i.outcome][0]}
+                    </Pill>
+                  ) : (
+                    <Muted>{STATE_WORDS[i.state]}</Muted>
+                  )}
+                  {i.detail && <Muted>{i.detail}</Muted>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+      {s.state === 'held' && <HeldActions batch={b} site={s} reload={reload} />}
+    </div>
+  );
+}
+
 function Batches({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
   if (batches.length === 0) return null;
   return (
@@ -440,40 +504,7 @@ function Batches({ batches, reload }: { batches: BatchView[]; reload: () => void
             {b.state === 'finished' ? 'Finished' : b.state === 'running' ? 'Running' : 'Starting'}
           </Muted>
           {b.sites.map((s) => (
-            <div key={s.siteId} css={{ display: 'grid', gap: 6 }}>
-              <strong>
-                {s.siteName}{' '}
-                <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
-                  <Dot /> {STATE_WORDS[s.state]}
-                </Pill>
-              </strong>
-              {s.backup && <Muted>Backup: {s.backup}</Muted>}
-              {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
-              <div css={{ overflowX: 'auto' }}>
-                <Table>
-                  <tbody>
-                    {s.items.map((i) => (
-                      <tr key={i.id}>
-                        <td>
-                          {i.name} {i.from} → {i.to}
-                        </td>
-                        <td>
-                          {i.outcome ? (
-                            <Pill tone={OUTCOMES[i.outcome][1]}>
-                              <Dot /> {OUTCOMES[i.outcome][0]}
-                            </Pill>
-                          ) : (
-                            <Muted>{STATE_WORDS[i.state]}</Muted>
-                          )}
-                          {i.detail && <Muted>{i.detail}</Muted>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-              {s.state === 'held' && <HeldActions batch={b} site={s} reload={reload} />}
-            </div>
+            <RunSite key={s.siteId} batch={b} site={s} reload={reload} />
           ))}
         </div>
       ))}
