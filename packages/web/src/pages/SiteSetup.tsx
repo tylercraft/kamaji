@@ -183,8 +183,8 @@ export function Capabilities({
 }
 
 /**
- * Runs a write and shows how it went. With `toasts`, the result is a toast (for a save that
- * changes nothing on the page); without, a failure shows in the panel.
+ * Runs a write and shows how it went. A failure always shows in the panel. With `toasts`, the
+ * result is a toast as well (for a save that changes nothing on the page).
  */
 function useAction(toasts?: { saved: string; failed: string }) {
   const [busy, setBusy] = useState(false);
@@ -200,7 +200,10 @@ function useAction(toasts?: { saved: string; failed: string }) {
     if (result.ok) {
       if (toasts) saved(toasts.saved);
     } else if (toasts) {
-      failed(`${toasts.failed}: ${words[result.error ?? ''] ?? reason(result.error ?? '')}.`);
+      // In the panel too: a toast fades, and a failure has to stay until it's fixed.
+      const why = words[result.error ?? ''] ?? reason(result.error ?? '');
+      failed(`${toasts.failed}: ${why}.`);
+      setError(`${toasts.failed}: ${why}.`);
     } else {
       setError(words[result.error ?? ''] ?? `Kamaji couldn’t do that (${result.error}).`);
     }
@@ -322,7 +325,7 @@ export function ConfigureStep({
   reload: () => void;
 }) {
   const { site } = detail;
-  const { busy, run } = useAction({
+  const { busy, error, run } = useAction({
     saved: `Saved ${site.name}’s settings`,
     failed: 'Not saved',
   });
@@ -403,6 +406,7 @@ export function ConfigureStep({
           Finishing starts the checks. It grants no update permission: every update is still
           approved.
         </Muted>
+        {error && <FormError>{error}</FormError>}
         <PrimaryButton type="submit" disabled={busy}>
           {site.setup === 'done' ? 'Save' : 'Finish'}
         </PrimaryButton>
