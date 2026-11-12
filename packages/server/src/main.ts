@@ -23,6 +23,7 @@ import { createHeartbeat } from './heartbeat.js';
 import { Runner } from './jobs/runner.js';
 import { enqueue } from './jobs/store.js';
 import { notifyNow, sendDigest, type NotifyOptions } from './notify.js';
+import { backupConfig, craftishBackup } from './updater/backup.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 
@@ -134,6 +135,8 @@ const app = createApp({
   jobFiles: { crashFiles: { path: config.crashLogPath }, logsDir: config.logsDir },
   care: { keys: config.care, pluginDir: config.pluginDir, send: careRequest },
   startUpdater,
+  // Settings read each time, so craftish added as a server later needs no restart.
+  backup: (site) => craftishBackup(backupConfig(db, process.env))(site),
   log,
   statusInput: () => ({
     version,

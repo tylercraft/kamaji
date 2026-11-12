@@ -2,7 +2,9 @@
 // kamaji-backup user (server-export/README.md), naming the site. The export stays on craftish;
 // this reads back one JSON line (when, how big, its SHA-256) and never the data.
 import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
 import { z } from 'zod';
+import type { Db } from '../db.js';
 import type { BackupResult, RunSite } from './run.js';
 
 const Answer = z.discriminatedUnion('ok', [
@@ -33,8 +35,27 @@ export interface BackupConfig {
   host: string;
 }
 
-export function craftishBackup(config: BackupConfig | undefined) {
-  return async (site: RunSite): Promise<BackupResult> => {
+/**
+ * The export's settings, as the updater and the app's "Back up now" both use them: craftish's
+ * address from the servers table, and the backup key and host keys from the environment or their
+ * usual places. Undefined while craftish isn't set up as a server.
+ */
+export function backupConfig(db: Db, env: NodeJS.ProcessEnv): BackupConfig | undefined {
+  const craftish = db
+    .prepare("SELECT address FROM servers WHERE id = 'craftish' AND removed_at IS NULL")
+    .get();
+  if (!craftish) return undefined;
+  return {
+    keyPath: env.KAMAJI_BACKUP_SSH_KEY ?? `${homedir()}/.ssh/kamaji-backup`,
+    knownHostsPath: env.KAMAJI_SSH_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji_known_hosts`,
+    host: String(craftish.address).replace(/^.*@/, ''),
+  };
+}
+
+export type Backup = (site: Pick<RunSite, 'id' | 'hostKind'>) => Promise<BackupResult>;
+
+export function craftishBackup(config: BackupConfig | undefined): Backup {
+  return async (site) => {
     if (site.hostKind !== 'craftish') {
       return {
         ok: false,
@@ -82,6 +103,7 @@ export function craftishBackup(config: BackupConfig | undefined) {
     return {
       ok: true,
       words: `Kamaji exported the database on craftish at ${parsed.at} (${parsed.bytes} bytes, SHA-256 ${parsed.sha256.slice(0, 12)}…)`,
+      answer: { at: parsed.at, bytes: parsed.bytes, sha256: parsed.sha256 },
     };
   };
 }

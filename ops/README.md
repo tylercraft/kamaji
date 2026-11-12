@@ -254,7 +254,7 @@ until ! /bin/launchctl print gui/501/dev.craftish.kamaji > /dev/null 2>&1; do /b
 
 ## craftish's database export
 
-Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. The updater uses it before each run on a craftish site; Tyler runs these steps with the updater's. They follow "craftish's report" above.
+Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. The updater uses it before each run on a craftish site, and the app uses the same key for a site page's "Back up now" (same user, same one command); both record what it answers in `backup_evidence`. Tyler runs these steps with the updater's. They follow "craftish's report" above.
 
 On the mini:
 

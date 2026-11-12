@@ -9,16 +9,19 @@ import {
   ConfigureSiteRequest,
   NewSiteRequest,
   RemoveSiteRequest,
+  type BackupExpectation,
   type UpdatesResponse,
 } from '@kamaji/shared';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
+import { recordEvidence, siteBackups } from './backups/evidence.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportSite } from './inventory/report.js';
 import { checkSites } from './checks/sites.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
+import type { Backup } from './updater/backup.js';
 import type { UpdaterStart } from './updates/launcher.js';
 import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
@@ -54,6 +57,8 @@ export interface AppOptions {
   care?: { keys: CareKeys | undefined; pluginDir: string; send: CareSend };
   /** Starts the updater after an approval (updates/launcher.ts). */
   startUpdater?: UpdaterStart;
+  /** The craftish export the updater runs before a batch, for "Back up now" (updater/backup.ts). */
+  backup?: Backup;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -91,10 +96,13 @@ export function createApp({
   jobFiles,
   care,
   startUpdater = () => {},
+  backup,
   now = Date.now,
   log,
 }: AppOptions): Hono {
   const app = new Hono();
+  /** "Back up now" exports still going, by site: one at a time each. */
+  const exporting = new Map<string, number>();
 
   app.use(async (c, next) => {
     await next();
@@ -158,6 +166,64 @@ export function createApp({
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
     const result = await handshake(db, c.req.param('id'), care.keys, care.send, now);
     return result ? c.json(result) : c.json({ error: 'not_found' }, 404);
+  });
+  // A site's backup evidence, and "Back up now": the export a run makes first, recorded the same
+  // way (backups/evidence.ts). It can take minutes, so it runs in the background and the page
+  // asks again.
+  const backupSite = (id: string) =>
+    db
+      .prepare(
+        'SELECT id, host_kind, backup_expectation FROM sites WHERE id = ? AND removed_at IS NULL',
+      )
+      .get(id);
+  app.get('/api/sites/:id/backups', (c) => {
+    const row = backupSite(c.req.param('id'));
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    const id = String(row.id);
+    return c.json(
+      siteBackups(
+        db,
+        {
+          id,
+          hostKind: String(row.host_kind),
+          backupExpectation:
+            row.backup_expectation === null
+              ? null
+              : (String(row.backup_expectation) as BackupExpectation),
+        },
+        exporting.get(id),
+      ),
+    );
+  });
+  app.post('/api/sites/:id/backups', (c) => {
+    const row = backupSite(c.req.param('id'));
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    const id = String(row.id);
+    const hostKind = String(row.host_kind);
+    if (hostKind !== 'craftish') return c.json({ error: 'not_craftish' }, 400);
+    if (!backup) return c.json({ error: 'not_set_up' }, 409);
+    if (exporting.has(id)) return c.json({ error: 'already_exporting' }, 409);
+    const updating = db
+      .prepare("SELECT 1 FROM batch_sites WHERE site_id = ? AND state = 'running'")
+      .get(id);
+    if (updating) return c.json({ error: 'updating' }, 409);
+    exporting.set(id, now());
+    void backup({ id, hostKind })
+      .catch(() => ({ ok: false, words: 'The export couldn’t be asked for', answer: undefined }))
+      .then((result) => {
+        recordEvidence(db, {
+          siteId: id,
+          batchId: null,
+          requestedBy: login,
+          at: now(),
+          ok: result.ok,
+          words: result.words,
+          answer: result.answer,
+        });
+        log?.(`backup now: ${id} ${result.ok ? 'exported' : 'failed'}`);
+      })
+      .finally(() => exporting.delete(id));
+    return c.json({ started: true }, 202);
   });
   // Refresh now: a report with WordPress's own update checks first (the plugin allows one per 10 minutes).
   app.post('/api/sites/:id/report', async (c) => {

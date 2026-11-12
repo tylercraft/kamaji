@@ -8,6 +8,7 @@
 // then resume the alerts and re-check straight away. Any outcome but "passed" holds the rest of
 // that site's items and raises an urgent issue. After a restart, an item left mid-way is
 // reconciled by asking the site, never assumed done or blindly retried.
+import { recordEvidence, type ExportAnswer } from '../backups/evidence.js';
 import { CareHello, CareReport, type Outcome } from '@kamaji/shared';
 import type { CareResult } from '../care/client.js';
 import type { SigningKey } from '../care/keys.js';
@@ -33,6 +34,8 @@ export interface BackupResult {
   ok: boolean;
   /** Plain words for the record: when, how big, its hash; or why not. */
   words: string;
+  /** What a craftish export answered, kept apart in backup_evidence. */
+  answer?: ExportAnswer;
 }
 
 export interface Timing {
@@ -218,6 +221,17 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
 
     if (run.backup === null) {
       const evidence = await backupEvidence(deps, site, String(run.backup_kind));
+      if (run.backup_kind === 'kamaji') {
+        recordEvidence(db, {
+          siteId,
+          batchId,
+          requestedBy: null,
+          at: deps.now(),
+          ok: evidence.ok,
+          words: evidence.words,
+          answer: evidence.answer,
+        });
+      }
       if (!evidence.ok) {
         hold(db, batchId, siteId, `Held: no backup evidence. ${evidence.words}`, deps.now());
         return true;

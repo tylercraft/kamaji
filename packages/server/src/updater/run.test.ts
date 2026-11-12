@@ -10,6 +10,7 @@ import { recordObservation } from '../observations.js';
 import { testDb } from '../testing.js';
 import { approveBatch, batchViews, carryOn } from '../updates/batches.js';
 import { queue } from '../updates/queue.js';
+import { backupHistory } from '../backups/evidence.js';
 import { runUpdater, type UpdaterDeps } from './run.js';
 
 const REPORT = CareReport.parse(
@@ -462,6 +463,24 @@ describe('the updater', () => {
       state: 'done',
       backup: expect.stringMatching(/^Tyler carried on without fresh backup evidence/),
     });
+    // The failed export is kept as evidence, and the carry-on shows in the history beside it.
+    expect(backupHistory(db, SITE).map((e) => [e.state, e.batchId])).toEqual([
+      ['failed', view.id],
+      ['recorded', view.id],
+    ]);
+  });
+
+  it('keeps what a good export answered, apart, for the site’s Backups', async () => {
+    const { db, deps } = setup('kamaji');
+    await approve(db);
+    const answer = { at: '2026-11-12T00:00:00Z', bytes: 4096, sha256: 'b'.repeat(64) };
+    await runUpdater({
+      ...deps(),
+      backup: async () => ({ ok: true, words: 'Kamaji exported the database on craftish', answer }),
+    });
+    const [entry] = backupHistory(db, SITE);
+    expect(entry).toMatchObject({ state: 'exported', batchId: batchViews(db)[0]!.id, bytes: 4096 });
+    expect(backupHistory(db, SITE)).toHaveLength(1);
   });
 
   it('never updates a site already failing its checks', async () => {

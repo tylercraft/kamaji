@@ -375,4 +375,27 @@ export const migrations: Migration[] = [
       CREATE INDEX batch_items_batch ON batch_items (batch_id, site_id, position);
     `,
   },
+  {
+    version: 13,
+    name: 'backup_evidence',
+    // Backup evidence as Kamaji recorded it (backups/evidence.ts): each export Kamaji asked craftish
+    // for, before a run (batch_id) or from "Back up now" (requested_by), with what the export
+    // answered: its own time, size and SHA-256, never the data. A failed attempt is kept too.
+    // Runs before this table have only batch_sites.backup's words.
+    sql: `
+      CREATE TABLE backup_evidence (
+        id INTEGER PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        batch_id TEXT REFERENCES batches (id),
+        requested_by TEXT,
+        recorded_at INTEGER NOT NULL,
+        ok INTEGER NOT NULL CHECK (ok IN (0, 1)),
+        exported_at TEXT,
+        bytes INTEGER,
+        sha256 TEXT,
+        words TEXT NOT NULL
+      );
+      CREATE INDEX backup_evidence_site ON backup_evidence (site_id, recorded_at);
+    `,
+  },
 ];
