@@ -8,8 +8,8 @@ import { careRequest } from '../care/client.js';
 import { loadCareKeys } from '../care/keys.js';
 import { realCheckers } from '../checks/sites.js';
 import { openDb } from '../db.js';
-import { readState, writeState } from '../state.js';
 import { craftishBackup } from './backup.js';
+import { releaseLock, takeLock } from './lock.js';
 import { runUpdater, type Send } from './run.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
@@ -42,21 +42,11 @@ if (!worker) {
 }
 const db = openDb(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`);
 
-const LOCK = 'updater.process';
-const held = readState<{ pid: number; at: number }>(db, LOCK);
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-if (held && held.pid !== process.pid && alive(held.pid)) {
-  log(`updater: another run is going (pid ${held.pid}); exiting`);
+const other = takeLock(db, process.pid, Date.now());
+if (other !== undefined) {
+  log(`updater: another run is going (pid ${other}); exiting`);
   process.exit(0);
 }
-writeState(db, LOCK, { pid: process.pid, at: Date.now() }, Date.now());
 
 const craftish = db
   .prepare("SELECT address FROM servers WHERE id = 'craftish' AND removed_at IS NULL")
@@ -102,6 +92,6 @@ try {
   log(`updater: stopped: ${error instanceof Error ? error.name : 'error'}`);
   process.exitCode = controller.signal.aborted ? 0 : 1;
 } finally {
-  writeState(db, LOCK, { pid: 0, at: Date.now() }, Date.now());
+  releaseLock(db, Date.now());
   db.close();
 }
