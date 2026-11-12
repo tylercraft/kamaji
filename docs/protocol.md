@@ -114,7 +114,7 @@ Only its own options. The two request keys are autoloaded; everything else (the 
 
 ## The site's own log
 
-The last 200 entries (time, endpoint, key id, result; for updates the item and versions) in an option, shown read-only under Tools → Craftish Care, along with what the plugin can and can't do in plain words. That page is the client's view of what Tyler's tool did on their site, and needs `manage_options`. Entries are events only: never a request body, header value or IP address.
+The last 200 entries (time, endpoint, key id, result; for updates the item and versions) in an option, shown read-only under Tools → Craftish Care, along with what the plugin can and can't do in plain words. That page is the client's view of what Tyler's tool did on their site, and needs `manage_options`. Entries are events only: never a request body, header value or IP address. From 0.2.1 the page is Tyler's design (TY-162): its stylesheet and the wordmark's font (Fraunces, SIL Open Font License) are files in the plugin, loaded on that screen only, with no outside requests.
 
 ## Tests the plugin ships with
 
