@@ -130,7 +130,7 @@ export function Capabilities({
       </Fact>
       <Fact label="Updating">
         {caps.can_update ? (
-          'Yes, once M4 brings updates, and only what you approve'
+          'Yes: only what you approve under Updates'
         ) : (
           <span css={{ color: 'var(--amber)' }}>
             No: {caps.update_blockers.map((b) => BLOCKERS[b] ?? b).join('; ')}. The site stays
