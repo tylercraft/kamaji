@@ -1,4 +1,5 @@
 import { SitesResponse, type SiteSummary } from '@kamaji/shared';
+import { useState } from 'react';
 import {
   Dot,
   Empty,
@@ -12,6 +13,7 @@ import {
   type Tone,
 } from '../components/ui';
 import { useLink } from '../router';
+import { matchesSite } from '../sitesView';
 import { useResource } from '../useResource';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
@@ -116,8 +118,39 @@ function AddSiteLink() {
   );
 }
 
+/** Narrows the list on each keystroke; Escape clears it. */
+function Filter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <input
+      type="search"
+      aria-label="Filter sites by name, domain or client"
+      placeholder="Filter by name, domain or client"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onChange('');
+        }
+      }}
+      css={{
+        font: 'inherit',
+        color: 'var(--ink)',
+        background: 'var(--bg)',
+        border: '1px solid var(--line)',
+        borderRadius: 3,
+        padding: '7px 9px',
+        width: '100%',
+        maxWidth: 360,
+        '&:focus-visible': { outline: '2px solid var(--copper)', outlineOffset: 1 },
+      }}
+    />
+  );
+}
+
 export function SitesPage() {
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
+  const [typed, setTyped] = useState('');
   return (
     <>
       <PageHeading title="Sites" purpose="Your sites, their health and their connection to Kamaji.">
@@ -125,72 +158,82 @@ export function SitesPage() {
       </PageHeading>
       <Panel>
         <ResourceView resource={sites} label="sites">
-          {({ sites }) =>
-            sites.length === 0 ? (
-              <Empty title="No sites yet">
-                Nothing is being watched. Adding sites comes with monitoring: uptime and
-                certificates first, then Craftish Care for inventory and updates.
-              </Empty>
-            ) : (
-              <div css={{ overflowX: 'auto' }}>
-                <Table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Site</th>
-                      <th scope="col">From the mini</th>
-                      <th scope="col">From outside</th>
-                      <th scope="col">Certificate</th>
-                      <th scope="col">Host</th>
-                      <th scope="col">Connection</th>
-                      <th scope="col">Updates</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sites.map((site) => (
-                      <tr key={site.id}>
-                        <td>
-                          <SiteLink site={site} />
-                          <Muted>
-                            <a
-                              href={site.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              css={{ color: 'inherit' }}
-                            >
-                              {new URL(site.url).host}
-                            </a>
-                            {site.tailnetOnly ? ' · tailnet only' : ''}
-                          </Muted>
-                        </td>
-                        <td>
-                          <Availability site={site} />
-                        </td>
-                        <td>
-                          <Outside site={site} />
-                        </td>
-                        <td>
-                          <CertificateCell site={site} />
-                        </td>
-                        <td>{hostNames[site.hostKind]}</td>
-                        <td>
-                          {site.mode === 'connected' ? (
-                            <Pill tone="copper">
-                              <Dot /> Craftish Care
-                            </Pill>
-                          ) : (
-                            <Pill>Monitoring only</Pill>
-                          )}
-                        </td>
-                        <td>
-                          <UpdatesCell site={site} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )
-          }
+          {({ sites: all }) => {
+            if (all.length === 0)
+              return (
+                <Empty title="No sites yet">
+                  Nothing is being watched. Adding sites comes with monitoring: uptime and
+                  certificates first, then Craftish Care for inventory and updates.
+                </Empty>
+              );
+            const sites = all.filter((site) => matchesSite(site, typed));
+            return (
+              <>
+                <Filter value={typed} onChange={setTyped} />
+                {sites.length === 0 ? (
+                  <Muted role="status">Nothing matches “{typed.trim()}”.</Muted>
+                ) : (
+                  <div css={{ overflowX: 'auto' }}>
+                    <Table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Site</th>
+                          <th scope="col">From the mini</th>
+                          <th scope="col">From outside</th>
+                          <th scope="col">Certificate</th>
+                          <th scope="col">Host</th>
+                          <th scope="col">Connection</th>
+                          <th scope="col">Updates</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sites.map((site) => (
+                          <tr key={site.id}>
+                            <td>
+                              <SiteLink site={site} />
+                              <Muted>
+                                <a
+                                  href={site.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  css={{ color: 'inherit' }}
+                                >
+                                  {new URL(site.url).host}
+                                </a>
+                                {site.tailnetOnly ? ' · tailnet only' : ''}
+                              </Muted>
+                            </td>
+                            <td>
+                              <Availability site={site} />
+                            </td>
+                            <td>
+                              <Outside site={site} />
+                            </td>
+                            <td>
+                              <CertificateCell site={site} />
+                            </td>
+                            <td>{hostNames[site.hostKind]}</td>
+                            <td>
+                              {site.mode === 'connected' ? (
+                                <Pill tone="copper">
+                                  <Dot /> Craftish Care
+                                </Pill>
+                              ) : (
+                                <Pill>Monitoring only</Pill>
+                              )}
+                            </td>
+                            <td>
+                              <UpdatesCell site={site} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </div>
+                )}
+              </>
+            );
+          }}
         </ResourceView>
       </Panel>
     </>
