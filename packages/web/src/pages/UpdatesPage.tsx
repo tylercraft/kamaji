@@ -29,7 +29,7 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
-import { reveal } from '../components/reveal';
+import { reveal, RevealLink } from '../components/reveal';
 import { useLink } from '../router';
 import { byComponent, bySite, runAnchor, runOutcome, siteRuns, type SiteRun } from '../runHistory';
 import { useResource } from '../useResource';
@@ -147,11 +147,16 @@ function Queue({
   data,
   ticked,
   setTicked,
+  reviewing,
+  setReviewing,
 }: {
   data: UpdatesResponse;
   ticked: Set<string>;
   setTicked: (next: Set<string>) => void;
+  reviewing: boolean;
+  setReviewing: (on: boolean) => void;
 }) {
+  const chosen = data.items.filter((i) => ticked.has(key(i))).length;
   const toggle = (k: string) => {
     const next = new Set(ticked);
     if (next.has(k)) next.delete(k);
@@ -183,7 +188,13 @@ function Queue({
             <Button type="button" onClick={() => setTicked(new Set(routine.map(key)))}>
               Select routine updates ({routine.length})
             </Button>
-            <Button type="button" onClick={() => setTicked(new Set())}>
+            <Button
+              type="button"
+              onClick={() => {
+                setTicked(new Set());
+                setReviewing(false);
+              }}
+            >
               Clear
             </Button>
             <Muted>Major versions are never routine. Security fixes come first.</Muted>
@@ -256,6 +267,23 @@ function Queue({
           </div>
         </>
       )}
+      {data.items.length > 0 && !reviewing && (
+        <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <PrimaryButton
+            type="button"
+            disabled={chosen === 0}
+            aria-describedby="queue-review-note"
+            onClick={() => setReviewing(true)}
+          >
+            Review selected updates{chosen > 0 ? ` (${chosen})` : ''}
+          </PrimaryButton>
+          <Muted id="queue-review-note">
+            {chosen === 0
+              ? 'Select updates first. Nothing runs until you approve the review.'
+              : 'Nothing runs until you approve the review.'}
+          </Muted>
+        </div>
+      )}
       {data.sites.some((s) => s.blocked) && (
         <div css={{ display: 'grid', gap: 4 }}>
           {data.sites
@@ -271,9 +299,10 @@ function Queue({
   );
 }
 
-function Review(props: Parameters<typeof ReviewBody>[0]) {
+/** The review, once asked for: the scope, each site's backup, and Approve. */
+function Review(props: Parameters<typeof ReviewBody>[0] & { reviewing: boolean }) {
   const chosen = props.data.items.some((i) => props.ticked.has(key(i)));
-  if (!chosen) return null;
+  if (!chosen || !props.reviewing) return null;
   return (
     <Panel aria-labelledby="review">
       <PanelTitle id="review">Review</PanelTitle>
@@ -470,8 +499,8 @@ export function RunSite({
     <div css={{ display: 'grid', gap: 6 }}>
       <strong>
         {s.siteName}{' '}
-        <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
-          <Dot /> {STATE_WORDS[s.state]}
+        <Pill tone={runOutcome(s).tone}>
+          <Dot /> {runOutcome(s).label}
         </Pill>
       </strong>
       {s.backup && <Muted>Backup: {s.backup}</Muted>}
@@ -531,13 +560,44 @@ const componentsLine = (r: SiteRun) => {
 };
 
 /** One site's part of a run: its outcome in the summary; approval, components and backup inside. */
-function RunEntry({ run, reload }: { run: SiteRun; reload: () => void }) {
+const isActive = (r: SiteRun) => r.site.state !== 'done' || r.batch.state !== 'finished';
+
+/**
+ * One site's part of a run: its outcome in the summary; approval, components and backup inside.
+ * Only a site's newest run with a problem opens by itself; older ones stay closed with their
+ * outcome in the summary. A run still going or held is
+ * handled once, under "Held and running", and here is only a line pointing there.
+ */
+function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; reload: () => void }) {
   const { batch: b, site: s } = run;
   const outcome = runOutcome(s);
+  const anchor = runAnchor({ batchId: b.id, siteId: s.siteId });
+  if (isActive(run))
+    return (
+      <div
+        id={anchor}
+        css={{
+          borderTop: '1px solid var(--line)',
+          padding: '8px 0',
+          display: 'flex',
+          gap: '4px 12px',
+          flexWrap: 'wrap',
+          alignItems: 'baseline',
+        }}
+      >
+        <span css={{ fontWeight: 550 }}>{componentsLine(run)}</span>
+        <Pill tone={outcome.tone}>
+          <Dot /> {outcome.label}
+        </Pill>
+        <span css={{ marginLeft: 'auto', fontSize: 12 }}>
+          <RevealLink to={`active-${anchor}`}>Handled under Held and running</RevealLink>
+        </span>
+      </div>
+    );
   return (
     <details
-      id={runAnchor({ batchId: b.id, siteId: s.siteId })}
-      open={outcome.problem}
+      id={anchor}
+      open={outcome.problem && latest}
       css={{ borderTop: '1px solid var(--line)', padding: '8px 0' }}
     >
       <summary
@@ -626,9 +686,7 @@ function RunEntry({ run, reload }: { run: SiteRun; reload: () => void }) {
 
 /** Runs still going or held: the first thing to see, and where held sites are handled. */
 function Active({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
-  const runs = siteRuns(batches).filter(
-    (r) => r.site.state !== 'done' || r.batch.state !== 'finished',
-  );
+  const runs = siteRuns(batches).filter(isActive);
   if (runs.length === 0) return null;
   const held = runs.some((r) => r.site.state === 'held');
   return (
@@ -638,7 +696,11 @@ function Active({ batches, reload }: { batches: BatchView[]; reload: () => void 
     >
       <PanelTitle id="active">{held ? 'Held and running' : 'Running'}</PanelTitle>
       {runs.map((r) => (
-        <div key={`${r.batch.id}-${r.site.siteId}`} css={{ display: 'grid', gap: 6 }}>
+        <div
+          key={`${r.batch.id}-${r.site.siteId}`}
+          id={`active-${runAnchor({ batchId: r.batch.id, siteId: r.site.siteId })}`}
+          css={{ display: 'grid', gap: 6 }}
+        >
           <Muted>
             Approved <Time iso={r.batch.approvedAt} /> · {r.site.siteName}
           </Muted>
@@ -765,7 +827,12 @@ function History({ batches, reload }: { batches: BatchView[]; reload: () => void
               </div>
               <div>
                 {g.runs.map((r) => (
-                  <RunEntry key={`${r.batch.id}-${r.site.siteId}`} run={r} reload={reload} />
+                  <RunEntry
+                    key={`${r.batch.id}-${r.site.siteId}`}
+                    run={r}
+                    latest={r === g.runs.find((x) => !isActive(x) && runOutcome(x.site).problem)}
+                    reload={reload}
+                  />
                 ))}
               </div>
             </Panel>
@@ -843,6 +910,7 @@ function History({ batches, reload }: { batches: BatchView[]; reload: () => void
 export function UpdatesPage() {
   const updates = useResource('/api/updates', UpdatesResponse, { pollMs: 5_000 });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
   return (
     <>
       <PageHeading
@@ -865,12 +933,20 @@ export function UpdatesPage() {
           return (
             <>
               <Active batches={data.batches} reload={reload} />
-              <Queue data={data} ticked={ticked} setTicked={setTicked} />
+              <Queue
+                data={data}
+                ticked={ticked}
+                setTicked={setTicked}
+                reviewing={reviewing}
+                setReviewing={setReviewing}
+              />
               <Review
                 data={data}
                 ticked={ticked}
+                reviewing={reviewing}
                 done={() => {
                   setTicked(new Set());
+                  setReviewing(false);
                   reload();
                 }}
               />
