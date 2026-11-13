@@ -1,0 +1,215 @@
+// A craftish site's whole-site backups, inside its Backups panel: the schedule and consent, the
+// snapshots and restore checks the backups process recorded, the repository's size, and asking
+// for a backup or a restore check now. The app never runs restic; it asks the backups process.
+import type { RestoreCheck, SiteSnapshot, WholeSiteBackups as Data } from '@kamaji/shared';
+import { useState } from 'react';
+import { z } from 'zod';
+import { postJson } from '../api';
+import { size } from '../bytes';
+import { FormError } from '../components/forms';
+import { failed, reason, saved } from '../components/toast';
+import { Button, Dot, Muted, Pill, Table, Time } from '../components/ui';
+import { SCHEDULES } from './SiteSetup';
+
+const WORDS: Record<string, string> = {
+  not_active: 'whole-site backups are off for this site: turn them on under Configure',
+  already_requested: 'it’s already asked for',
+};
+
+const STEP_WORDS: Record<string, string> = {
+  restore: 'restoring the snapshot',
+  verify: 'checking it against its manifest',
+  unpack: 'unpacking it',
+  docker: 'starting Docker',
+  database: 'loading the database',
+  wordpress: 'starting WordPress',
+  'home page': 'the home page',
+};
+
+function Status({ data }: { data: Data }) {
+  if (data.schedule === 'off') {
+    return <p css={{ margin: 0 }}>Off. Turn them on under Configure.</p>;
+  }
+  return (
+    <p css={{ margin: 0 }}>
+      {SCHEDULES[data.schedule]}.{' '}
+      {data.lastGoodAt ? (
+        <>
+          Last good backup <Time iso={data.lastGoodAt} />
+          {data.nextDueAt && (
+            <>
+              ; the next one from <Time iso={data.nextDueAt} />, at 03:15
+            </>
+          )}
+          .
+        </>
+      ) : (
+        'None yet: the first one is tonight at 03:15, or ask for one now.'
+      )}{' '}
+      {data.own ? (
+        'Tyler’s own site.'
+      ) : data.consentAt ? (
+        <>
+          The client agreed (ticked by {data.consentBy} <Time iso={data.consentAt} />
+          ).
+        </>
+      ) : null}
+    </p>
+  );
+}
+
+function LastRestore({ check }: { check: RestoreCheck | undefined }) {
+  if (!check) return <Muted>No restore check yet: one a month, or ask for one now.</Muted>;
+  return check.ok ? (
+    <p css={{ margin: 0 }}>
+      <Pill tone="green">
+        <Dot /> Restores
+      </Pill>{' '}
+      Restored to an offline test copy that served its home page, <Time iso={check.startedAt} /> (
+      {check.seconds} s).
+    </p>
+  ) : (
+    <p css={{ margin: 0 }}>
+      <Pill tone="red">
+        <Dot /> Restore failed
+      </Pill>{' '}
+      <Time iso={check.startedAt} />, at {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep}:{' '}
+      {check.problem}
+    </p>
+  );
+}
+
+function Snapshots({ snapshots }: { snapshots: SiteSnapshot[] }) {
+  return (
+    <div css={{ overflowX: 'auto' }}>
+      <Table>
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Result</th>
+            <th scope="col">Size</th>
+            <th scope="col">New</th>
+            <th scope="col">Database</th>
+            <th scope="col">WordPress</th>
+          </tr>
+        </thead>
+        <tbody>
+          {snapshots.map((s, i) => (
+            <tr key={`${s.startedAt}-${i}`}>
+              <td>
+                <Time iso={s.startedAt} />
+              </td>
+              <td>
+                {s.ok ? (
+                  <Pill tone={s.forgotten ? 'neutral' : 'green'}>
+                    <Dot /> {s.forgotten ? 'Let go' : 'Kept'}
+                  </Pill>
+                ) : (
+                  <>
+                    <Pill tone="red">
+                      <Dot /> Failed
+                    </Pill>
+                    <Muted>{s.problem}</Muted>
+                  </>
+                )}
+              </td>
+              <td>{s.bytes === null ? '–' : size(s.bytes)}</td>
+              <td>{s.addedBytes === null ? '–' : size(s.addedBytes)}</td>
+              <td>{s.databaseBytes === null ? '–' : size(s.databaseBytes)}</td>
+              <td>{s.wordpress ?? '–'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </div>
+  );
+}
+
+export function WholeSiteBackups({
+  path,
+  data,
+  reload,
+}: {
+  path: string;
+  data: Data;
+  reload: () => void;
+}) {
+  const [problem, setProblem] = useState<string | null>(null);
+  const [asking, setAsking] = useState<'backup' | 'restore' | null>(null);
+  const hasSnapshot = data.snapshots.some((s) => s.ok && !s.forgotten);
+
+  async function ask(kind: 'backup' | 'restore') {
+    setAsking(kind);
+    setProblem(null);
+    const result = await postJson(
+      `${path}/whole-site`,
+      { kind },
+      z.object({ queued: z.literal(true) }),
+    );
+    setAsking(null);
+    if (!result.ok) {
+      const why = WORDS[result.error] ?? reason(result.error);
+      setProblem(`Not asked: ${why}.`);
+      failed(`Not asked: ${why}.`);
+      return;
+    }
+    saved(
+      kind === 'backup'
+        ? 'Backup asked for: it can take a while, and shows here when done'
+        : 'Restore check asked for: it can take a few minutes',
+    );
+    reload();
+  }
+
+  return (
+    <section aria-labelledby="whole-site" css={{ display: 'grid', gap: 10 }}>
+      <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
+        Whole-site backups
+      </h3>
+      <Status data={data} />
+      {data.active && <LastRestore check={data.restoreChecks[0]} />}
+      {data.active && (
+        <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button
+            type="button"
+            disabled={asking !== null || data.pending.backup !== null}
+            onClick={() => void ask('backup')}
+          >
+            {data.pending.backup ? 'Backing up…' : 'Back up site now'}
+          </Button>
+          <Button
+            type="button"
+            disabled={asking !== null || data.pending.restore !== null || !hasSnapshot}
+            onClick={() => void ask('restore')}
+          >
+            {data.pending.restore ? 'Checking…' : 'Check restore now'}
+          </Button>
+          <Muted role="status">
+            {data.pending.backup || data.pending.restore ? (
+              <>
+                Asked <Time iso={(data.pending.backup ?? data.pending.restore)!} />; the backups
+                process works on it now.
+              </>
+            ) : (
+              'Files and a fresh database from craftish, into restic on molcajete.'
+            )}
+          </Muted>
+        </div>
+      )}
+      {problem && <FormError>{problem}</FormError>}
+      {data.repository && (
+        <Muted>
+          All sites’ backups take {size(data.repository.bytes)} on molcajete (measured{' '}
+          <Time iso={data.repository.at} />
+          ).
+        </Muted>
+      )}
+      {data.snapshots.length > 0 && (
+        <details>
+          <summary>Snapshots ({data.snapshots.length})</summary>
+          <Snapshots snapshots={data.snapshots} />
+        </details>
+      )}
+    </section>
+  );
+}

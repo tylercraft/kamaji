@@ -1,10 +1,12 @@
 // A site's Backups: its backup choice, the latest evidence and the history, as Kamaji recorded
 // them (backups/evidence.ts on the server). On a craftish site, "Back up now" runs the export a
-// run makes first, in the background; the panel asks again until it's done.
+// run makes first, in the background; the panel asks again until it's done. "Download latest
+// export" brings that export from craftish through Kamaji, and whole-site backups follow.
 import { SiteBackupsResponse, type BackupEntry } from '@kamaji/shared';
 import { useState } from 'react';
 import { z } from 'zod';
 import { getJson, postJson } from '../api';
+import { size } from '../bytes';
 import { FormError } from '../components/forms';
 import { failed, reason, saved } from '../components/toast';
 import {
@@ -20,11 +22,14 @@ import {
 } from '../components/ui';
 import { useResource } from '../useResource';
 import { BACKUPS } from './SiteSetup';
+import { WholeSiteBackups } from './WholeSiteBackups';
 
 const WORDS: Record<string, string> = {
   not_craftish: 'Kamaji exports only on craftish, and this site isn’t hosted there',
   not_set_up: 'This Kamaji has no export set up: see “craftish’s database export” in ops/README.md',
   already_exporting: 'An export is already going',
+  no_export: 'There’s no export to download yet: Back up now makes one',
+  export_unavailable: 'craftish didn’t send it',
   updating: 'The updater is running this site; its run makes its own export first',
 };
 
@@ -33,13 +38,6 @@ const STATE: Record<BackupEntry['state'], [string, 'green' | 'red' | 'neutral']>
   failed: ['Failed', 'red'],
   recorded: ['Recorded', 'neutral'],
 };
-
-export function size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
 
 function Run({ entry }: { entry: BackupEntry }) {
   if (entry.runApprovedAt === null) return <>Back up now</>;
@@ -96,7 +94,8 @@ function Latest({ entry }: { entry: BackupEntry | null }) {
 
 export function SiteBackupsPanel({ siteId }: { siteId: string }) {
   const path = `/api/sites/${encodeURIComponent(siteId)}/backups`;
-  const backups = useResource(path, SiteBackupsResponse, { pollMs: 60_000 });
+  const backups = useResource(path, SiteBackupsResponse, { pollMs: 15_000 });
+  const [downloading, setDownloading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const reload = () => {
@@ -134,6 +133,39 @@ export function SiteBackupsPanel({ siteId }: { siteId: string }) {
     }
   }
 
+  /**
+   * Fetched rather than linked, so craftish's refusal (a pruned export, say) shows here instead of
+   * saving as a file. Exports are a site's gzipped database: small enough to hold in memory.
+   */
+  async function download() {
+    setDownloading(true);
+    setProblem(null);
+    const response = await fetch(`${path}/download`).catch(() => null);
+    if (!response?.ok) {
+      setDownloading(false);
+      const body: unknown = await response?.json().catch(() => null);
+      const { error, problem: why } = (body ?? {}) as { error?: string; problem?: string };
+      const words = response
+        ? `${WORDS[error ?? ''] ?? reason(error ?? `http_${response.status}`)}${why ? `: ${why}` : ''}`
+        : 'Kamaji couldn’t be reached';
+      setProblem(`Not downloaded: ${words}.`);
+      failed(`Not downloaded: ${words}.`);
+      return;
+    }
+    const blob = await response.blob();
+    const name =
+      /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ??
+      `${siteId}.sql.gz`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setDownloading(false);
+    saved(`Downloaded ${name} (${size(blob.size)})`);
+  }
+
   return (
     <Panel aria-labelledby="backups">
       <PanelTitle id="backups">Backups</PanelTitle>
@@ -159,6 +191,17 @@ export function SiteBackupsPanel({ siteId }: { siteId: string }) {
                   ) : (
                     'The same database export on craftish a run makes first.'
                   )}
+                </Muted>
+              </div>
+            )}
+            {d.download && (
+              <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Button type="button" disabled={downloading} onClick={() => void download()}>
+                  {downloading ? 'Downloading…' : 'Download latest export'}
+                </Button>
+                <Muted>
+                  Exported <Time iso={d.download.exportedAt} />. It comes from craftish, which keeps
+                  exports 14 days; nothing is kept on the mini.
                 </Muted>
               </div>
             )}
@@ -207,6 +250,7 @@ export function SiteBackupsPanel({ siteId }: { siteId: string }) {
                 </div>
               </details>
             )}
+            {d.wholeSite && <WholeSiteBackups path={path} data={d.wholeSite} reload={reload} />}
           </>
         )}
       </ResourceView>
