@@ -20,6 +20,7 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
+import { DISK_URGENT, DISK_WARN, Meter, Part } from '../components/serverParts';
 import { useResource } from '../useResource';
 
 export const Facts = styled.dl`
@@ -66,120 +67,133 @@ function KnownOr<T>({ value, children }: { value: Known<T>; children: (v: T) => 
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** molcajete: maintenance, resources, services, then system details. */
 export function MacFacts({ health }: { health: MacHealth }) {
+  const u = health.updates;
   return (
-    <Facts>
-      <Fact label="Disks">
-        {health.disks.map((d) => (
-          <div key={d.name}>
-            {!d.mounted ? (
-              <Flag tone="red">{d.name} isn’t mounted</Flag>
-            ) : d.usedPercent === null ? (
-              <>
-                {d.name} <Muted css={{ display: 'inline' }}>couldn’t be read</Muted>
-              </>
-            ) : d.usedPercent >= 85 ? (
-              <Flag tone={d.usedPercent >= 95 ? 'red' : 'amber'}>
-                {d.name} {d.usedPercent}% full
-              </Flag>
-            ) : (
-              <>
-                {d.name} {d.usedPercent}% full
-              </>
-            )}{' '}
-            {d.availableBytes !== null && (
-              <Muted css={{ display: 'inline' }}>{gb(d.availableBytes)} free</Muted>
-            )}
-            {d.smart && d.smart !== 'Verified' && <Flag tone="red">SMART: {d.smart}</Flag>}
-            {d.mounted && d.writable === false && d.mount !== '/' && (
-              <Flag tone="amber">Read-only</Flag>
-            )}
-          </div>
-        ))}
-      </Fact>
-      <Fact label="Updates">
-        <KnownOr value={health.updates}>
-          {(u) => (
+    <>
+      <Part
+        title="Maintenance"
+        aside={
+          u.known && u.value.items.some((i) => i.restart) ? (
+            <Flag tone="amber">Restart needed to install</Flag>
+          ) : undefined
+        }
+      >
+        <KnownOr value={u}>
+          {(v) => (
             <>
-              {u.items.length === 0 ? (
-                'Up to date'
+              {v.items.length === 0 ? (
+                <span>No macOS updates waiting</span>
               ) : (
-                <>
-                  {u.items.map((i) => i.title).join(', ')}
-                  {u.items.some((i) => i.restart) && <Muted>Needs a restart to install</Muted>}
-                </>
+                <span>{v.items.map((i) => i.title).join(', ')} available</span>
               )}
               <Muted>
-                Checked <Time iso={u.checkedAt} />
+                Checked <Time iso={v.checkedAt} />
               </Muted>
             </>
           )}
         </KnownOr>
-      </Fact>
-      <Fact label="Docker">
-        <KnownOr value={health.docker}>
-          {(d) => {
-            const unwell = d.containers.filter((c) => !c.healthy);
-            return (
-              <>
-                {unwell.length > 0 ? (
+      </Part>
+      <Part title="Resources">
+        {health.disks.map((d) =>
+          !d.mounted ? (
+            <div key={d.name}>
+              <Flag tone="red">{d.name} isn’t mounted</Flag>
+            </div>
+          ) : d.usedPercent === null ? (
+            <Muted key={d.name}>{d.name}: couldn’t be read</Muted>
+          ) : (
+            <div key={d.name} css={{ display: 'grid', gap: 3 }}>
+              <Meter
+                label={d.name}
+                percent={d.usedPercent}
+                words={`${d.usedPercent}% used${d.availableBytes !== null ? ` · ${gb(d.availableBytes)} free` : ''}`}
+                thresholds={[DISK_WARN, DISK_URGENT]}
+              />
+              {d.smart && d.smart !== 'Verified' && <Flag tone="red">SMART: {d.smart}</Flag>}
+              {d.writable === false && d.mount !== '/' && <Flag tone="amber">Read-only</Flag>}
+            </div>
+          ),
+        )}
+      </Part>
+      <Part title="Services">
+        <Facts>
+          <Fact label="Docker">
+            <KnownOr value={health.docker}>
+              {(d) => {
+                const unwell = d.containers.filter((c) => !c.healthy);
+                return unwell.length > 0 ? (
                   <Flag tone="amber">Not running well: {unwell.map((c) => c.name).join(', ')}</Flag>
                 ) : (
-                  `${plural(d.containers.length, 'container')} running`
-                )}
-                <Muted>{d.desktop ?? `Engine ${d.engine}`}</Muted>
-              </>
-            );
-          }}
-        </KnownOr>
-      </Fact>
-      <Fact label="Tailscale">
-        <KnownOr value={health.tailscale}>
-          {(t) => (
-            <>
-              {t.state === 'Running' ? 'Connected' : <Flag tone="red">{t.state}</Flag>}
-              {t.health.map((h) => (
-                <Muted key={h}>{h}</Muted>
-              ))}
-              <Muted>Version {t.version}</Muted>
-            </>
-          )}
-        </KnownOr>
-      </Fact>
-      <Fact label="Restarted">
-        <KnownOr value={health.bootedAt}>
-          {(at) => (
-            <>
-              <Time iso={at} />
-              <Muted>The cause isn’t kept long enough to tell</Muted>
-            </>
-          )}
-        </KnownOr>
-      </Fact>
-      <Fact label="repo-pull">
-        <KnownOr value={health.repoPull}>
-          {(r) =>
-            r.failingSince ? (
-              <>
-                <Flag tone="amber">
-                  Failing since <Time iso={r.failingSince} />
-                </Flag>
-                <Muted>
-                  Last tried <Time iso={r.lastAt} />
-                </Muted>
-              </>
-            ) : (
-              <>
-                Pulling{' '}
-                <Muted>
-                  Last pulled <Time iso={r.lastAt} />
-                </Muted>
-              </>
-            )
-          }
-        </KnownOr>
-      </Fact>
-    </Facts>
+                  <>{plural(d.containers.length, 'container')} running</>
+                );
+              }}
+            </KnownOr>
+          </Fact>
+          <Fact label="Tailscale">
+            <KnownOr value={health.tailscale}>
+              {(t) => (
+                <>
+                  {t.state === 'Running' ? 'Connected' : <Flag tone="red">{t.state}</Flag>}
+                  {t.health.map((h) => (
+                    <Muted key={h}>{h}</Muted>
+                  ))}
+                </>
+              )}
+            </KnownOr>
+          </Fact>
+          <Fact label="repo-pull">
+            <KnownOr value={health.repoPull}>
+              {(r) =>
+                r.failingSince ? (
+                  <>
+                    <Flag tone="amber">
+                      Failing since <Time iso={r.failingSince} />
+                    </Flag>
+                    <Muted>
+                      Last tried <Time iso={r.lastAt} />
+                    </Muted>
+                  </>
+                ) : (
+                  <>
+                    Pulling{' '}
+                    <Muted css={{ display: 'inline' }}>
+                      · last pulled <Time iso={r.lastAt} />
+                    </Muted>
+                  </>
+                )
+              }
+            </KnownOr>
+          </Fact>
+        </Facts>
+      </Part>
+      <details>
+        <summary>System and reporting</summary>
+        <Facts css={{ marginTop: 6 }}>
+          <Fact label="Docker">
+            <KnownOr value={health.docker}>{(d) => d.desktop ?? `Engine ${d.engine}`}</KnownOr>
+          </Fact>
+          <Fact label="Tailscale">
+            <KnownOr value={health.tailscale}>{(t) => `Version ${t.version}`}</KnownOr>
+          </Fact>
+          <Fact label="Restarted">
+            <KnownOr value={health.bootedAt}>
+              {(at) => (
+                <>
+                  <Time iso={at} />
+                  <Muted>The cause isn’t kept long enough to tell</Muted>
+                </>
+              )}
+            </KnownOr>
+          </Fact>
+          <Fact label="Reporting">Read locally</Fact>
+          <Fact label="Report">
+            <Time iso={health.checkedAt} />
+          </Fact>
+        </Facts>
+      </details>
+    </>
   );
 }
 

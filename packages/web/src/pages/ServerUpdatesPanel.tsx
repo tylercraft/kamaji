@@ -1,7 +1,8 @@
-// A Linux server's waiting packages, grouped as security / needs care / routine (TY-167); the
-// rating in words is on the server's card (UpdatesRating). Kamaji recommends; patching and restarts stay Tyler's.
-import type { LinuxHealth, ServerPackage, ServerUpdates } from '@kamaji/shared';
-import { Muted, Panel, PanelTitle, Pill, Table, Time } from '../components/ui';
+// A Linux server's waiting packages, grouped as security / needs care / routine (TY-167), inside
+// its card's Maintenance; the rating in words is UpdatesRating. Kamaji recommends; patching and
+// restarts stay Tyler's.
+import type { ServerPackage, ServerUpdates } from '@kamaji/shared';
+import { Muted, Pill, Table, Time } from '../components/ui';
 import { Flag } from './MolcajeteFacts';
 
 const LEVEL: Record<ServerUpdates['level'], [string, 'red' | 'amber' | 'green']> = {
@@ -67,23 +68,20 @@ function Packages({ packages, note }: { packages: ServerPackage[]; note: boolean
   );
 }
 
-export function ServerUpdatesPanel({ name, health }: { name: string; health: LinuxHealth }) {
-  const { updates } = health;
+/** Every waiting package, grouped: security and needs-care in full, routine one click down. */
+export function PackageLists({ updates }: { updates: ServerUpdates }) {
   const listed = updates.security.length + updates.care.length + updates.routine.length;
-  if (listed === 0 && updates.esm.length === 0) return null;
-  const id = `updates-${name}`;
   return (
-    <Panel aria-labelledby={id}>
-      <PanelTitle id={id}>{name}: waiting updates</PanelTitle>
+    <div css={{ display: 'grid', gap: 10 }}>
       {updates.security.length > 0 && (
         <section aria-label="Security updates">
-          <h3 css={{ margin: '4px 0', fontSize: 13 }}>Security ({updates.security.length})</h3>
+          <h4 css={{ margin: '4px 0', fontSize: 12 }}>Security ({updates.security.length})</h4>
           <Packages packages={updates.security} note />
         </section>
       )}
       {updates.care.length > 0 && (
         <section aria-label="Updates that need care">
-          <h3 css={{ margin: '4px 0', fontSize: 13 }}>Needs care ({updates.care.length})</h3>
+          <h4 css={{ margin: '4px 0', fontSize: 12 }}>Needs care ({updates.care.length})</h4>
           <Packages packages={updates.care} note />
         </section>
       )}
@@ -102,6 +100,6 @@ export function ServerUpdatesPanel({ name, health }: { name: string; health: Lin
       {updates.esm.length > 0 && (
         <Muted>Ubuntu Pro (ESM), for information only: {updates.esm.join(', ')}.</Muted>
       )}
-    </Panel>
+    </div>
   );
 }

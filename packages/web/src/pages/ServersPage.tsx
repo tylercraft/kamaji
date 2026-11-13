@@ -11,8 +11,9 @@ import {
 } from '../components/ui';
 import { CURRENT_FOR, isOutOfDate } from '../siteStatus';
 import { useResource } from '../useResource';
+import { DISK_URGENT, DISK_WARN, Meter, Part } from '../components/serverParts';
 import { Fact, Facts, Flag, gb, MacFacts, MacJobs } from './MolcajeteFacts';
-import { ServerUpdatesPanel, UpdatesRating } from './ServerUpdatesPanel';
+import { PackageLists, UpdatesRating } from './ServerUpdatesPanel';
 
 function uptime(seconds: number): string {
   const days = Math.floor(seconds / 86_400);
@@ -29,66 +30,111 @@ function restartOverdue(health: LinuxHealth): boolean {
     : false;
 }
 
-function LinuxFacts({ health }: { health: LinuxHealth }) {
+/** craftish and any Linux server: maintenance, resources, services, then system details. */
+function LinuxParts({ health, now }: { health: LinuxHealth; now: number }) {
+  const u = health.updates;
+  const listed = u.security.length + u.care.length + u.routine.length;
   return (
-    <Facts>
-      <Fact label="Updates">
-        <UpdatesRating updates={health.updates} />
-      </Fact>
-      <Fact label="Restart">
-        {health.rebootRequired ? (
-          <Flag tone={restartOverdue(health) ? 'red' : 'amber'}>Needed</Flag>
-        ) : (
-          'Not needed'
-        )}
-        {health.updates.reboot?.since && (
-          <Muted>
-            Pending since <Time iso={health.updates.reboot.since} />
-          </Muted>
-        )}
-        {health.uptimeSeconds !== null && <Muted>Up {uptime(health.uptimeSeconds)}</Muted>}
-      </Fact>
-      <Fact label="Services">
-        {health.stopped.length > 0 ? (
-          <Flag tone="red">Stopped: {health.stopped.join(', ')}</Flag>
-        ) : (
-          'All running'
-        )}
-      </Fact>
-      <Fact label="Disk">
-        {health.disks.map((d) => (
-          <div key={d.mount}>
-            {d.usedPercent >= 85 ? (
-              <Flag tone={d.usedPercent >= 95 ? 'red' : 'amber'}>
-                {d.mount} {d.usedPercent}% full
-              </Flag>
-            ) : (
+    <>
+      <Part title="Maintenance">
+        <div css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
+          <UpdatesRating updates={u} />
+        </div>
+        <Facts>
+          <Fact label="Restart">
+            {health.rebootRequired ? (
               <>
-                {d.mount} {d.usedPercent}% full
+                <Flag tone={restartOverdue(health) ? 'red' : 'amber'}>Needed</Flag>
+                {u.reboot?.since && (
+                  <Muted>
+                    Pending since <Time iso={u.reboot.since} />
+                    {u.reboot.packages.length > 0 ? ` for ${u.reboot.packages.join(', ')}` : ''}
+                  </Muted>
+                )}
               </>
-            )}{' '}
-            <Muted css={{ display: 'inline' }}>{gb(d.availableBytes)} free</Muted>
-          </div>
-        ))}
-      </Fact>
-      <Fact label="Memory">
-        {health.memoryUsedPercent === null ? 'Unknown' : `${health.memoryUsedPercent}% in use`}
-      </Fact>
-      <Fact label="Load">
-        {health.load.one === null
-          ? 'Unknown'
-          : `${health.load.one.toFixed(2)}${health.load.cpus ? ` on ${health.load.cpus} CPUs` : ''}`}
-      </Fact>
-      <Fact label="OS">
-        {health.os}
+            ) : (
+              'Not needed'
+            )}
+          </Fact>
+          <Fact label="Waiting">
+            {u.total === 0
+              ? 'Nothing waiting'
+              : `${u.security.length} security · ${u.care.length} need care · ${u.routine.length} routine`}
+          </Fact>
+        </Facts>
         <Muted>
-          {health.osSupportEnds
-            ? `Standard support until ${health.osSupportEnds}`
-            : 'Support end date unknown to Kamaji'}
+          This is what the latest report lists as waiting. Kamaji doesn’t see whether automatic
+          upgrades installed anything until the next report stops listing it.
         </Muted>
-      </Fact>
-      {health.php.length > 0 && <Fact label="PHP">{health.php.join(', ')}</Fact>}
-    </Facts>
+        {listed > 0 && (
+          <details>
+            <summary>Packages and impact ({u.total})</summary>
+            <div css={{ marginTop: 6 }}>
+              <PackageLists updates={u} />
+            </div>
+          </details>
+        )}
+      </Part>
+      <Part title="Resources">
+        {health.disks.map((d) => (
+          <Meter
+            key={d.mount}
+            label={`Disk ${d.mount}`}
+            percent={d.usedPercent}
+            words={`${d.usedPercent}% used · ${gb(d.availableBytes)} free`}
+            thresholds={[DISK_WARN, DISK_URGENT]}
+          />
+        ))}
+        {health.memoryUsedPercent === null ? (
+          <Muted>Memory: unknown</Muted>
+        ) : (
+          <Meter
+            label="Memory"
+            percent={health.memoryUsedPercent}
+            words={`${health.memoryUsedPercent}% in use`}
+          />
+        )}
+        <Muted>
+          Load{' '}
+          {health.load.one === null
+            ? 'unknown'
+            : `${health.load.one.toFixed(2)}${health.load.cpus ? ` on ${health.load.cpus} CPUs` : ''}`}
+        </Muted>
+      </Part>
+      <Part
+        title="Services"
+        aside={
+          health.stopped.length > 0 ? (
+            <Flag tone="red">Stopped: {health.stopped.join(', ')}</Flag>
+          ) : (
+            <Muted css={{ display: 'inline' }}>All running</Muted>
+          )
+        }
+      >
+        {health.uptimeSeconds !== null && <Muted>Up {uptime(health.uptimeSeconds)}</Muted>}
+      </Part>
+      <details>
+        <summary>System and reporting</summary>
+        <Facts css={{ marginTop: 6 }}>
+          <Fact label="OS">
+            {health.os}
+            <Muted>
+              {health.osSupportEnds
+                ? `Standard support until ${health.osSupportEnds}`
+                : 'Support end date unknown to Kamaji'}
+            </Muted>
+          </Fact>
+          {health.php.length > 0 && <Fact label="PHP">{health.php.join(', ')}</Fact>}
+          <Fact label="Reporting">Report over a forced-command SSH key</Fact>
+          <Fact label="Report">
+            <Time iso={health.checkedAt} />
+            {isOutOfDate(health.checkedAt, CURRENT_FOR.serverRead, now) && (
+              <span css={{ color: 'var(--amber)' }}> · out of date</span>
+            )}
+          </Fact>
+        </Facts>
+      </details>
+    </>
   );
 }
 
@@ -99,9 +145,6 @@ function ServerCard({ server, now }: { server: ServerSummary; now: number }) {
       <div css={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div>
           <PanelTitle id={`server-${server.id}`}>{server.name}</PanelTitle>
-          <Muted>
-            {server.kind === 'linux-ssh' ? 'Report over a forced-command SSH key' : 'Read locally'}
-          </Muted>
         </div>
         {attempt.known && (
           <div css={{ textAlign: 'right' }}>
@@ -132,7 +175,7 @@ function ServerCard({ server, now }: { server: ServerSummary; now: number }) {
             </Muted>
           )}
           {server.health.value.kind === 'linux-ssh' ? (
-            <LinuxFacts health={server.health.value} />
+            <LinuxParts health={server.health.value} now={now} />
           ) : (
             <MacFacts health={server.health.value} />
           )}
@@ -151,7 +194,7 @@ export function ServersPage() {
     <>
       <PageHeading
         title="Servers"
-        purpose="Resolve infrastructure issues and plan server maintenance."
+        purpose="Maintenance first, with resources and diagnostics close at hand."
       />
       <ResourceView resource={servers} label="servers">
         {({ servers }) =>
@@ -170,15 +213,6 @@ export function ServersPage() {
                   <ServerCard key={server.id} server={server} now={now} />
                 ))}
               </Grid>
-              {servers.map((server) =>
-                server.health.known && server.health.value.kind === 'linux-ssh' ? (
-                  <ServerUpdatesPanel
-                    key={server.id}
-                    name={server.name}
-                    health={server.health.value}
-                  />
-                ) : null,
-              )}
               {servers.map((server) =>
                 server.health.known && server.health.value.kind === 'local-mac' ? (
                   <MacJobs key={server.id} health={server.health.value} />
