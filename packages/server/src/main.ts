@@ -158,6 +158,12 @@ async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
   log(`${signal}: stopping`);
+  // stop() doesn't wait for the running job, so this should take a moment; if anything still
+  // holds it, a deploy isn't kept waiting. launchd's ExitTimeOut (ops/) is the backstop to this.
+  setTimeout(() => {
+    log('stopping took over 10 s; exiting anyway');
+    process.exit(1);
+  }, 10_000);
   clearInterval(schedule);
   server.close();
   await runner.stop();

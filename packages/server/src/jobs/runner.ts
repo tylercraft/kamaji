@@ -36,6 +36,8 @@ export class Runner {
   private stopping = false;
   private loop: Promise<void> | null = null;
   private current: AbortController | null = null;
+  /** Gives up on the running job, for stop(): its handler may not be listening to the signal. */
+  private abandon: (() => void) | null = null;
   private wakeUp: (() => void) | null = null;
 
   constructor(
@@ -56,10 +58,15 @@ export class Runner {
     this.loop = this.run();
   }
 
-  /** Stops claiming, aborts the running job and waits for it to settle. */
+  /**
+   * Stops claiming, aborts the running job and marks it interrupted straight away, without waiting
+   * for its handler: a check or report that doesn't watch the signal would hold a restart for
+   * minutes. Interrupting is safe, as after a crash; the next start runs a fresh cycle.
+   */
   async stop(): Promise<void> {
     this.stopping = true;
     this.current?.abort(new Error('shutdown'));
+    this.abandon?.();
     this.wake();
     await this.loop;
     this.loop = null;
@@ -123,7 +130,13 @@ export class Runner {
     );
     try {
       if (!handler) throw new Error(`no handler for ${job.kind}`);
-      const result = await handler(job, { signal: controller.signal, now: this.now });
+      const work = handler(job, { signal: controller.signal, now: this.now });
+      // Once abandoned, whatever the handler does after is nobody's to handle.
+      work.catch(() => {});
+      const abandoned = new Promise<never>((_resolve, reject) => {
+        this.abandon = () => reject(new Error('shutdown'));
+      });
+      const result = await Promise.race([work, abandoned]);
       finish(this.db, this.now(), job.id, this.owner, { state: 'succeeded', result });
     } catch (error) {
       const aborted = controller.signal.aborted;
@@ -145,6 +158,7 @@ export class Runner {
     } finally {
       clearInterval(renewal);
       this.current = null;
+      this.abandon = null;
     }
   }
 }

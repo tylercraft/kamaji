@@ -80,6 +80,30 @@ describe('Runner', () => {
     expect(db.prepare('SELECT error FROM jobs WHERE id = ?').get(id)?.error).toBe('shutdown');
   });
 
+  it('on stop, marks a job that ignores the signal interrupted without waiting for it', async () => {
+    const db = testDb();
+    const id = enqueue(db, Date.now(), 'cycle')!;
+    let started!: () => void;
+    const begun = new Promise<void>((resolve) => (started = resolve));
+    const runner = new Runner(db, {
+      pollMs: 5,
+      handlers: {
+        // Like a check deaf to the signal: it settles long after a restart should be done.
+        cycle: () => {
+          started();
+          return new Promise((resolve) => setTimeout(resolve, 60_000).unref());
+        },
+      },
+    });
+    runner.start();
+    await begun;
+    const before = Date.now();
+    await runner.stop();
+    expect(Date.now() - before).toBeLessThan(1_000);
+    expect(getJob(db, id)?.state).toBe('interrupted');
+    expect(db.prepare('SELECT error FROM jobs WHERE id = ?').get(id)?.error).toBe('shutdown');
+  });
+
   it('aborts a job whose lease was taken away', async () => {
     const db = testDb();
     const id = enqueue(db, Date.now(), 'cycle')!;
