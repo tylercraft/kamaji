@@ -11,6 +11,8 @@ const item = (siteId: string, name: string, from = '1.0', to = '1.1'): QueueItem
   from,
   to,
   security: false,
+  fixes: 0,
+  findings: 0,
   major: false,
 });
 const site = (siteId: string, backupKind: QueueSite['backupKind']): QueueSite => ({

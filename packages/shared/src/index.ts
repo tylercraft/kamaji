@@ -3,6 +3,8 @@
 // breaks the UI fails to compile, and a response that drifts fails loudly instead of rendering wrong.
 import { z } from 'zod';
 
+export * from './version.js';
+
 /** ISO 8601 timestamp, always UTC on the wire. */
 export const Timestamp = z.iso.datetime();
 
@@ -681,6 +683,9 @@ export const QueueItem = z.object({
   to: z.string(),
   /** A known vulnerability that this version fixes. */
   security: z.boolean(),
+  /** Of the component's known vulnerabilities (not informational ones), how many this version fixes. */
+  fixes: z.number().int(),
+  findings: z.number().int(),
   /** A major version: never in "all routine". */
   major: z.boolean(),
 });
