@@ -36,6 +36,9 @@
   <true/>
   <key>ThrottleInterval</key>
   <integer>30</integer>
+  <!-- Seconds from SIGTERM to SIGKILL. Kamaji exits within 10 s on its own (main.ts, shutdown). -->
+  <key>ExitTimeOut</key>
+  <integer>15</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>Umask</key>

@@ -368,7 +368,29 @@ On the mini, after the change is on `main`:
 ~/kamaji/ops/deploy.sh
 ```
 
-It pulls, installs, builds and restarts. A cycle running at the restart is marked interrupted in Activity and isn't retried; the next one starts straight away.
+It pulls, installs, builds and restarts, then waits for the new process to answer `/api/status` and prints how long the restart took. If nothing answers within 60 s it says `DEPLOY FAILED` and exits 1: look at `~/Library/Logs/kamaji.log`.
+
+A restart should take a few seconds. On SIGTERM Kamaji stops serving, marks a running cycle interrupted without waiting for it (it shows in Activity and isn't retried; the next cycle starts straight away), and exits. If anything still holds it after 10 s it exits anyway, and the plist's `ExitTimeOut` of 15 s has launchd kill it as the backstop.
+
+The plist only takes effect when it's loaded again, so after a change to `ops/dev.craftish.kamaji.plist` (`ExitTimeOut` was added on 2026-11-13), once, after the deploy:
+
+1. Copy it and unload the running one:
+
+```
+/bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootout gui/501/dev.craftish.kamaji
+```
+
+2. Wait until it's gone, then load it:
+
+```
+until ! /bin/launchctl print gui/501/dev.craftish.kamaji > /dev/null 2>&1; do /bin/sleep 1; done && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji.plist
+```
+
+3. Check launchd has it (expect `exit timeout = 15`):
+
+```
+/bin/launchctl print gui/501/dev.craftish.kamaji | /usr/bin/grep 'exit timeout'
+```
 
 ## Stopping it
 
