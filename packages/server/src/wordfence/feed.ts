@@ -432,12 +432,32 @@ export function judgeVulnerabilities(db: Db, now: number): void {
     const fix = group.some((m) => m.fixedIn !== null);
     const count =
       group.length === 1 ? 'a known vulnerability' : `${group.length} known vulnerabilities`;
+    // Measured against what WordPress offers, as the site's page does: an update that fixes only
+    // some of them never reads as fixing them all.
+    const offer = db
+      .prepare(
+        `SELECT offer_version FROM components
+         WHERE site_id = ? AND type = ? AND item = ? AND gone_at IS NULL`,
+      )
+      .get(siteId, first.type, first.item)?.offer_version;
+    const byOffer =
+      offer === null || offer === undefined
+        ? 0
+        : group.filter((m) => m.fixedIn !== null && compareVersions(String(offer), m.fixedIn) >= 0)
+            .length;
+    const tail = !fix
+      ? ', with no fix yet'
+      : byOffer === group.length
+        ? `, ${group.length === 1 ? '' : 'all '}fixed by the update WordPress offers`
+        : byOffer > 0
+          ? `; the offered update fixes ${byOffer} of ${group.length}`
+          : ', with a fix WordPress isn’t offering yet';
     raiseIssue(db, now, {
       resourceType: 'site',
       resourceId: siteId,
       kind,
       severity: fix ? 'urgent' : 'normal',
-      summary: `${first.siteName}: ${WHAT[first.type]} has ${count}, ${fix ? 'with a fix to update to' : 'with no fix yet'}`,
+      summary: `${first.siteName}: ${WHAT[first.type]} has ${count}${tail}`,
     });
   }
   const open = db
