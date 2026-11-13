@@ -1,9 +1,1 @@
-{
-  "total_size": 45088768,
-  "total_uncompressed_size": 136314880,
-  "compression_ratio": 3.02,
-  "compression_progress": 100,
-  "compression_space_saving": 66.92,
-  "total_blob_count": 53,
-  "snapshots_count": 2
-}
+{"total_size":333607448,"total_uncompressed_size":654927369,"compression_ratio":1.963167707814485,"compression_progress":100,"compression_space_saving":49.06191681844342,"total_blob_count":855,"snapshots_count":1}

@@ -5,3 +5,4 @@ package-lock.json
 worker/node_modules/
 .claude/
 dev/wordpress/
+packages/server/src/sitebackups/fixtures/*.json

@@ -19,10 +19,9 @@ describe('restic’s answers (fixtures/README.md)', () => {
 
   it('reads the snapshot list and the repository’s size', () => {
     expect(parseSnapshots(fixture('snapshots.json'))).toEqual([
-      '1aa2bb3cc4dd5ee6ff708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6',
-      '4bba301e2b4c0b1d4f0a3e8a8d5e9c1b2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d',
+      'c5122c366e2702955734950e42d6eb4d83af7c9213e793f3e5639e94f28c3207',
     ]);
-    expect(parseStats(fixture('stats.json'))).toBe(45088768);
+    expect(parseStats(fixture('stats.json'))).toBe(333607448);
     expect(parseSnapshots('not json')).toBeNull();
   });
 
