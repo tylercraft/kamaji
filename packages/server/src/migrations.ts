@@ -460,4 +460,27 @@ export const migrations: Migration[] = [
         'accounting.firstandlastrecords.com', 'accounting.prettyearpublishing.com');
     `,
   },
+  {
+    version: 16,
+    name: 'server updates',
+    // TY-167: each package a server's report (format 2) says can be upgraded, with when Kamaji
+    // first saw that version waiting, so "waiting over a day" and "the oldest for 30 days" don't
+    // depend on how many reports are kept; a new version of a package starts its own clock. The
+    // reports' observations keep only counts. issues.digested_at: when the morning digest last
+    // listed an issue, for the kinds it lists only now and then (notify.ts, DIGEST_REPEAT).
+    sql: `
+      CREATE TABLE server_updates (
+        server_id TEXT NOT NULL REFERENCES servers (id),
+        name TEXT NOT NULL,
+        from_version TEXT NOT NULL,
+        to_version TEXT NOT NULL,
+        suites TEXT NOT NULL,
+        security INTEGER NOT NULL CHECK (security IN (0, 1)),
+        esm INTEGER NOT NULL CHECK (esm IN (0, 1)),
+        first_seen_at INTEGER NOT NULL,
+        PRIMARY KEY (server_id, name)
+      );
+      ALTER TABLE issues ADD COLUMN digested_at INTEGER;
+    `,
+  },
 ];
