@@ -659,8 +659,29 @@ for (const view of VIEWS) {
     problems.push('Enter on Review selected updates didn’t open the review');
   const runsAfter = runs();
   if (runsAfter !== runsBefore) problems.push('reviewing started a run');
+  // Sections remember being left open or closed, across sites; Remove always starts closed.
+  await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/sites/${BAD}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  await evaluate(`document.querySelector('#checks summary').click()`);
+  await new Promise((r) => setTimeout(r, 200));
+  await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/sites/${OK}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  if (!(await evaluate(`document.getElementById('checks').open`)))
+    problems.push('Check details didn’t stay open on another site');
+  await evaluate(`document.querySelector('#checks summary').click()`);
+  await new Promise((r) => setTimeout(r, 200));
+  await send('Page.reload');
+  await new Promise((r) => setTimeout(r, 1500));
+  if (await evaluate(`document.getElementById('checks').open`))
+    problems.push('Check details didn’t stay closed after a reload');
+  if (
+    await evaluate(
+      `[...document.querySelectorAll('summary')].find((s) => s.textContent.includes('Remove site'))?.parentElement.open`,
+    )
+  )
+    problems.push('Remove site started open');
   if (problems.length) failures.push(`keyboard: ${problems.join('; ')}`);
-  else console.log('ok   keyboard: disclosures, review without approving');
+  else console.log('ok   keyboard: disclosures, review without approving, remembered sections');
 }
 
 ws.close();

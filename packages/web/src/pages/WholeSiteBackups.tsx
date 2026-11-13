@@ -13,6 +13,7 @@ import { Button, Dot, Muted, Pill, Table, Time } from '../components/ui';
 import { Rows } from '../components/rows';
 import { CURRENT_FOR, isOutOfDate, OVERDUE_GRACE, SCHEDULE_DAYS, STEP_WORDS } from '../siteStatus';
 import { SCHEDULES } from './SiteSetup';
+import { RememberedDetails } from '../components/remembered';
 
 const WORDS: Record<string, string> = {
   not_active: 'whole-site backups are off for this site: turn them on under Configure',
@@ -232,7 +233,7 @@ export function WholeSiteBackups({
         </div>
       )}
       {problem && <FormError>{problem}</FormError>}
-      <details>
+      <RememberedDetails name="snapshots">
         <summary>Snapshots, storage and consent ({data.snapshots.length})</summary>
         <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
           <Rows>
@@ -269,7 +270,7 @@ export function WholeSiteBackups({
           </Rows>
           {data.snapshots.length > 0 && <Snapshots snapshots={data.snapshots} />}
         </div>
-      </details>
+      </RememberedDetails>
     </>
   );
 }

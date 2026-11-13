@@ -6,6 +6,7 @@ import { RevealLink } from '../components/reveal';
 import type { Look } from '../siteAttention';
 import type { StatusLine } from '../siteStatus';
 import { Dot, Pill, Time } from '../components/ui';
+import { RememberedDetails } from '../components/remembered';
 
 const Tiles = styled.ul`
   list-style: none;
@@ -109,7 +110,7 @@ export function HealthTiles({ lines }: { lines: StatusLine[] }) {
 /** Each check's line in full: what was checked, what it found, when. */
 export function CheckDetails({ lines }: { lines: StatusLine[] }) {
   return (
-    <details id="checks">
+    <RememberedDetails id="checks" name="checks">
       <summary>Check details</summary>
       <dl
         css={{
@@ -139,7 +140,7 @@ export function CheckDetails({ lines }: { lines: StatusLine[] }) {
           </div>
         ))}
       </dl>
-    </details>
+    </RememberedDetails>
   );
 }
 

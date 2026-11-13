@@ -30,6 +30,7 @@ import {
 import type { Resource } from '../useResource';
 import { BACKUPS } from './SiteSetup';
 import { WholeSiteBackups } from './WholeSiteBackups';
+import { RememberedDetails } from '../components/remembered';
 
 const WORDS: Record<string, string> = {
   not_craftish: 'Kamaji exports only on craftish, and this site isn’t hosted there',
@@ -351,7 +352,7 @@ export function SiteBackupsPanel({
                     )}
                   </div>
                   {d.history.length > 0 && (
-                    <details>
+                    <RememberedDetails name="export-history">
                       <summary>Export details, checksum and history ({d.history.length})</summary>
                       <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
                         <LatestExport entry={lastGood} />
@@ -361,7 +362,7 @@ export function SiteBackupsPanel({
                         </Muted>
                         <History history={d.history} />
                       </div>
-                    </details>
+                    </RememberedDetails>
                   )}
                 </Part>
               ) : (
@@ -390,12 +391,12 @@ export function SiteBackupsPanel({
                     )}
                   </Rows>
                   {d.history.length > 0 && (
-                    <details>
+                    <RememberedDetails name="confirmation-history">
                       <summary>Confirmation history ({d.history.length})</summary>
                       <div css={{ marginTop: 8 }}>
                         <History history={d.history} />
                       </div>
-                    </details>
+                    </RememberedDetails>
                   )}
                 </Part>
               )}
