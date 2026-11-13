@@ -1,36 +1,14 @@
 // A site's own Updates panel: what's waiting on it, ticked and approved exactly as on the Updates
 // page (the same review and POST /api/batches), with the site's latest run under it: its outcome
 // in a line, the components and backup evidence one click down (open when the run is held).
-import { UpdatesResponse, type BatchSiteView, type BatchView } from '@kamaji/shared';
+import { UpdatesResponse, type BatchView } from '@kamaji/shared';
 import { useState } from 'react';
 import { PrimaryButton } from '../components/forms';
-import {
-  Button,
-  Dot,
-  Muted,
-  Panel,
-  PanelHead,
-  Pill,
-  ResourceView,
-  Time,
-  type Tone,
-} from '../components/ui';
+import { Button, Dot, Muted, Panel, PanelHead, Pill, ResourceView, Time } from '../components/ui';
+import { runOutcome } from '../runHistory';
 import { itemKey as key } from '../updatesView';
 import { useResource } from '../useResource';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
-
-/** The run's outcome on this site in a flag: held, failed or unverified items say so. */
-function runOutcome(run: BatchSiteView): [string, Tone, boolean] {
-  if (run.state === 'held') return ['Held', 'red', true];
-  if (run.state !== 'done')
-    return [run.state === 'running' ? 'Running' : 'Waiting', 'neutral', false];
-  const failed = run.items.filter(
-    (i) => i.outcome === 'checks_failed' || i.outcome === 'update_failed',
-  ).length;
-  if (failed > 0) return [`${failed} failed`, 'red', true];
-  if (run.items.some((i) => i.outcome !== 'passed')) return ['Couldn’t verify', 'amber', true];
-  return ['Updated, checks passed', 'green', false];
-}
 
 const RUN_STATE: Record<BatchView['state'], string> = {
   approved: 'Starting',
@@ -173,8 +151,8 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                     }}
                   >
                     <h3 css={{ fontSize: 13 }}>Latest run</h3>
-                    <Pill tone={outcome[1]}>
-                      <Dot /> {outcome[0]}
+                    <Pill tone={outcome.tone}>
+                      <Dot /> {outcome.label}
                     </Pill>
                   </div>
                   <p css={{ margin: 0 }}>
@@ -186,7 +164,7 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                   {run.heldReason && (
                     <p css={{ margin: 0, color: 'var(--red)' }}>{run.heldReason}</p>
                   )}
-                  <details open={outcome[2]}>
+                  <details open={outcome.problem}>
                     <summary>Run details and backup evidence</summary>
                     <div css={{ marginTop: 6 }}>
                       <RunSite batch={latest} site={run} reload={reload} />
