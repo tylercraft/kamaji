@@ -3,6 +3,7 @@
 // in a line, the components and backup evidence one click down (open when the run is held).
 import { UpdatesResponse, type BatchSiteView, type BatchView } from '@kamaji/shared';
 import { useState } from 'react';
+import { PrimaryButton } from '../components/forms';
 import {
   Button,
   Dot,
@@ -42,6 +43,7 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
     pollMs: 5_000,
   });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
   const toggle = (k: string) => {
     const next = new Set(ticked);
     if (next.has(k)) next.delete(k);
@@ -65,6 +67,7 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
           const run = latest?.sites[0];
           const routine = data.items.filter((i) => !i.major);
           const outcome = run ? runOutcome(run) : null;
+          const chosen = data.items.filter((i) => ticked.has(key(i))).length;
           return (
             <>
               {!site ? (
@@ -85,9 +88,15 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                 <>
                   <div css={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <Button type="button" onClick={() => setTicked(new Set(routine.map(key)))}>
-                      Tick all routine ({routine.length})
+                      Select routine updates ({routine.length})
                     </Button>
-                    <Button type="button" onClick={() => setTicked(new Set())}>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setTicked(new Set());
+                        setReviewing(false);
+                      }}
+                    >
                       Clear
                     </Button>
                   </div>
@@ -105,15 +114,45 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                       </label>
                     ))}
                   </div>
-                  <ReviewBody
-                    data={data}
-                    ticked={ticked}
-                    runsAt="below"
-                    done={() => {
-                      setTicked(new Set());
-                      reload();
-                    }}
-                  />
+                  {reviewing && chosen > 0 ? (
+                    <section
+                      aria-label="Review"
+                      css={{
+                        display: 'grid',
+                        gap: 8,
+                        borderTop: '1px solid var(--line)',
+                        paddingTop: 10,
+                      }}
+                    >
+                      <h3 css={{ fontSize: 13 }}>Review</h3>
+                      <ReviewBody
+                        data={data}
+                        ticked={ticked}
+                        runsAt="below"
+                        done={() => {
+                          setTicked(new Set());
+                          setReviewing(false);
+                          reload();
+                        }}
+                      />
+                    </section>
+                  ) : (
+                    <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <PrimaryButton
+                        type="button"
+                        disabled={chosen === 0}
+                        aria-describedby="review-note"
+                        onClick={() => setReviewing(true)}
+                      >
+                        Review selected updates{chosen > 0 ? ` (${chosen})` : ''}
+                      </PrimaryButton>
+                      <Muted id="review-note">
+                        {chosen === 0
+                          ? 'Select updates first. Nothing runs until you approve the review.'
+                          : 'Nothing runs until you approve the review.'}
+                      </Muted>
+                    </div>
+                  )}
                 </>
               )}
               {latest && run && outcome && (

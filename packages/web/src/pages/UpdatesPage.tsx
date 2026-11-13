@@ -60,7 +60,10 @@ export function Flags({ item }: { item: QueueItem }) {
     <>
       {item.security && (
         <Pill tone="red">
-          <Dot /> Security fix
+          <Dot />{' '}
+          {item.fixes >= item.findings
+            ? 'Security fix'
+            : `Partial security fix: ${item.fixes} of ${item.findings}`}
         </Pill>
       )}{' '}
       {item.major && (
@@ -169,7 +172,7 @@ function Queue({
         <>
           <div css={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <Button type="button" onClick={() => setTicked(new Set(routine.map(key)))}>
-              Tick all routine ({routine.length})
+              Select routine updates ({routine.length})
             </Button>
             <Button type="button" onClick={() => setTicked(new Set())}>
               Clear

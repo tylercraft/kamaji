@@ -248,7 +248,7 @@ const VOUCHED: Record<'host' | 'client' | 'tyler', string> = {
   tyler: 'You confirm a backup before each run.',
 };
 
-const STEP_WORDS: Record<string, string> = {
+export const STEP_WORDS: Record<string, string> = {
   restore: 'restoring the snapshot',
   verify: 'checking it against its manifest',
   unpack: 'unpacking it',
@@ -258,8 +258,8 @@ const STEP_WORDS: Record<string, string> = {
   'home page': 'fetching the home page',
 };
 
-const SCHEDULE_DAYS = { weekly: 7, fortnightly: 14 } as const;
-const OVERDUE_GRACE = 2 * DAY;
+export const SCHEDULE_DAYS = { weekly: 7, fortnightly: 14 } as const;
+export const OVERDUE_GRACE = 2 * DAY;
 
 /**
  * Backups, a line per kind: Kamaji's database export, a backup someone else vouches for, the

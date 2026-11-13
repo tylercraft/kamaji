@@ -2,14 +2,14 @@
 // and what needs a look; then Updates and Backups side by side, Connection and the plugin's zip,
 // Software, and Configure and Remove closed at the bottom. Evidence, history and diagnostics are
 // one click down; a problem always shows in a section's open part and in "Needs a look".
-import { Handshake, SiteBackupsResponse, SiteDetailResponse, type CareHello } from '@kamaji/shared';
+import { Handshake, SiteBackupsResponse, SiteDetailResponse } from '@kamaji/shared';
+import styled from '@emotion/styled';
 import { useState } from 'react';
 import { postJson } from '../api';
 import { failed, reason, saved } from '../components/toast';
 import {
   Button,
   Dot,
-  Grid,
   Muted,
   PageHeading,
   Panel,
@@ -31,10 +31,11 @@ import {
   updates,
   type StatusLine,
 } from '../siteStatus';
+import { backupLooks, capabilityProblems, siteLooks } from '../siteAttention';
 import { useResource, type Resource } from '../useResource';
 import { InventoryPanel } from './InventoryPanel';
 import { SiteBackupsPanel } from './SiteBackupsPanel';
-import { Attention, HealthTiles, needsLook } from './SiteHealth';
+import { Attention, CheckDetails, HealthTiles } from './SiteHealth';
 import {
   Capabilities,
   ConfigureStep,
@@ -65,17 +66,6 @@ function Recheck({ id, reload }: { id: string; reload: () => void }) {
       {busy ? 'Checking…' : 'Check connection'}
     </Button>
   );
-}
-
-/** What in a good handshake deserves a look: the diagnostics open when there's any. */
-function capabilityProblems(hello: CareHello): string[] {
-  const c = hello.capabilities;
-  return [
-    !c.can_update && 'Kamaji can’t update this site',
-    c.maintenance.present && 'A .maintenance file is present',
-    !c.loopback.ok && 'Loopback blocked',
-    hello.multisite && 'Multisite isn’t supported',
-  ].filter((p): p is string => typeof p === 'string');
 }
 
 function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: () => void }) {
@@ -126,7 +116,9 @@ function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: ()
         {result.hello.capabilities.can_update ? 'Updates only as approved' : 'Can’t update'}
       </Muted>
       {problems.length > 0 && (
-        <p css={{ margin: 0, color: 'var(--amber)' }}>{problems.join('. ')}.</p>
+        <p css={{ margin: 0, color: 'var(--amber)' }}>
+          {problems.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('. ')}.
+        </p>
       )}
       <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <Recheck id={site.id} reload={reload} />
@@ -134,7 +126,7 @@ function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: ()
           Last tested <Time iso={handshake.at} />
         </Muted>
       </div>
-      <details open={problems.length > 0}>
+      <details id="connection-diagnostics" open={problems.length > 0}>
         <summary>Capabilities and diagnostics</summary>
         <div css={{ display: 'grid', gap: 8, marginTop: 8 }}>
           <Capabilities handshake={handshake} detail={detail} />
@@ -189,6 +181,45 @@ function PluginZip({ siteId }: { siteId: string }) {
   );
 }
 
+/**
+ * Desktop: two columns that flow on their own, Updates, Connection and the plugin on the left and
+ * Backups on the right. One column: the order they're written in, which is also the reading and
+ * keyboard order: Updates, Backups, Connection, plugin.
+ */
+const Cards = styled.div`
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto 1fr;
+  align-items: start;
+  & > div {
+    min-width: 0;
+    display: grid;
+  }
+  .updates {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .backups {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+  .connection {
+    grid-column: 1;
+  }
+  .plugin {
+    grid-column: 1;
+  }
+  @media (max-width: 900px) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    & > div {
+      grid-column: 1 !important;
+      grid-row: auto !important;
+    }
+  }
+`;
+
 const RANK = { red: 0, amber: 1, copper: 2, neutral: 3, green: 4 } as const;
 
 /** The backups tile: the line that most needs a look, else the first. */
@@ -215,12 +246,14 @@ function backupTile(resource: Resource<SiteBackupsResponse>, now: number): Statu
       at: null,
       outOfDate: false,
     };
-  const look = lines.filter((l) => l.tone === 'red' || l.tone === 'amber');
-  if (look.length > 1)
+  // The same words as "Needs a look", so the tile and the list never disagree.
+  const [look] = backupLooks(resource.data, now);
+  if (look && look.target === 'backups')
     return {
-      ...worst,
       label: 'Backups',
-      state: `${look.length} need a look`,
+      tone: look.tone,
+      state: look.text.replace(/^Backups: /, '').replace(/^./, (c) => c.toUpperCase()),
+      detail: '',
       at: null,
       outOfDate: false,
     };
@@ -230,16 +263,6 @@ function backupTile(resource: Resource<SiteBackupsResponse>, now: number): Statu
     state: worst.label === 'Backups' ? worst.state : `${worst.label}: ${worst.state}`,
   };
 }
-
-/** Where each line's evidence is on the page. */
-const WHERE: Record<string, [string, string]> = {
-  Security: ['software', 'See Software'],
-  Updates: ['updates', 'See Updates'],
-  Backups: ['backups', 'See Backups'],
-  'Database export': ['backups', 'See Backups'],
-  'Whole-site backup': ['backups', 'See Backups'],
-  'Restore check': ['backups', 'See Backups'],
-};
 
 function Freshness({ detail, now }: { detail: SiteDetailResponse; now: number }) {
   if (detail.site.mode !== 'connected') return null;
@@ -278,8 +301,11 @@ export function SitePage({ id }: { id: string }) {
           updates(site),
         ];
         const backupNow = backupsResource.state === 'ready' ? backupsResource.loadedAt : now;
-        const backupAll =
-          backupsResource.state === 'ready' ? backups(backupsResource.data, backupNow) : [];
+        const looks = siteLooks(
+          d,
+          backupsResource.state === 'ready' ? backupsResource.data : null,
+          backupNow,
+        );
         return (
           <>
             <nav aria-label="Breadcrumb" css={{ fontSize: 12, color: 'var(--muted)' }}>
@@ -322,16 +348,29 @@ export function SitePage({ id }: { id: string }) {
             {site.setup !== 'done' && <RemovePanel detail={d} />}
             {site.setup === 'done' && (
               <>
-                <HealthTiles lines={[...siteLines, backupTile(backupsResource, backupNow)]} />
-                <Attention lines={needsLook([...siteLines, ...backupAll])} where={WHERE} />
-                <Grid columns="repeat(2, minmax(0, 1fr))">
-                  <SiteUpdatesPanel siteId={site.id} />
-                  <SiteBackupsPanel siteId={site.id} backups={backupsResource} />
-                </Grid>
-                <Grid columns="repeat(2, minmax(0, 1fr))">
-                  <Connection detail={d} reload={reload} />
-                  {connected && <PluginZip siteId={site.id} />}
-                </Grid>
+                <div css={{ display: 'grid', gap: 8 }}>
+                  <HealthTiles lines={[...siteLines, backupTile(backupsResource, backupNow)]} />
+                  <CheckDetails lines={siteLines.slice(0, 3)} />
+                </div>
+                <Attention looks={looks} />
+                <Cards>
+                  {connected && (
+                    <div className="updates">
+                      <SiteUpdatesPanel siteId={site.id} />
+                    </div>
+                  )}
+                  <div className="backups">
+                    <SiteBackupsPanel siteId={site.id} backups={backupsResource} />
+                  </div>
+                  <div className="connection">
+                    <Connection detail={d} reload={reload} />
+                  </div>
+                  {connected && (
+                    <div className="plugin">
+                      <PluginZip siteId={site.id} />
+                    </div>
+                  )}
+                </Cards>
                 {connected && <InventoryPanel detail={d} now={now} reload={reload} />}
                 <ConfigureStep detail={d} reload={reload} section />
                 <RemovePanel detail={d} closed />

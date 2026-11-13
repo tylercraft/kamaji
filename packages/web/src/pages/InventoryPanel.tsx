@@ -16,6 +16,7 @@ import { FormError } from '../components/forms';
 import styled from '@emotion/styled';
 import { Button, Dot, Muted, Panel, PanelHead, Pill, Table, Time } from '../components/ui';
 import { saved } from '../components/toast';
+import { remedy, securityGroups } from '../securityGroups';
 import { CURRENT_FOR, isOutOfDate, security } from '../siteStatus';
 
 const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
@@ -95,6 +96,88 @@ function SecurityCell({
         </div>
       ))}
     </div>
+  );
+}
+
+/** Findings as a table: what it is, how severe, what fixes it. Stacks on a phone. */
+const Findings = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 6px;
+  th {
+    text-align: left;
+    font: 500 11px/1.4 var(--mono);
+    color: var(--muted);
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  td.n {
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    thead {
+      display: none;
+    }
+    tr,
+    td {
+      display: block;
+    }
+    tr {
+      border-bottom: 1px solid var(--line);
+      padding: 6px 0;
+    }
+    td {
+      border: 0;
+      padding: 1px 0;
+    }
+    td[data-label]::before {
+      content: attr(data-label) ': ';
+      color: var(--muted);
+    }
+  }
+`;
+
+function FindingsTable({ items }: { items: VulnerabilityMatch[] }) {
+  return (
+    <Findings>
+      <thead>
+        <tr>
+          <th scope="col">Finding</th>
+          <th scope="col">Severity</th>
+          <th scope="col">Fixed in</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((v) => (
+          <tr key={v.id}>
+            <td>
+              {v.reference ? (
+                <a href={v.reference} target="_blank" rel="noreferrer">
+                  {v.title}
+                </a>
+              ) : (
+                v.title
+              )}
+              {v.cve && <Muted>{v.cve}</Muted>}
+              {!v.fixedIn && !v.informational && v.remediation && <Muted>{v.remediation}</Muted>}
+            </td>
+            <td className="n" data-label="Severity">
+              {v.informational ? 'Informational' : (v.cvssRating ?? 'Not rated')}
+              {v.cvssScore !== null && !v.informational ? ` (${v.cvssScore})` : ''}
+            </td>
+            <td className="n" data-label="Fixed in">
+              {v.fixedIn ?? 'No fix yet'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </Findings>
   );
 }
 
@@ -262,37 +345,6 @@ function Note({ parts, offers, findings }: { parts: string[]; offers: number; fi
   );
 }
 
-/** "3.10.2" over "3.9.9": numbers part by part; anything else compares as text. */
-function newerVersion(a: string, b: string): boolean {
-  const pa = a.split(/[.-]/).map(Number);
-  const pb = b.split(/[.-]/).map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] ?? 0;
-    const y = pb[i] ?? 0;
-    if (Number.isNaN(x) || Number.isNaN(y)) return a > b;
-    if (x !== y) return x > y;
-  }
-  return false;
-}
-
-/** Findings per component, with the version that fixes all the fixable ones. */
-function groupFindings(found: { name: string; v: VulnerabilityMatch }[]) {
-  const groups = new Map<string, VulnerabilityMatch[]>();
-  for (const f of found) groups.set(f.name, [...(groups.get(f.name) ?? []), f.v]);
-  return [...groups].map(([name, items]) => {
-    const fixes = items.map((v) => v.fixedIn).filter((f): f is string => f !== null);
-    return {
-      name,
-      items,
-      unfixed: items.length - fixes.length,
-      newestFix: fixes.reduce<string | null>(
-        (m, f) => (m === null || newerVersion(f, m) ? f : m),
-        null,
-      ),
-    };
-  });
-}
-
 const actionable = (vs: VulnerabilityMatch[]) => vs.filter((v) => !v.informational).length;
 
 /**
@@ -355,7 +407,7 @@ export function InventoryPanel({
     ...inv.plugins.flatMap((p) => p.vulnerabilities.map((v) => ({ name: p.name, v }))),
     ...inv.themes.flatMap((t) => t.vulnerabilities.map((v) => ({ name: t.name, v }))),
   ];
-  const found = all.filter((f) => !f.v.informational);
+  const groups = securityGroups(inv);
   const notes = all.filter((f) => f.v.informational);
   const pluginFindings = inv.plugins.reduce((n, p) => n + actionable(p.vulnerabilities), 0);
   const themeFindings = inv.themes.reduce((n, t) => n + actionable(t.vulnerabilities), 0);
@@ -410,6 +462,7 @@ export function InventoryPanel({
       </Environment>
 
       <section
+        id="security"
         aria-labelledby="security-title"
         css={{
           background: 'var(--soft)',
@@ -428,45 +481,28 @@ export function InventoryPanel({
             <Dot /> {line.state}
           </Pill>
         </h3>
-        {found.length > 0 && (
-          <ul css={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 8 }}>
-            {groupFindings(found).map((g) => (
-              <li key={g.name}>
-                <strong>{g.name}</strong>:{' '}
-                {plural(g.items.length, 'known vulnerability', 'known vulnerabilities')}
-                {g.newestFix ? (
-                  <Muted css={{ display: 'inline' }}>
-                    {' '}
-                    · {g.unfixed > 0 ? `${g.unfixed} with no fix yet; the rest are` : 'all'} fixed
-                    by {g.newestFix}
-                  </Muted>
-                ) : (
-                  <Muted css={{ display: 'inline' }}> · no fix yet</Muted>
-                )}
-                <details open={g.items.length <= 2}>
-                  <summary>{g.items.length <= 2 ? 'Details' : `All ${g.items.length}`}</summary>
-                  <div css={{ marginTop: 6 }}>
-                    <SecurityCell vulnerabilities={g.items} data={vd} />
-                  </div>
-                </details>
-              </li>
-            ))}
-          </ul>
-        )}
+        {groups.map((g) => (
+          <div key={g.name} css={{ display: 'grid', gap: 2 }}>
+            <p css={{ margin: 0 }}>
+              <strong>{g.name}</strong>:{' '}
+              {plural(g.items.length, 'known vulnerability', 'known vulnerabilities')}
+            </p>
+            <Muted>{remedy(g)}.</Muted>
+            <details open={g.items.length <= 2}>
+              <summary>
+                {g.items.length <= 2 ? 'Findings' : `All ${g.items.length} findings`}
+              </summary>
+              <FindingsTable items={g.items} />
+            </details>
+          </div>
+        ))}
         {notes.length > 0 && (
           <details>
             <summary>
               {plural(notes.length, 'informational note')}:{' '}
               {[...new Set(notes.map((n) => n.name))].join(', ')}
             </summary>
-            <ul css={{ margin: '6px 0 0', paddingLeft: 18, display: 'grid', gap: 6 }}>
-              {notes.map((f) => (
-                <li key={`${f.name}-${f.v.id}`}>
-                  <strong>{f.name}</strong>
-                  <SecurityCell vulnerabilities={[f.v]} data={vd} />
-                </li>
-              ))}
-            </ul>
+            <FindingsTable items={notes.map((n) => n.v)} />
           </details>
         )}
         <Muted>
@@ -488,7 +524,7 @@ export function InventoryPanel({
       </section>
 
       {inv.siteHealth.length > 0 && (
-        <div css={{ display: 'grid', gap: 3 }}>
+        <div id="site-health" css={{ display: 'grid', gap: 3 }}>
           <h3 css={{ fontSize: 13 }}>Site Health</h3>
           {inv.siteHealth.map((h) => (
             <span key={h.test} css={{ color: 'var(--red)' }}>
@@ -548,7 +584,11 @@ export function InventoryPanel({
           </div>
         </Row>
         {inv.muPlugins.known ? (
-          inv.muPlugins.value.length > 0 && (
+          inv.muPlugins.value.length === 0 ? (
+            <Muted css={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
+              <strong>Must-use plugins</strong> · None installed
+            </Muted>
+          ) : (
             <Row>
               <summary>
                 <strong>Must-use plugins</strong>
@@ -560,7 +600,7 @@ export function InventoryPanel({
           )
         ) : (
           <Muted css={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
-            Must-use plugins: {inv.muPlugins.reason}
+            <strong>Must-use plugins</strong> · {inv.muPlugins.reason}
           </Muted>
         )}
         <Row>

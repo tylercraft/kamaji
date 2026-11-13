@@ -2,6 +2,8 @@
 // whatever needs Tyler, each with a link to the section that has the evidence. A problem always
 // shows here, even when its section's details are closed.
 import styled from '@emotion/styled';
+import { RevealLink } from '../components/reveal';
+import type { Look } from '../siteAttention';
 import type { StatusLine } from '../siteStatus';
 import { Dot, Pill, Time } from '../components/ui';
 
@@ -104,27 +106,54 @@ export function HealthTiles({ lines }: { lines: StatusLine[] }) {
   );
 }
 
-/** The lines that need a look, with where their evidence is. */
-export function needsLook(lines: StatusLine[]): StatusLine[] {
-  return lines.filter((l) => l.tone === 'red' || l.tone === 'amber' || l.outOfDate);
+/** Each check's line in full: what was checked, what it found, when. */
+export function CheckDetails({ lines }: { lines: StatusLine[] }) {
+  return (
+    <details id="checks">
+      <summary>Check details</summary>
+      <dl
+        css={{
+          margin: '8px 0 0',
+          display: 'grid',
+          gridTemplateColumns: 'max-content minmax(0, 1fr)',
+          gap: '6px 16px',
+          fontSize: 12,
+          dt: { color: 'var(--muted)' },
+          dd: { margin: 0 },
+          '@media (max-width: 520px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+        }}
+      >
+        {lines.map((l) => (
+          <div key={l.label} css={{ display: 'contents' }}>
+            <dt>{l.label}</dt>
+            <dd>
+              {l.state}. {l.detail}
+              {l.at && (
+                <>
+                  {' '}
+                  Checked <Time iso={l.at} />
+                  {l.outOfDate && <span css={{ color: 'var(--amber)' }}> · out of date</span>}.
+                </>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
 }
 
-export function Attention({
-  lines,
-  where,
-}: {
-  lines: StatusLine[];
-  /** The section each line's evidence is in: an anchor and its name. */
-  where: Record<string, [string, string] | undefined>;
-}) {
-  if (lines.length === 0) return null;
+/** Things to act on, a line each, linked to the card that has the evidence. */
+export function Attention({ looks }: { looks: Look[] }) {
+  if (looks.length === 0) return null;
+  const red = looks.some((l) => l.tone === 'red');
   return (
     <section
       aria-labelledby="site-attention"
       css={{
         background: 'var(--panel)',
         border: '1px solid var(--line)',
-        borderLeft: '3px solid var(--amber)',
+        borderLeft: `3px solid var(--${red ? 'red' : 'amber'})`,
         borderRadius: 'var(--radius)',
         padding: '10px 14px',
         display: 'grid',
@@ -132,27 +161,31 @@ export function Attention({
       }}
     >
       <h2 id="site-attention" css={{ fontSize: 13 }}>
-        Needs a look ({lines.length})
+        Needs a look{' '}
+        <span css={{ color: 'var(--muted)', fontWeight: 400 }}>
+          · {looks.length} {looks.length === 1 ? 'item' : 'items'}
+        </span>
       </h2>
-      <ul css={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
-        {lines.map((l) => {
-          const to = where[l.label];
-          return (
-            <li key={l.label}>
-              <strong>{l.label}:</strong> {l.state}.{' '}
-              <span css={{ color: 'var(--muted)' }}>{l.detail}</span>
-              {l.outOfDate && l.tone !== 'red' && l.tone !== 'amber' && (
-                <span css={{ color: 'var(--amber)' }}> The check is out of date.</span>
-              )}
-              {to && (
-                <>
-                  {' '}
-                  <a href={`#${to[0]}`}>{to[1]}</a>
-                </>
-              )}
-            </li>
-          );
-        })}
+      <ul
+        css={{
+          margin: 0,
+          padding: 0,
+          listStyle: 'none',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+          gap: '4px 24px',
+        }}
+      >
+        {looks.map((l) => (
+          <li key={l.text} css={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span css={{ color: `var(--${l.tone})` }} aria-hidden="true">
+              <Dot />
+            </span>
+            <span>
+              {l.text} <RevealLink to={l.target}>{l.action}</RevealLink>
+            </span>
+          </li>
+        ))}
       </ul>
     </section>
   );
