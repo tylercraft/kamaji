@@ -325,6 +325,50 @@ function CrashList({ crashes }: { crashes: CrashGroup[] }) {
   );
 }
 
+/**
+ * The jobs in a line of counts, from what launchd and the crash log say: running, idle, not
+ * loaded, and how many Kamaji hasn't seen run yet. An idle job or an exit code of 0 isn't counted
+ * as a success; it's only what launchd reports.
+ */
+export function jobCounts(jobs: MacJob[], crashed: (job: MacJob) => number): string {
+  const n = (f: (j: MacJob) => boolean) => jobs.filter(f).length;
+  return [
+    `${plural(jobs.length, 'job')}`,
+    n((j) => Boolean(j.attention) || crashed(j) > 0) > 0 &&
+      `${n((j) => Boolean(j.attention) || crashed(j) > 0)} to look at`,
+    n((j) => j.state === 'running') > 0 && `${n((j) => j.state === 'running')} running`,
+    n((j) => j.state === 'idle') > 0 && `${n((j) => j.state === 'idle')} idle`,
+    n((j) => j.state === 'not-loaded') > 0 && `${n((j) => j.state === 'not-loaded')} not loaded`,
+    n((j) => j.lastRunAt === null) > 0 && `${n((j) => j.lastRunAt === null)} not seen running yet`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function JobTable({ jobs, crashCount }: { jobs: MacJob[]; crashCount: (job: MacJob) => number }) {
+  return (
+    <div css={{ overflowX: 'auto' }}>
+      <Table>
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">State</th>
+            <th scope="col">Last exit</th>
+            <th scope="col">Last run</th>
+            <th scope="col">Crashes (7 days)</th>
+            <th scope="col" aria-label="Details" />
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <JobRow key={job.label} job={job} crashes={crashCount(job)} />
+          ))}
+        </tbody>
+      </Table>
+    </div>
+  );
+}
+
 export function MacJobs({ health }: { health: MacHealth }) {
   const crashCount = (job: MacJob) =>
     health.crashes.filter((g) => g.job === job.label).reduce((n, g) => n + g.recent, 0);
@@ -334,36 +378,27 @@ export function MacJobs({ health }: { health: MacHealth }) {
       crashCount(b) - crashCount(a) ||
       a.name.localeCompare(b.name),
   );
+  const look = jobs.filter((j) => j.attention || crashCount(j) > 0);
   return (
     <Panel aria-labelledby="calcifer-jobs">
       <PanelTitle id="calcifer-jobs">Calcifer’s jobs on molcajete</PanelTitle>
+      <p css={{ margin: 0 }}>{jobCounts(jobs, crashCount)}</p>
       <Muted>
-        Logs and crash messages show only for jobs that never read mail or untrusted text.
+        Idle and an exit code are what launchd reports, not proof a run worked. Logs and crash
+        messages show only for jobs that never read mail or untrusted text.
       </Muted>
-      {health.crashes.length > 0 && (
-        <div css={{ margin: '12px 0' }}>
-          <CrashList crashes={health.crashes} />
-        </div>
+      {health.crashes.length > 0 && <CrashList crashes={health.crashes} />}
+      {look.length > 0 ? (
+        <JobTable jobs={look} crashCount={crashCount} />
+      ) : (
+        <Muted>No job needs a look.</Muted>
       )}
-      <div css={{ overflowX: 'auto' }}>
-        <Table>
-          <thead>
-            <tr>
-              <th scope="col">Job</th>
-              <th scope="col">State</th>
-              <th scope="col">Last exit</th>
-              <th scope="col">Last run</th>
-              <th scope="col">Crashes (7 days)</th>
-              <th scope="col" aria-label="Details" />
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <JobRow key={job.label} job={job} crashes={crashCount(job)} />
-            ))}
-          </tbody>
-        </Table>
-      </div>
+      <details>
+        <summary>All jobs ({jobs.length})</summary>
+        <div css={{ marginTop: 6 }}>
+          <JobTable jobs={jobs} crashCount={crashCount} />
+        </div>
+      </details>
     </Panel>
   );
 }
