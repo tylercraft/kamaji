@@ -2,13 +2,12 @@
 // approved (launchctl kickstart on the mini), it runs every approved batch, then exits. It holds
 // the update key, which the app never does: its Doppler config is `updater`, scoped to
 // ~/.kamaji-updater. One at a time: a second start while one runs exits at once.
-import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { careRequest } from '../care/client.js';
 import { loadCareKeys } from '../care/keys.js';
 import { realCheckers } from '../checks/sites.js';
 import { openDb } from '../db.js';
-import { craftishBackup } from './backup.js';
+import { backupConfig, craftishBackup } from './backup.js';
 import { releaseLock, takeLock } from './lock.js';
 import { runUpdater, type Send } from './run.js';
 
@@ -48,9 +47,6 @@ if (other !== undefined) {
   process.exit(0);
 }
 
-const craftish = db
-  .prepare("SELECT address FROM servers WHERE id = 'craftish' AND removed_at IS NULL")
-  .get();
 const controller = new AbortController();
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
@@ -73,15 +69,7 @@ try {
     send,
     homePage: realCheckers.homePage,
     worker,
-    backup: craftishBackup(
-      craftish
-        ? {
-            keyPath: env.KAMAJI_BACKUP_SSH_KEY ?? `${homedir()}/.ssh/kamaji-backup`,
-            knownHostsPath: env.KAMAJI_SSH_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji_known_hosts`,
-            host: String(craftish.address).replace(/^.*@/, ''),
-          }
-        : undefined,
-    ),
+    backup: craftishBackup(backupConfig(db, env)),
     now: Date.now,
     sleep: (ms, signal) => delay(ms, undefined, { signal }),
     signal: controller.signal,

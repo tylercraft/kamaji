@@ -64,8 +64,12 @@ export function isMajor(type: ComponentType, from: string, to: string): boolean 
   return type === 'core' ? a[0] !== b[0] || a[1] !== b[1] : a[0] !== b[0];
 }
 
-export function queue(db: Db): { items: QueueItem[]; sites: QueueSite[]; unknown: number } {
-  const sites = updatableSites(db);
+/** What's waiting, on every site Kamaji can update or, with `siteId`, on that one only. */
+export function queue(
+  db: Db,
+  siteId?: string,
+): { items: QueueItem[]; sites: QueueSite[]; unknown: number } {
+  const sites = updatableSites(db).filter((s) => siteId === undefined || s.id === siteId);
   const busy = new Set(
     db
       .prepare("SELECT site_id, type, item FROM batch_items WHERE state != 'done'")

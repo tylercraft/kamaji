@@ -14,6 +14,7 @@ import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { useLink, useRoute } from '../router';
 import { useResource } from '../useResource';
 import { ThemeToggle } from './ThemeToggle';
+import { Toasts } from './toast';
 import { Dot, Pill } from './ui';
 
 export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
@@ -298,6 +299,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </Health>
       </Top>
       <Main id="main">{children}</Main>
+      <Toasts />
     </>
   );
 }

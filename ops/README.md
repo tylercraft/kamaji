@@ -234,13 +234,19 @@ for N in KAMAJI_CARE_REPORT_KEY KAMAJI_WORKER_URL KAMAJI_WORKER_TOKEN; do [ "$(/
 /bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-updater.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-updater.plist
 ```
 
-10. Install the app's plist again, with `KAMAJI_UPDATER=launchd`, and restart the app with it:
+10. Stop the app and install its plist again, with `KAMAJI_UPDATER=launchd`:
 
 ```
-/bin/launchctl bootout gui/501/dev.craftish.kamaji && /bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji.plist
+/bin/launchctl bootout gui/501/dev.craftish.kamaji && /bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji.plist /Users/tylercraft/Library/LaunchAgents/
 ```
 
-11. Start the updater once by hand; with nothing approved it says so and exits (expect `nothing left to run`):
+11. Start it again, once launchd has let go of the old one (`bootout` returns before it has, and a `bootstrap` too soon fails with error 5):
+
+```
+until ! /bin/launchctl print gui/501/dev.craftish.kamaji > /dev/null 2>&1; do /bin/sleep 1; done && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji.plist
+```
+
+12. Start the updater once by hand; with nothing approved it says so and exits (expect `nothing left to run`):
 
 ```
 /bin/launchctl kickstart gui/501/dev.craftish.kamaji-updater && /bin/sleep 5 && /usr/bin/tail -n 3 /Users/tylercraft/Library/Logs/kamaji-updater.log
@@ -248,7 +254,7 @@ for N in KAMAJI_CARE_REPORT_KEY KAMAJI_WORKER_URL KAMAJI_WORKER_TOKEN; do [ "$(/
 
 ## craftish's database export
 
-Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. The updater uses it before each run on a craftish site; Tyler runs these steps with the updater's. They follow "craftish's report" above.
+Before Kamaji updates a site on craftish, it has craftish export that site's database (`server-export/README.md`), as the `kamaji-backup` user, at craftish's tailnet address. The updater uses it before each run on a craftish site, and the app uses the same key for a site page's "Back up now" (same user, same one command); both record what it answers in `backup_evidence`. Tyler runs these steps with the updater's. They follow "craftish's report" above.
 
 On the mini:
 

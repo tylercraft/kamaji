@@ -68,6 +68,13 @@ const dark = `
 `;
 
 const globalStyles = css`
+  /* Toasts (components/toast.tsx): the icon in the theme's green or red. */
+  [data-sonner-toast][data-type='success'] [data-icon] {
+    color: var(--green);
+  }
+  [data-sonner-toast][data-type='error'] [data-icon] {
+    color: var(--red);
+  }
   :root {
     ${light}
     color-scheme: light;

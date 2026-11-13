@@ -14,6 +14,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { Choices, Field, Form, FormError, PrimaryButton } from '../components/forms';
+import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
 
@@ -70,8 +71,8 @@ const SSH: Record<HostKind, string> = {
   other: 'Unknown for this host',
 };
 
-const BACKUPS: Record<BackupExpectation, string> = {
-  kamaji: 'Kamaji checks for a backup before updating',
+export const BACKUPS: Record<BackupExpectation, string> = {
+  kamaji: 'Kamaji exports the database on craftish first',
   host: 'Handled by the host',
   client: 'Handled by the client',
   tyler: 'Tyler confirms before each run',
@@ -130,7 +131,7 @@ export function Capabilities({
       </Fact>
       <Fact label="Updating">
         {caps.can_update ? (
-          'Yes, once M4 brings updates, and only what you approve'
+          'Yes: only what you approve under Updates'
         ) : (
           <span css={{ color: 'var(--amber)' }}>
             No: {caps.update_blockers.map((b) => BLOCKERS[b] ?? b).join('; ')}. The site stays
@@ -181,7 +182,11 @@ export function Capabilities({
   );
 }
 
-function useAction() {
+/**
+ * Runs a write and shows how it went. A failure always shows in the panel. With `toasts`, the
+ * result is a toast as well (for a save that changes nothing on the page).
+ */
+function useAction(toasts?: { saved: string; failed: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const run = async (
@@ -192,8 +197,16 @@ function useAction() {
     setError(null);
     const result = await action();
     setBusy(false);
-    if (!result.ok)
+    if (result.ok) {
+      if (toasts) saved(toasts.saved);
+    } else if (toasts) {
+      // In the panel too: a toast fades, and a failure has to stay until it's fixed.
+      const why = words[result.error ?? ''] ?? reason(result.error ?? '');
+      failed(`${toasts.failed}: ${why}.`);
+      setError(`${toasts.failed}: ${why}.`);
+    } else {
       setError(words[result.error ?? ''] ?? `Kamaji couldn’t do that (${result.error}).`);
+    }
     return result.ok;
   };
   return { busy, error, run };
@@ -303,6 +316,10 @@ export function InstallSteps({
   );
 }
 
+const CONFIGURE_WORDS: Record<string, string> = {
+  not_craftish: 'Kamaji’s own backup is the export on craftish, and this site isn’t hosted there',
+};
+
 /** Step 3: what to check on the home page, the backup expectation, and notifications. */
 export function ConfigureStep({
   detail,
@@ -312,7 +329,10 @@ export function ConfigureStep({
   reload: () => void;
 }) {
   const { site } = detail;
-  const { busy, error, run } = useAction();
+  const { busy, error, run } = useAction({
+    saved: `Saved ${site.name}’s settings`,
+    failed: 'Not saved',
+  });
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -322,7 +342,8 @@ export function ConfigureStep({
       backupExpectation: backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
     });
-    if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK))) reload();
+    if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK), CONFIGURE_WORDS))
+      reload();
   }
   return (
     <Panel aria-labelledby="configure">
@@ -344,17 +365,19 @@ export function ConfigureStep({
         </Field>
         <Choices>
           <legend>Backups</legend>
-          {(Object.entries(BACKUPS) as [BackupExpectation, string][]).map(([value, label]) => (
-            <label key={value}>
-              <input
-                type="radio"
-                name="backup"
-                value={value}
-                defaultChecked={detail.backupExpectation === value}
-              />
-              {label}
-            </label>
-          ))}
+          {(Object.entries(BACKUPS) as [BackupExpectation, string][])
+            .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
+            .map(([value, label]) => (
+              <label key={value}>
+                <input
+                  type="radio"
+                  name="backup"
+                  value={value}
+                  defaultChecked={detail.backupExpectation === value}
+                />
+                {label}
+              </label>
+            ))}
           <label>
             <input
               type="radio"

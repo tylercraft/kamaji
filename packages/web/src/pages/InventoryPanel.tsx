@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError } from '../components/forms';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Table, Time } from '../components/ui';
+import { saved } from '../components/toast';
 
 const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
@@ -170,6 +171,7 @@ export function InventoryPanel({
     );
     setBusy(false);
     if (!result.ok || !result.data.ok) setError('The report failed: see the line above.');
+    else saved('Report refreshed');
     reload();
   }
 

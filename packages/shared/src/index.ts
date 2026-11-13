@@ -719,3 +719,35 @@ export const ApproveResponse = z.discriminatedUnion('ok', [
   }),
 ]);
 export type ApproveResponse = z.infer<typeof ApproveResponse>;
+
+/**
+ * One piece of a site's backup evidence: an export Kamaji asked for (before a run, or "Back up
+ * now"), with what the export answered; or, for a run before Kamaji kept exports apart, the
+ * words the run recorded.
+ */
+export const BackupEntry = z.object({
+  recordedAt: Timestamp,
+  state: z.enum(['exported', 'failed', 'recorded']),
+  /** The run it was for, and when that run was approved; null for "Back up now". */
+  batchId: z.string().nullable(),
+  runApprovedAt: Timestamp.nullable(),
+  /** The export's own time, size and SHA-256, as it answered. */
+  exportedAt: Timestamp.nullable(),
+  bytes: z.number().int().nullable(),
+  sha256: z.string().nullable(),
+  words: z.string(),
+});
+export type BackupEntry = z.infer<typeof BackupEntry>;
+
+export const SiteBackupsResponse = z.object({
+  backupExpectation: BackupExpectation.nullable(),
+  /** Whether "Back up now" applies: a site hosted on craftish. */
+  canExport: z.boolean(),
+  /** When this Kamaji started a "Back up now" still going, or null. */
+  exporting: Timestamp.nullable(),
+  /** The newest export, else the newest words a run recorded. */
+  latest: BackupEntry.nullable(),
+  /** Newest first. */
+  history: z.array(BackupEntry),
+});
+export type SiteBackupsResponse = z.infer<typeof SiteBackupsResponse>;

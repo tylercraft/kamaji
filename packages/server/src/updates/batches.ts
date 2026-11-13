@@ -162,17 +162,28 @@ function siteName(db: Db, id: string): string {
   return String(db.prepare('SELECT name FROM sites WHERE id = ?').get(id)?.name ?? id);
 }
 
-/** The most recent batches, newest first. */
-export function batchViews(db: Db, limit = 10): BatchView[] {
-  const batches = db.prepare('SELECT * FROM batches ORDER BY approved_at DESC LIMIT ?').all(limit);
+/**
+ * The most recent batches, newest first. With `siteId`, only the batches that site was in, and
+ * only its part of each.
+ */
+export function batchViews(db: Db, limit = 10, siteId?: string): BatchView[] {
+  const batches =
+    siteId === undefined
+      ? db.prepare('SELECT * FROM batches ORDER BY approved_at DESC LIMIT ?').all(limit)
+      : db
+          .prepare(
+            `SELECT * FROM batches WHERE id IN (SELECT batch_id FROM batch_sites WHERE site_id = ?)
+             ORDER BY approved_at DESC LIMIT ?`,
+          )
+          .all(siteId, limit);
   return batches.map((b) => {
     const id = String(b.id);
     const sites = db
       .prepare(
         `SELECT bs.*, s.name FROM batch_sites bs JOIN sites s ON s.id = bs.site_id
-         WHERE bs.batch_id = ? ORDER BY bs.position`,
+         WHERE bs.batch_id = ? AND (? IS NULL OR bs.site_id = ?) ORDER BY bs.position`,
       )
-      .all(id);
+      .all(id, siteId ?? null, siteId ?? null);
     return {
       id,
       approvedAt: iso(Number(b.approved_at)),

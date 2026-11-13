@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
+import { saved } from '../components/toast';
 import {
   Button,
   Dot,
@@ -29,9 +30,7 @@ import {
   type Tone,
 } from '../components/ui';
 import { useResource } from '../useResource';
-
-const key = (i: { siteId: string; type: string; item: string }) =>
-  `${i.siteId}\u0000${i.type}\u0000${i.item}`;
+import { bySite, byUpdate, itemKey as key, needsBackup, type Grouping } from '../updatesView';
 
 const BACKUP_WORDS: Record<BackupKind, string> = {
   kamaji: 'Kamaji exports the database on craftish first',
@@ -56,14 +55,80 @@ const STATE_WORDS = {
   held: 'Held',
 } as const;
 
-/** The queue grouped by component and version: "Akismet 5.3 → 5.7.2, 2 sites". */
-function groups(items: QueueItem[]) {
-  const by = new Map<string, QueueItem[]>();
-  for (const i of items) {
-    const g = `${i.type}\u0000${i.item}\u0000${i.from}\u0000${i.to}`;
-    by.set(g, [...(by.get(g) ?? []), i]);
-  }
-  return [...by.values()];
+export function Flags({ item }: { item: QueueItem }) {
+  return (
+    <>
+      {item.security && (
+        <Pill tone="red">
+          <Dot /> Security fix
+        </Pill>
+      )}{' '}
+      {item.major && (
+        <Pill tone="amber">
+          <Dot /> Major
+        </Pill>
+      )}
+    </>
+  );
+}
+
+/** One row per site, with a box to tick all of that site's updates at once. */
+function SiteRows({
+  items,
+  ticked,
+  toggle,
+  tickAll,
+}: {
+  items: QueueItem[];
+  ticked: Set<string>;
+  toggle: (k: string) => void;
+  tickAll: (items: QueueItem[], on: boolean) => void;
+}) {
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <th scope="col">Site</th>
+          <th scope="col">Updates</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bySite(items).map((g) => {
+          const first = g[0]!;
+          const all = g.every((i) => ticked.has(key(i)));
+          return (
+            <tr key={first.siteId}>
+              <td>
+                <label css={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input type="checkbox" checked={all} onChange={() => tickAll(g, !all)} />
+                  <strong>{first.siteName}</strong>
+                </label>
+                <Muted>
+                  All {g.length} {g.length === 1 ? 'update' : 'updates'}
+                </Muted>
+              </td>
+              <td>
+                <div css={{ display: 'grid', gap: 4 }}>
+                  {g.map((i) => (
+                    <label key={key(i)} css={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={ticked.has(key(i))}
+                        onChange={() => toggle(key(i))}
+                      />
+                      <span>
+                        {i.name} {i.from} → {i.to} <Flags item={i} />
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </Table>
+  );
 }
 
 function Queue({
@@ -81,6 +146,15 @@ function Queue({
     else next.add(k);
     setTicked(next);
   };
+  const tickAll = (items: QueueItem[], on: boolean) => {
+    const next = new Set(ticked);
+    for (const i of items) {
+      if (on) next.add(key(i));
+      else next.delete(key(i));
+    }
+    setTicked(next);
+  };
+  const [grouping, setGrouping] = useState<Grouping>('update');
   const routine = data.items.filter((i) => !i.major);
   return (
     <Panel aria-labelledby="queue">
@@ -102,55 +176,71 @@ function Queue({
             </Button>
             <Muted>Major versions are never routine. Security fixes come first.</Muted>
           </div>
+          <div role="group" aria-label="Group by" css={{ display: 'flex', gap: 6 }}>
+            {(
+              [
+                ['update', 'By update'],
+                ['site', 'By site'],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                aria-pressed={grouping === value}
+                onClick={() => setGrouping(value)}
+                css={
+                  grouping === value
+                    ? { borderColor: 'var(--copper)', color: 'var(--copper)' }
+                    : undefined
+                }
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
           <div css={{ overflowX: 'auto' }}>
-            <Table>
-              <thead>
-                <tr>
-                  <th scope="col">Update</th>
-                  <th scope="col">Sites</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groups(data.items).map((g) => {
-                  const first = g[0]!;
-                  return (
-                    <tr key={key(first) + first.to}>
-                      <td>
-                        {first.name} {first.from} → {first.to}{' '}
-                        {first.security && (
-                          <Pill tone="red">
-                            <Dot /> Security fix
-                          </Pill>
-                        )}{' '}
-                        {first.major && (
-                          <Pill tone="amber">
-                            <Dot /> Major
-                          </Pill>
-                        )}
-                        <Muted>{first.type === 'core' ? 'WordPress' : first.item}</Muted>
-                      </td>
-                      <td>
-                        <div css={{ display: 'grid', gap: 4 }}>
-                          {g.map((i) => (
-                            <label
-                              key={key(i)}
-                              css={{ display: 'flex', gap: 6, alignItems: 'center' }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={ticked.has(key(i))}
-                                onChange={() => toggle(key(i))}
-                              />
-                              {i.siteName}
-                            </label>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
+            {grouping === 'site' ? (
+              <SiteRows items={data.items} ticked={ticked} toggle={toggle} tickAll={tickAll} />
+            ) : (
+              <Table>
+                <thead>
+                  <tr>
+                    <th scope="col">Update</th>
+                    <th scope="col">Sites</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byUpdate(data.items).map((g) => {
+                    const first = g[0]!;
+                    return (
+                      <tr key={key(first) + first.to}>
+                        <td>
+                          {first.name} {first.from} → {first.to} <Flags item={first} />
+                          <Muted>{first.type === 'core' ? 'WordPress' : first.item}</Muted>
+                        </td>
+                        <td>
+                          <div css={{ display: 'grid', gap: 4 }}>
+                            {g.map((i) => (
+                              <label
+                                key={key(i)}
+                                css={{ display: 'flex', gap: 6, alignItems: 'center' }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={ticked.has(key(i))}
+                                  onChange={() => toggle(key(i))}
+                                />
+                                {i.siteName}
+                              </label>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
           </div>
         </>
       )}
@@ -169,14 +259,31 @@ function Queue({
   );
 }
 
-function Review({
+function Review(props: Parameters<typeof ReviewBody>[0]) {
+  const chosen = props.data.items.some((i) => props.ticked.has(key(i)));
+  if (!chosen) return null;
+  return (
+    <Panel aria-labelledby="review">
+      <PanelTitle id="review">Review</PanelTitle>
+      <ReviewBody {...props} />
+    </Panel>
+  );
+}
+
+/**
+ * The ticked updates by site, each site's backup, and Approve, bound to exactly that scope: here
+ * and on a site's page. `runsAt` says where the run shows once approved.
+ */
+export function ReviewBody({
   data,
   ticked,
   done,
+  runsAt = 'under Runs',
 }: {
   data: UpdatesResponse;
   ticked: Set<string>;
   done: () => void;
+  runsAt?: string;
 }) {
   const chosen = data.items.filter((i) => ticked.has(key(i)));
   const siteIds = [...new Set(chosen.map((i) => i.siteId))];
@@ -187,6 +294,7 @@ function Review({
   const oneSiteFirst = oneFirst ?? siteIds.length >= 3;
   if (chosen.length === 0) return null;
   const site = (id: string) => data.sites.find((s) => s.siteId === id)!;
+  const waitingOn = needsBackup(siteIds, data.sites, confirmed);
 
   async function approve() {
     setBusy(true);
@@ -206,20 +314,26 @@ function Review({
       return;
     }
     if (!result.data.ok) {
+      // A backup still to confirm keeps the ticks, so it can be confirmed here; changed versions
+      // reload the queue.
+      if (result.data.changed.length === 0 && result.data.needsBackup.length > 0) {
+        setError('Confirm the backup for each site that needs it. Nothing was started.');
+        return;
+      }
       setError(
-        result.data.needsBackup.length > 0
-          ? 'Confirm the backup for each site that needs it.'
-          : 'Some versions changed since this page loaded. Nothing was started; check the queue again.',
+        'Some versions changed since this page loaded. Nothing was started; check the queue again.',
       );
       done();
       return;
     }
+    saved(
+      `Approved ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}: follow it ${runsAt}`,
+    );
     done();
   }
 
   return (
-    <Panel aria-labelledby="review">
-      <PanelTitle id="review">Review</PanelTitle>
+    <>
       {siteIds.map((id) => {
         const s = site(id);
         const items = chosen.filter((i) => i.siteId === id);
@@ -264,13 +378,26 @@ function Review({
         Kamaji refreshes these sites first, checks each one before and after every update, and holds
         the rest on a site at the first problem.
       </Muted>
-      <PrimaryButton type="button" disabled={busy} onClick={approve} css={{ justifySelf: 'start' }}>
+      {waitingOn.length > 0 && (
+        <Muted id="approve-waits" role="status" css={{ color: 'var(--amber)' }}>
+          Approve waits for the backup: tick “I confirm there’s a backup” for{' '}
+          {waitingOn.map((s) => s.siteName).join(', ')}, or set its backup under Configure on the
+          site’s page.
+        </Muted>
+      )}
+      <PrimaryButton
+        type="button"
+        disabled={busy || waitingOn.length > 0}
+        aria-describedby={waitingOn.length > 0 ? 'approve-waits' : undefined}
+        onClick={approve}
+        css={{ justifySelf: 'start' }}
+      >
         {busy
           ? 'Checking the sites…'
           : `Approve and run ${chosen.length} ${chosen.length === 1 ? 'update' : 'updates'} on ${siteIds.length} ${siteIds.length === 1 ? 'site' : 'sites'}`}
       </PrimaryButton>
       {error && <FormError>{error}</FormError>}
-    </Panel>
+    </>
   );
 }
 
@@ -317,6 +444,54 @@ function HeldActions({
   );
 }
 
+/** One site's part of a run: its state, backup, each update's outcome, and a held site's options. */
+export function RunSite({
+  batch: b,
+  site: s,
+  reload,
+}: {
+  batch: BatchView;
+  site: BatchSiteView;
+  reload: () => void;
+}) {
+  return (
+    <div css={{ display: 'grid', gap: 6 }}>
+      <strong>
+        {s.siteName}{' '}
+        <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
+          <Dot /> {STATE_WORDS[s.state]}
+        </Pill>
+      </strong>
+      {s.backup && <Muted>Backup: {s.backup}</Muted>}
+      {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
+      <div css={{ overflowX: 'auto' }}>
+        <Table>
+          <tbody>
+            {s.items.map((i) => (
+              <tr key={i.id}>
+                <td>
+                  {i.name} {i.from} → {i.to}
+                </td>
+                <td>
+                  {i.outcome ? (
+                    <Pill tone={OUTCOMES[i.outcome][1]}>
+                      <Dot /> {OUTCOMES[i.outcome][0]}
+                    </Pill>
+                  ) : (
+                    <Muted>{STATE_WORDS[i.state]}</Muted>
+                  )}
+                  {i.detail && <Muted>{i.detail}</Muted>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+      {s.state === 'held' && <HeldActions batch={b} site={s} reload={reload} />}
+    </div>
+  );
+}
+
 function Batches({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
   if (batches.length === 0) return null;
   return (
@@ -329,40 +504,7 @@ function Batches({ batches, reload }: { batches: BatchView[]; reload: () => void
             {b.state === 'finished' ? 'Finished' : b.state === 'running' ? 'Running' : 'Starting'}
           </Muted>
           {b.sites.map((s) => (
-            <div key={s.siteId} css={{ display: 'grid', gap: 6 }}>
-              <strong>
-                {s.siteName}{' '}
-                <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
-                  <Dot /> {STATE_WORDS[s.state]}
-                </Pill>
-              </strong>
-              {s.backup && <Muted>Backup: {s.backup}</Muted>}
-              {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
-              <div css={{ overflowX: 'auto' }}>
-                <Table>
-                  <tbody>
-                    {s.items.map((i) => (
-                      <tr key={i.id}>
-                        <td>
-                          {i.name} {i.from} → {i.to}
-                        </td>
-                        <td>
-                          {i.outcome ? (
-                            <Pill tone={OUTCOMES[i.outcome][1]}>
-                              <Dot /> {OUTCOMES[i.outcome][0]}
-                            </Pill>
-                          ) : (
-                            <Muted>{STATE_WORDS[i.state]}</Muted>
-                          )}
-                          {i.detail && <Muted>{i.detail}</Muted>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-              {s.state === 'held' && <HeldActions batch={b} site={s} reload={reload} />}
-            </div>
+            <RunSite key={s.siteId} batch={b} site={s} reload={reload} />
           ))}
         </div>
       ))}

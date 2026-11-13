@@ -10,6 +10,7 @@ import { recordObservation } from '../observations.js';
 import { testDb } from '../testing.js';
 import { approveBatch, batchViews, carryOn } from '../updates/batches.js';
 import { queue } from '../updates/queue.js';
+import { backupHistory } from '../backups/evidence.js';
 import { runUpdater, type UpdaterDeps } from './run.js';
 
 const REPORT = CareReport.parse(
@@ -277,6 +278,40 @@ describe('the queue and approval', () => {
   });
 });
 
+describe('one site’s updates', () => {
+  it('narrows the queue to the site, and the runs to its latest, with only its part', async () => {
+    const { db, site } = setup();
+    const TWO = 'two.test';
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, backup_expectation, expected_text, created_at)
+       VALUES (?, 'Two', 'https://two.test/', 'craftish', 'connected', 'done', 'host', 'Two', 0)`,
+    ).run(TWO);
+    recordObservation(db, {
+      resourceType: 'site',
+      resourceId: TWO,
+      check: 'hello',
+      source: 'plugin',
+      at: T,
+      ok: true,
+      value: { ok: true, hello: site.hello() },
+    });
+    storeReport(db, { id: TWO, name: 'Two' }, CareReport.parse(site.report()), T);
+
+    const two = queue(db, TWO);
+    expect(two.sites.map((s) => s.siteId)).toEqual([TWO]);
+    expect(two.items.length).toBeGreaterThan(0);
+    expect(two.items.every((i) => i.siteId === TWO)).toBe(true);
+    expect(batchViews(db, 1, TWO)).toEqual([]);
+
+    expect((await approve(db)).ok).toBe(true);
+    expect(batchViews(db)[0]!.sites.map((s) => s.siteId)).toEqual([SITE, TWO]);
+    const latest = batchViews(db, 1, TWO);
+    expect(latest).toHaveLength(1);
+    expect(latest[0]!.sites.map((s) => s.siteId)).toEqual([TWO]);
+    expect(queue(db, TWO).items).toEqual([]);
+  });
+});
+
 describe('the updater', () => {
   it('runs core first, then each component, with checks after each, inside a pause on both paths', async () => {
     const { db, site, deps, worker, pausedDuring } = setup();
@@ -428,6 +463,24 @@ describe('the updater', () => {
       state: 'done',
       backup: expect.stringMatching(/^Tyler carried on without fresh backup evidence/),
     });
+    // The failed export is kept as evidence, and the carry-on shows in the history beside it.
+    expect(backupHistory(db, SITE).map((e) => [e.state, e.batchId])).toEqual([
+      ['failed', view.id],
+      ['recorded', view.id],
+    ]);
+  });
+
+  it('keeps what a good export answered, apart, for the site’s Backups', async () => {
+    const { db, deps } = setup('kamaji');
+    await approve(db);
+    const answer = { at: '2026-11-12T00:00:00Z', bytes: 4096, sha256: 'b'.repeat(64) };
+    await runUpdater({
+      ...deps(),
+      backup: async () => ({ ok: true, words: 'Kamaji exported the database on craftish', answer }),
+    });
+    const [entry] = backupHistory(db, SITE);
+    expect(entry).toMatchObject({ state: 'exported', batchId: batchViews(db)[0]!.id, bytes: 4096 });
+    expect(backupHistory(db, SITE)).toHaveLength(1);
   });
 
   it('never updates a site already failing its checks', async () => {
