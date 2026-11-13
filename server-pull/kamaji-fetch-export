@@ -1,0 +1,19 @@
+#!/bin/bash
+# kamaji-fetch-export: the forced command of Kamaji's download key on craftish (README.md). Takes
+# "<site> <time>" from the SSH command Kamaji sends, never a path: a plain domain name and an
+# export's time as db-export names it (20261113T004147Z). Anything else is refused here, before
+# sudo. Then streams that one export as www-data through one sudo rule, where the site is checked
+# against the export allowlist again.
+set -u
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+read -r site at extra <<<"${SSH_ORIGINAL_COMMAND:-}"
+if [[ -n ${extra:-} ]] || ! [[ ${site:-} =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+  printf '{"format":1,"ok":false,"problem":"not a site name"}\n'
+  exit 2
+fi
+if ! [[ ${at:-} =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+  printf '{"format":1,"ok":false,"problem":"not an export time"}\n'
+  exit 2
+fi
+exec sudo -n -u www-data /usr/local/lib/kamaji/fetch-export "$site" "$at"

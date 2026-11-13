@@ -1,0 +1,22 @@
+#!/bin/bash
+# fetch-export: one database export, as db-export made it, written to stdout for Kamaji's
+# download. Installed at /usr/local/lib/kamaji/fetch-export, owned by root, and run only as
+# www-data through the one sudo rule kamaji-fetch-export uses (README.md). The site must be a line
+# of /etc/kamaji/db-export.sites. Prints the gzip, or one JSON line saying why not.
+set -u -o pipefail
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+fail() {
+  printf '{"format":1,"ok":false,"problem":"%s"}\n' "$1"
+  exit "${2:-1}"
+}
+
+site=${1:-}
+at=${2:-}
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail 'not a site name' 2
+[[ $at =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fail 'not an export time' 2
+grep -qxF -- "$site" /etc/kamaji/db-export.sites 2>/dev/null || fail 'not on the allowlist' 2
+file=/var/backups/kamaji/$site/$at.sql.gz
+# A plain file only: never a link, whatever made it.
+[ -f "$file" ] && [ ! -L "$file" ] || fail 'that export is gone: craftish keeps them 14 days' 3
+exec cat -- "$file"
