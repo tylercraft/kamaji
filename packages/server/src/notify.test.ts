@@ -138,6 +138,35 @@ describe('sendDigest', () => {
     ]);
   });
 
+  it('lists a nudge like stale updates once, then again only 30 days on if still open', async () => {
+    const db = testDb();
+    const { sent, discord } = outbox();
+    const day = 1440 * MIN;
+    const stale = {
+      resourceType: 'server',
+      resourceId: 'craftish',
+      kind: 'stale-updates',
+    } as const;
+    const cert = { resourceType: 'site', resourceId: 'a.test', kind: 'certificate' } as const;
+    raiseIssue(db, morning, { ...stale, severity: 'normal', summary: 'craftish: 24 waiting' });
+    raiseIssue(db, morning, { ...cert, severity: 'normal', summary: 'a’s certificate: 12 days' });
+    for (let d = 0; d <= 31; d++) await sendDigest(db, morning + d * day, discord, options);
+    const listed = (line: string) => sent.filter((m) => m.includes(line)).length;
+    expect(listed('a’s certificate')).toBe(32);
+    expect(listed('craftish: 24 waiting')).toBe(2);
+    expect(sent[30]).toContain('craftish: 24 waiting');
+
+    // Resolved and back again: a new issue, listed the next morning.
+    clearIssue(db, morning + 32 * day, stale, 'craftish is up to date');
+    raiseIssue(db, morning + 32 * day, {
+      ...stale,
+      severity: 'normal',
+      summary: 'craftish: 21 waiting',
+    });
+    await sendDigest(db, morning + 33 * day, discord, options);
+    expect(sent.at(-1)).toContain('craftish: 21 waiting');
+  });
+
   it('works in Christchurch time', () => {
     expect(localParts(morning)).toEqual({ day: '2026-11-10', time: '07:31' });
   });

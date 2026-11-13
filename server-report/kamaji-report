@@ -4,8 +4,9 @@
 # (README.md), as an unprivileged user with no sudo. It reads; it never changes anything, and
 # it takes no input: anything the SSH client asks to run is ignored.
 #
-# Format version 1. Kamaji parses it with packages/server/src/checks/serverReport.ts; change
-# both together, and bump "format" if a field changes meaning.
+# Format version 2 (TY-167: each upgradable package with its versions and origin, and since when
+# a restart has been pending). Kamaji parses it with packages/server/src/checks/serverReport.ts,
+# which still reads format 1; change both together, and bump "format" if a field changes meaning.
 set -u
 export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -36,20 +37,78 @@ num() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] && printf '%s' "$1" || printf 'null'; }
 
 os_field() { (. /etc/os-release 2>/dev/null && eval "printf '%s' \"\${$1:-}\""); }
 
+# BEGIN upgradable: the functions serverReport.test.ts runs against a real `apt list --upgradable`
+# (packages/server/src/checks/fixtures/apt-upgradable.craftish.txt). Lines look like
+#   libc6/noble-security 2.39-0ubuntu8.12 amd64 [upgradable from: 2.39-0ubuntu8.9]
+# with one or more suites, comma-separated. Security means a -security suite that isn't Ubuntu
+# Pro's ESM (-apps-security, -infra-security), which only ever counts as information.
+UPGRADABLE_MAX=300
+
+# One row per package: "<security 0|1> <esm 0|1> <name> <suites> <to> <from>".
+upgradable_rows() {
+  local line name suites to from sec esm s list
+  local re='^([^/ ]+)/([^ ]+) ([^ ]+) [^ ]+ \[upgradable from: ([^]]+)\]$'
+  while IFS= read -r line; do
+    [[ $line =~ $re ]] || continue
+    name=${BASH_REMATCH[1]}
+    suites=${BASH_REMATCH[2]}
+    to=${BASH_REMATCH[3]}
+    from=${BASH_REMATCH[4]}
+    sec=0
+    esm=0
+    IFS=, read -r -a list <<<"$suites"
+    for s in "${list[@]}"; do
+      if [[ $s =~ esm|-apps-|-infra- ]]; then
+        esm=1
+      elif [[ $s == *-security ]]; then
+        sec=1
+      fi
+    done
+    printf '%s %s %s %s %s %s\n' "$sec" "$esm" "$name" "$suites" "$to" "$from"
+  done
+}
+
+# The "upgradable" fields of the report from `apt list --upgradable` on stdin: security first,
+# at most UPGRADABLE_MAX, with the full count.
+upgradable_json() {
+  local rows total n=0 sec esm name suites to from
+  rows=$(upgradable_rows | sort -k1,1r -k3,3)
+  total=$(printf '%s\n' "$rows" | grep -c .)
+  printf '"upgradable":['
+  while read -r sec esm name suites to from; do
+    [ -n "$name" ] || continue
+    n=$((n + 1))
+    [ "$n" -le "$UPGRADABLE_MAX" ] || break
+    [ "$n" -eq 1 ] || printf ','
+    printf '{"name":%s,"from":%s,"to":%s,"suites":%s,"security":%s,"esm":%s}' \
+      "$(js "$name")" "$(js "$from")" "$(js "$to")" \
+      "$(printf '%s\n' "${suites//,/$'\n'}" | lines)" \
+      "$([ "$sec" = 1 ] && echo true || echo false)" "$([ "$esm" = 1 ] && echo true || echo false)"
+  done <<<"$rows"
+  printf '],"upgradableTotal":%s,"truncated":%s' "$total" \
+    "$([ "$total" -gt "$UPGRADABLE_MAX" ] && echo true || echo false)"
+}
+# END upgradable
+
 # Pending packages from apt's cached lists (unattended-upgrades and apt's daily timer refresh
-# them; this never runs apt update). Security means from a -security pocket, ESM included.
-upgradable=$(apt list --upgradable 2>/dev/null | sed -n 's|^\([^/]*\)/\([^ ]*\) .*|\1 \2|p')
+# them; this never runs apt update). The name lists are format 1's, kept for older Kamajis:
+# there, security is any -security pocket, ESM included.
+apt_list=$(apt list --upgradable 2>/dev/null)
+upgradable=$(printf '%s\n' "$apt_list" | sed -n 's|^\([^/]*\)/\([^ ]*\) .*|\1 \2|p')
 security=$(printf '%s\n' "$upgradable" | awk '$2 ~ /-security/ {print $1}')
 other=$(printf '%s\n' "$upgradable" | awk 'NF && $2 !~ /-security/ {print $1}')
 esm=$(printf '%s\n' "$upgradable" | awk '$2 ~ /esm|-apps-|-infra-/ {print $1}')
 
 if [ -f /var/run/reboot-required ]; then reboot=true; else reboot=false; fi
+# When the restart became pending: the flag file's time, which anyone can read.
+reboot_since=$(stat -c %Y /var/run/reboot-required 2>/dev/null)
+reboot_since=$([[ $reboot_since =~ ^[0-9]+$ ]] && date -u -d "@$reboot_since" +%Y-%m-%dT%H:%M:%SZ)
 reboot_pkgs=$(cat /var/run/reboot-required.pkgs 2>/dev/null | sort -u)
 
 failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null | awk '{print $1}')
 
 services=""
-for unit in nginx mariadb php8.3-fpm tailscaled fail2ban unattended-upgrades; do
+for unit in nginx apache2 mariadb php8.3-fpm tailscaled fail2ban unattended-upgrades; do
   state=$(systemctl is-active "$unit" 2>/dev/null)
   services+="${services:+,}$(js "$unit"):$(js "${state:-unknown}")"
 done
@@ -70,7 +129,7 @@ uptime_s=$(awk '{print int($1)}' /proc/uptime)
 php=$(ls -1 /etc/php 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | sort -V)
 
 printf '{'
-printf '"format":1,'
+printf '"format":2,'
 printf '"host":%s,' "$(js "$(hostname)")"
 printf '"generatedAt":%s,' "$(js "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
 printf '"os":{"id":%s,"version":%s,"codename":%s,"name":%s},' \
@@ -81,7 +140,9 @@ printf '"uptimeSeconds":%s,' "$(num "$uptime_s")"
 printf '"packages":{"security":%s,"other":%s,"esm":%s},' \
   "$(printf '%s\n' "$security" | lines)" "$(printf '%s\n' "$other" | lines)" \
   "$(printf '%s\n' "$esm" | lines)"
+printf '%s,' "$(printf '%s\n' "$apt_list" | upgradable_json)"
 printf '"rebootRequired":%s,"rebootPackages":%s,' "$reboot" "$(printf '%s\n' "$reboot_pkgs" | lines)"
+printf '"rebootRequiredSince":%s,' "$([ -n "$reboot_since" ] && js "$reboot_since" || echo null)"
 printf '"failedUnits":%s,' "$(printf '%s\n' "$failed" | lines)"
 printf '"services":{%s},' "$services"
 printf '"disks":[%s],' "$disks"

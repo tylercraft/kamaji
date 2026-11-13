@@ -85,7 +85,7 @@ describe('kamaji-report', () => {
 describe('checkServers', () => {
   it('waits a day before calling security updates a problem', async () => {
     const db = testDb({ seed: true });
-    const waiting = ok({ packages: { security: ['openssl'], other: [], esm: [] } });
+    const waiting = ok({ packages: { security: ['libc6'], other: [], esm: [] } });
     await run(db, Array(24).fill(waiting));
     expect(issue(db, 'security-updates')).toBe(null);
     await run(db, [ok(), ...Array(25).fill(waiting)]);

@@ -126,6 +126,14 @@ export function localParts(at: number): { day: string; time: string } {
 const DIGEST = 'digest';
 
 /**
+ * Kinds the digest lists once, then again only while still open this long after: a nudge, not a
+ * daily nag (Tyler, 2026-11-13). Every other kind is listed each morning it's open.
+ */
+export const DIGEST_REPEAT: Record<string, number> = {
+  'stale-updates': 30 * REMINDER_MS,
+};
+
+/**
  * The morning digest: once a day from digestAt, the issues that don't warrant a ping. Nothing to
  * say, nothing sent. Returns whether it sent one.
  */
@@ -142,18 +150,25 @@ export async function sendDigest(
 
   const open = db
     .prepare(
-      `SELECT summary FROM issues WHERE resolved_at IS NULL AND severity = 'normal'
-              ORDER BY first_seen_at`,
+      `SELECT id, kind, summary, digested_at FROM issues
+       WHERE resolved_at IS NULL AND severity = 'normal' ORDER BY first_seen_at`,
     )
     .all()
-    .map((r) => String(r.summary));
+    .filter((r) => {
+      const repeat = DIGEST_REPEAT[String(r.kind)];
+      return (
+        repeat === undefined || r.digested_at === null || now - Number(r.digested_at) >= repeat
+      );
+    });
   if (open.length > 0) {
     const message = [
       `**Kamaji, this morning:** ${open.length} to look at when you have a moment`,
-      ...open.map((s) => `- ${s}`),
+      ...open.map((r) => `- ${String(r.summary)}`),
       `<${options.kamajiUrl}>`,
     ].join('\n');
     if (!(await discord.send(message, options.signal))) return false;
+    const mark = db.prepare('UPDATE issues SET digested_at = ? WHERE id = ?');
+    for (const r of open) mark.run(now, String(r.id));
   }
   writeState(db, DIGEST, { day, sent: open.length }, now);
   return open.length > 0;
