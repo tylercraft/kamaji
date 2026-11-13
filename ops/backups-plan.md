@@ -108,7 +108,7 @@ Full commands, with checks between them, are in `ops/README.md`, "Whole-site bac
 10. [mini] Make the pull key, `~/.ssh/kamaji-pull` (no passphrase).
 11. [mini] Make the download key, `~/.ssh/kamaji-fetch` (no passphrase).
 12. [mini] Show both public keys, to paste on craftish.
-13. [craftish] Add the `kamaji-pull` system user, with no password and no shell.
+13. [craftish] Add the `kamaji-pull` system user, with no password (`/bin/sh` only for the forced commands).
 14. [craftish] Install the four `server-pull/` scripts, owned by root (scp'd up from the laptop).
 15. [craftish] Add the sudo rule (`kamaji-pull` → the two helpers as `www-data`, nothing else), checked with `visudo -c`.
 16. [craftish] Put the two `authorized_keys` lines for `kamaji-pull` in place.
