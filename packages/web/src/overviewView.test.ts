@@ -1,6 +1,6 @@
 import type { BatchView, Issue } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { groupIssues, recentOutcomes } from './overviewView';
+import { groupIssues, recentOutcomes, siteNote, withoutName } from './overviewView';
 
 const site = (id: string) => ({
   siteId: id,
@@ -96,5 +96,45 @@ describe('findings by resource', () => {
       ['fl', 1],
       ['minton', 2],
     ]);
+  });
+});
+
+describe('Overview wording', () => {
+  it('drops the site name its group is headed by', () => {
+    expect(withoutName('Minton Homes runs MySQL 5.7, past end of support', 'Minton Homes')).toBe(
+      'Runs MySQL 5.7, past end of support',
+    );
+    expect(
+      withoutName('First & Last Records’ whole-site backup failed', 'First & Last Records'),
+    ).toBe('Whole-site backup failed');
+    expect(withoutName('craftish: security updates waiting', 'craftish')).toBe(
+      'Security updates waiting',
+    );
+    expect(withoutName('Something else', 'Minton Homes')).toBe('Something else');
+  });
+
+  it('says which counts overlap', () => {
+    expect(
+      siteNote({
+        total: 14,
+        connected: 2,
+        monitoring: 12,
+        paused: 1,
+        unfinished: 0,
+        down: 0,
+        unchecked: 0,
+      }),
+    ).toBe('2 connected · 12 monitoring only · including 1 paused');
+    expect(
+      siteNote({
+        total: 3,
+        connected: 1,
+        monitoring: 2,
+        paused: 0,
+        unfinished: 1,
+        down: 1,
+        unchecked: 0,
+      }),
+    ).toBe('1 connected · 2 monitoring only · including 1 with setup unfinished · 1 down');
   });
 });

@@ -23,7 +23,7 @@ import {
   Time,
 } from '../components/ui';
 import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
-import { groupIssues, recentOutcomes, type Outcome } from '../overviewView';
+import { groupIssues, recentOutcomes, siteNote, withoutName, type Outcome } from '../overviewView';
 import { useLink } from '../router';
 import { useResource, type Resource } from '../useResource';
 
@@ -79,18 +79,6 @@ function Metric({ label, value, note }: { label: string; value: Known<number>; n
 }
 
 const yes = (value: number): Known<number> => ({ known: true, value });
-
-function siteNote(sites: OverviewResponse['sites']): string {
-  if (sites.total === 0) return 'None added yet';
-  const parts: string[] = [];
-  if (sites.down) parts.push(`${sites.down} down`);
-  if (sites.unchecked) parts.push(`${sites.unchecked} not checked yet`);
-  if (sites.connected) parts.push(`${sites.connected} connected`);
-  if (sites.monitoring) parts.push(`${sites.monitoring} monitoring only`);
-  if (sites.paused) parts.push(`${sites.paused} paused`);
-  if (sites.unfinished) parts.push(`${sites.unfinished} setup unfinished`);
-  return parts.join(' · ');
-}
 
 function ResourceName({
   type,
@@ -149,7 +137,9 @@ function Attention({
                 }}
               >
                 <span css={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-                  <span css={{ fontWeight: 550 }}>{issue.summary}</span>
+                  <span css={{ fontWeight: 550 }}>
+                    {withoutName(issue.summary, names.get(`${g.type}:${g.id}`) ?? g.id)}
+                  </span>
                   <Pill tone={issue.severity === 'urgent' ? 'red' : 'amber'}>
                     <Dot /> {issue.severity === 'urgent' ? 'Urgent' : 'Needs a look'}
                   </Pill>
@@ -302,8 +292,16 @@ function ServerMaintenance({ servers }: { servers: Resource<ServersResponse> }) 
 }
 
 /** Kamaji's own health in a line; the three checks and the version one click down. */
-function KamajiItself() {
-  const status = useResource('/api/status', StatusResponse, { pollMs: 30_000 });
+/** Whether Kamaji itself needs a look: then its card goes first, since every other number depends on it. */
+function kamajiTrouble(status: Resource<StatusResponse>): boolean {
+  if (status.state !== 'ready') return status.state === 'error';
+  const s = status.data;
+  return [cycleHealth(s), heartbeatHealth(s), alertsHealth(s)].some(
+    (l) => l.tone === 'red' || l.tone === 'amber',
+  );
+}
+
+function KamajiItself({ status }: { status: Resource<StatusResponse> }) {
   return (
     <Panel aria-labelledby="kamaji-itself">
       <ResourceView resource={status} label="Kamaji’s status">
@@ -397,6 +395,8 @@ export function OverviewPage() {
   const overview = useResource('/api/overview', OverviewResponse, { pollMs: 60_000 });
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
   const servers = useResource('/api/servers', ServersResponse, { pollMs: 60_000 });
+  const status = useResource('/api/status', StatusResponse, { pollMs: 30_000 });
+  const trouble = kamajiTrouble(status);
   const names = new Map<string, string>([
     ...(sites.state === 'ready'
       ? sites.data.sites.map((s) => [`site:${s.id}`, s.name] as const)
@@ -441,8 +441,9 @@ export function OverviewPage() {
           <RecentOutcomes />
         </div>
         <div css={{ display: 'grid', gap: 'var(--gap)', alignContent: 'start' }}>
+          {trouble && <KamajiItself status={status} />}
           <ServerMaintenance servers={servers} />
-          <KamajiItself />
+          {!trouble && <KamajiItself status={status} />}
           <Coverage overview={overview} />
         </div>
       </Grid>

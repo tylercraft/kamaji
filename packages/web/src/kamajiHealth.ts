@@ -8,6 +8,15 @@ export interface HealthLine {
   detail: string;
 }
 
+/** A stretch of time in the unit that reads best: "12 min", "5 h", "4 days". */
+export function elapsed(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} days`;
+}
+
 /** A cycle is late once two intervals pass without one starting. */
 export function cycleHealth(
   status: StatusResponse,
@@ -19,7 +28,7 @@ export function cycleHealth(
     return {
       tone: 'red',
       label: 'Cycle late',
-      detail: `No cycle has started for ${Math.round(age / 60)} min.`,
+      detail: `No cycle has started for ${elapsed(age)}.`,
     };
   if (!last)
     return { tone: 'neutral', label: 'First cycle pending', detail: 'No check cycle has run yet.' };

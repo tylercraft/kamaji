@@ -1,6 +1,6 @@
 import type { StatusResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { cycleHealth, heartbeatHealth } from './kamajiHealth';
+import { cycleHealth, elapsed, heartbeatHealth } from './kamajiHealth';
 import { relativeTime } from './time';
 
 const base: StatusResponse = {
@@ -70,5 +70,13 @@ describe('relativeTime', () => {
     expect(relativeTime('2026-11-09T11:56:00.000Z', now)).toBe('4 min ago');
     expect(relativeTime('2026-11-09T09:00:00.000Z', now)).toBe('3 h ago');
     expect(relativeTime('2026-11-08T12:00:00.000Z', now)).toBe('1 day ago');
+  });
+});
+
+describe('elapsed time', () => {
+  it('reads in the unit that fits', () => {
+    expect(elapsed(12 * 60)).toBe('12 min');
+    expect(elapsed(5 * 3600)).toBe('5 h');
+    expect(elapsed(6253 * 60)).toBe('4 days');
   });
 });

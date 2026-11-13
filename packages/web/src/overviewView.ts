@@ -104,3 +104,44 @@ export function groupIssues(issues: Issue[]) {
         a.issues[0]!.firstSeenAt.localeCompare(b.issues[0]!.firstSeenAt),
     );
 }
+
+/**
+ * An issue's summary without the site's name it starts with, inside a group already headed by
+ * that name: "Minton Homes runs MySQL 5.7" reads "Runs MySQL 5.7".
+ */
+export function withoutName(summary: string, name: string): string {
+  if (!summary.startsWith(name)) return summary;
+  const rest = summary.slice(name.length).replace(/^(’s|'s|’|')?\s*:?\s*/, '');
+  return rest === '' ? summary : rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/**
+ * The Sites count's note. Connected and monitoring only add up to the total; paused and
+ * unfinished are among them, and down and not checked are among the sites being checked.
+ */
+export function siteNote(s: {
+  total: number;
+  connected: number;
+  monitoring: number;
+  paused: number;
+  unfinished: number;
+  down: number;
+  unchecked: number;
+}): string {
+  if (s.total === 0) return 'None added yet';
+  const among = [
+    s.paused && `${s.paused} paused`,
+    s.unfinished && `${s.unfinished} with setup unfinished`,
+  ].filter(Boolean);
+  const checks = [
+    s.down && `${s.down} down`,
+    s.unchecked && `${s.unchecked} not checked yet`,
+  ].filter(Boolean);
+  return [
+    `${s.connected} connected · ${s.monitoring} monitoring only`,
+    among.length ? `including ${among.join(' and ')}` : '',
+    checks.length ? checks.join(', ') : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
