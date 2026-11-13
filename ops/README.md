@@ -172,6 +172,30 @@ On the mini:
 
 Kamaji picks it up on its next cycle; no restart needed.
 
+### Updating the script
+
+After a change to `server-report/kamaji-report` reaches main, deploy Kamaji first (it reads the old and the new format), then:
+
+1. On the laptop, copy it up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/server-report/kamaji-report craftish:/tmp/
+```
+
+2. On craftish, install it:
+
+```
+sudo install -m 755 -o root -g root /tmp/kamaji-report /usr/local/bin/ && rm /tmp/kamaji-report
+```
+
+3. On craftish, check it runs (format 2 since TY-167):
+
+```
+sudo -u kamaji-report /usr/local/bin/kamaji-report | head -c 60
+```
+
+Kamaji reads it on its next cycle.
+
 ## The updater
 
 A second LaunchAgent, `dev.craftish.kamaji-updater` (`ops/dev.craftish.kamaji-updater.plist`), runs approved batches (`packages/server/src/updater/`) and exits. The app starts it with `launchctl kickstart` when a batch is approved (`KAMAJI_UPDATER=launchd` in the app's plist), and again each cycle while a batch has work left, so a restart mid-run is reconciled. It runs under Doppler's `updater` config, scoped to `~/.kamaji-updater`, so the update key is in that process only; the app never has it. Same macOS user for now; a separate user is in M6's plan. It logs to `~/Library/Logs/kamaji-updater.log`.
