@@ -398,4 +398,66 @@ export const migrations: Migration[] = [
       CREATE INDEX backup_evidence_site ON backup_evidence (site_id, recorded_at);
     `,
   },
+  {
+    version: 14,
+    name: 'whole-site backups',
+    // Whole-site backups (TY-166, ops/backups-plan.md): restic snapshots of a craftish site's
+    // files and database, made by the backups process (sitebackups/), off by default. A client's
+    // site needs the client's agreement first, recorded with who ticked it and when; Tyler's own
+    // sites (`own`) don't ask. Requests from the Backups panel wait in site_backup_requests until
+    // the process takes them.
+    sql: `
+      ALTER TABLE sites ADD COLUMN own INTEGER NOT NULL DEFAULT 0 CHECK (own IN (0, 1));
+      ALTER TABLE sites ADD COLUMN site_backup_schedule TEXT NOT NULL DEFAULT 'off'
+        CHECK (site_backup_schedule IN ('off', 'weekly', 'fortnightly'));
+      ALTER TABLE sites ADD COLUMN site_backup_consent_at INTEGER;
+      ALTER TABLE sites ADD COLUMN site_backup_consent_by TEXT;
+      CREATE TABLE site_snapshots (
+        id INTEGER PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        ok INTEGER NOT NULL CHECK (ok IN (0, 1)),
+        snapshot_id TEXT,
+        bytes INTEGER,
+        added_bytes INTEGER,
+        database_bytes INTEGER,
+        database_sha256 TEXT,
+        wordpress TEXT,
+        problem TEXT,
+        forgotten_at INTEGER
+      );
+      CREATE INDEX site_snapshots_site ON site_snapshots (site_id, started_at);
+      CREATE TABLE restore_checks (
+        id INTEGER PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        snapshot_id TEXT,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        ok INTEGER NOT NULL CHECK (ok IN (0, 1)),
+        failed_step TEXT,
+        problem TEXT
+      );
+      CREATE INDEX restore_checks_site ON restore_checks (site_id, started_at);
+      CREATE TABLE site_backup_requests (
+        id INTEGER PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        kind TEXT NOT NULL CHECK (kind IN ('backup', 'restore')),
+        requested_at INTEGER NOT NULL,
+        requested_by TEXT NOT NULL,
+        taken_at INTEGER
+      );
+    `,
+  },
+  {
+    version: 15,
+    name: 'own sites',
+    seed: true,
+    // Tyler's own sites (2026-11-13): First & Last, Yoga and both accounting sites. Their
+    // whole-site backups need no client's agreement.
+    sql: `
+      UPDATE sites SET own = 1 WHERE id IN ('firstandlastrecords.com', 'yogarecords.com',
+        'accounting.firstandlastrecords.com', 'accounting.prettyearpublishing.com');
+    `,
+  },
 ];
