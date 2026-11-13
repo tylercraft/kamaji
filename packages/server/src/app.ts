@@ -311,7 +311,7 @@ export function createApp({
     const site = c.req.query('site');
     const body: UpdatesResponse =
       site === undefined
-        ? { ...queue(db), batches: batchViews(db) }
+        ? { ...queue(db), batches: batchViews(db, 50) }
         : { ...queue(db, site), batches: batchViews(db, 1, site) };
     return c.json(body);
   });

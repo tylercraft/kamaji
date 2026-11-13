@@ -1,0 +1,38 @@
+#!/bin/bash
+# check-exclusions: runs site-pull's own tar exclusions over a made-up WordPress tree and checks
+# what's in the archive. Needs GNU tar (craftish has it; macOS's tar is different). Writes only to
+# a temporary folder it removes. Usage: ./check-exclusions [path/to/site-pull]
+set -eu -o pipefail
+pull=${1:-$(dirname "$0")/site-pull}
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+
+# The exclusions, exactly as site-pull passes them.
+mapfile -t excludes < <(grep -o -- "--exclude=[^ \\\\]*" "$pull" | tr -d "'")
+[ "${#excludes[@]}" -gt 0 ] || { echo "no --exclude flags found in $pull"; exit 1; }
+
+root=$tmp/public
+mkdir -p "$root"/wp-content/{wflogs,wflogs-notes,cache/page,upgrade,updraft,backups-old,ai1wm-backups} \
+  "$root"/wp-content/plugins/wordfence/lib "$root"/wp-content/uploads/2026/wflogs
+for f in wflogs/attack-data.php wflogs/config.php wflogs-notes/keep.txt cache/page/a.html \
+  upgrade/x.zip updraft/db.gz backups-old/b.zip ai1wm-backups/c.wpress debug.log \
+  plugins/wordfence/wordfence.php plugins/wordfence/lib/wfLog.php uploads/2026/wflogs/photo.jpg \
+  uploads/2026/a.jpg; do
+  echo x >"$root/wp-content/$f"
+done
+echo x >"$root/wp-config.php"
+
+tar --create --format=gnu --sort=name --no-wildcards-match-slash "${excludes[@]}" \
+  -C "$root" wp-content | tar --list >"$tmp/list"
+
+fail=0
+want_in=(wp-content/wflogs-notes/keep.txt wp-content/plugins/wordfence/wordfence.php
+  wp-content/plugins/wordfence/lib/wfLog.php wp-content/uploads/2026/wflogs/photo.jpg
+  wp-content/uploads/2026/a.jpg)
+want_out=(wp-content/wflogs/ wp-content/wflogs/attack-data.php wp-content/cache/
+  wp-content/upgrade/ wp-content/updraft/ wp-content/backups-old/ wp-content/ai1wm-backups/
+  wp-content/debug.log wp-config.php)
+for f in "${want_in[@]}"; do grep -qxF "$f" "$tmp/list" || { echo "missing: $f"; fail=1; }; done
+for f in "${want_out[@]}"; do ! grep -qxF "$f" "$tmp/list" || { echo "not excluded: $f"; fail=1; }; done
+if [ "$fail" -eq 0 ]; then echo "ok: ${#excludes[@]} exclusions, $(wc -l <"$tmp/list") entries kept"; fi
+exit "$fail"

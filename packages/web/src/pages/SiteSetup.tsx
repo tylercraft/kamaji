@@ -350,8 +350,8 @@ function WholeSiteChoices({
     <Choices>
       <legend>Whole-site backups</legend>
       <Muted>
-        Files and a fresh database from craftish, kept encrypted on molcajete and off-site through
-        Arq: 4 weekly and 6 monthly. Never wp-config.php.
+        Files and a fresh database from craftish, kept encrypted with restic on molcajete: 4 weekly
+        and 6 monthly. Arq copies that encrypted repository off-site; Kamaji doesn’t check Arq.
       </Muted>
       {(Object.entries(SCHEDULES) as [SiteBackupSchedule, string][]).map(([value, label]) => (
         <label key={value}>
@@ -390,13 +390,58 @@ function WholeSiteChoices({
   );
 }
 
-/** Step 3: what to check on the home page, the backup expectation, and notifications. */
+const POLICY_SHORT: Record<BackupExpectation, string> = {
+  kamaji: 'Database exports before updates',
+  host: 'The host’s backups before updates',
+  client: 'The client’s backups before updates',
+  tyler: 'Your confirmation before updates',
+};
+
+/** Configure's closed line: the choices as they're saved. */
+function configureSummary(detail: SiteDetailResponse): string {
+  const policy = detail.backupExpectation
+    ? POLICY_SHORT[detail.backupExpectation]
+    : 'Backups before updates not decided';
+  const whole =
+    detail.site.hostKind === 'craftish'
+      ? ` · Whole-site backups ${SCHEDULES[detail.siteBackups.schedule].toLowerCase()}`
+      : '';
+  const notes = detail.notifications === 'digest' ? 'Digest only' : 'Normal notifications';
+  return `${policy}${whole} · ${notes}`;
+}
+
+const Columns = styled.div`
+  display: grid;
+  gap: 18px 28px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  & > div {
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+  h3 {
+    font-size: 13px;
+  }
+  @media (max-width: 760px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+`;
+
+/**
+ * Step 3, and later the site page's Configure: the display name (once set up), what to check on
+ * the home page, notifications, and both backup choices together: what happens before an update,
+ * and scheduled whole-site backups. On the site page it's a closed section, open while the
+ * backup choice is still undecided.
+ */
 export function ConfigureStep({
   detail,
   reload,
+  section = false,
 }: {
   detail: SiteDetailResponse;
   reload: () => void;
+  section?: boolean;
 }) {
   const { site } = detail;
   const [own, setOwn] = useState(detail.own);
@@ -409,7 +454,9 @@ export function ConfigureStep({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const backup = String(form.get('backup') ?? '');
+    const name = form.get('name');
     const request = ConfigureSiteRequest.parse({
+      ...(typeof name === 'string' ? { name } : {}),
       expectedText: String(form.get('expected') ?? '').trim() || null,
       backupExpectation: backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
@@ -420,98 +467,208 @@ export function ConfigureStep({
     if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK), CONFIGURE_WORDS))
       reload();
   }
-  return (
-    <Panel aria-labelledby="configure">
-      <PanelTitle id="configure">Configure</PanelTitle>
-      <Form onSubmit={submit}>
-        <Field
-          id="expected"
-          label="Text the home page must contain"
-          hint="A word or phrase that’s always there, like the site’s name. Its absence counts as down."
-        >
-          <input
+  const fields = (
+    <Form onSubmit={submit} css={section ? { maxWidth: 'none' } : undefined}>
+      <Columns>
+        <div>
+          <h3>Site and monitoring</h3>
+          {section && (
+            <Field
+              id="name"
+              label="Display name"
+              hint="Changes the name in Kamaji only. The domain, connection and history stay as they are."
+            >
+              <input
+                id="name"
+                name="name"
+                type="text"
+                required
+                maxLength={80}
+                defaultValue={site.name}
+                aria-describedby="name-hint"
+              />
+            </Field>
+          )}
+          <Field
             id="expected"
-            name="expected"
-            type="text"
-            maxLength={200}
-            defaultValue={site.expectedText ?? ''}
-            aria-describedby="expected-hint"
-          />
-        </Field>
-        <Choices>
-          <legend>Backups</legend>
-          {(Object.entries(BACKUPS) as [BackupExpectation, string][])
-            .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
-            .map(([value, label]) => (
-              <label key={value}>
-                <input
-                  type="radio"
-                  name="backup"
-                  value={value}
-                  defaultChecked={detail.backupExpectation === value}
-                />
-                {label}
-              </label>
-            ))}
-          <label>
+            label="Text the home page must contain"
+            hint="A word or phrase that’s always there, like the site’s name. Its absence counts as down."
+          >
             <input
-              type="radio"
-              name="backup"
-              value=""
-              defaultChecked={detail.backupExpectation === null}
+              id="expected"
+              name="expected"
+              type="text"
+              maxLength={200}
+              defaultValue={site.expectedText ?? ''}
+              aria-describedby="expected-hint"
             />
-            Not decided yet: shown as unknown
-          </label>
-        </Choices>
-        {site.hostKind === 'craftish' && (
-          <WholeSiteChoices
-            detail={detail}
-            own={own}
-            setOwn={setOwn}
-            schedule={schedule}
-            setSchedule={setSchedule}
-          />
-        )}
-        <Choices>
-          <legend>Notifications</legend>
-          <label>
-            <input
-              type="radio"
-              name="notifications"
-              value="normal"
-              defaultChecked={detail.notifications === 'normal'}
+          </Field>
+          <Choices>
+            <legend>Notifications</legend>
+            <label>
+              <input
+                type="radio"
+                name="notifications"
+                value="normal"
+                defaultChecked={detail.notifications === 'normal'}
+              />
+              Normal: urgent problems at once, the rest in the morning digest
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="notifications"
+                value="digest"
+                defaultChecked={detail.notifications === 'digest'}
+              />
+              Digest only
+            </label>
+          </Choices>
+        </div>
+        <div>
+          <h3>Backups</h3>
+          <Choices>
+            <legend>Before each update</legend>
+            {(Object.entries(BACKUPS) as [BackupExpectation, string][])
+              .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
+              .map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="backup"
+                    value={value}
+                    defaultChecked={detail.backupExpectation === value}
+                  />
+                  {label}
+                </label>
+              ))}
+            <label>
+              <input
+                type="radio"
+                name="backup"
+                value=""
+                defaultChecked={detail.backupExpectation === null}
+              />
+              Not decided yet: shown as unknown
+            </label>
+          </Choices>
+          {site.hostKind === 'craftish' && (
+            <WholeSiteChoices
+              detail={detail}
+              own={own}
+              setOwn={setOwn}
+              schedule={schedule}
+              setSchedule={setSchedule}
             />
-            Normal: urgent problems at once, the rest in the morning digest
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="notifications"
-              value="digest"
-              defaultChecked={detail.notifications === 'digest'}
-            />
-            Digest only
-          </label>
-        </Choices>
-        <Muted>
-          Finishing starts the checks. It grants no update permission: every update is still
-          approved.
-        </Muted>
-        {error && <FormError>{error}</FormError>}
-        <PrimaryButton type="submit" disabled={busy}>
-          {site.setup === 'done' ? 'Save' : 'Finish'}
-        </PrimaryButton>
-      </Form>
-    </Panel>
+          )}
+          {site.hostKind === 'craftish' && (
+            <details>
+              <summary>What a whole-site backup holds</summary>
+              <Muted css={{ marginTop: 6 }}>
+                <code>wp-content</code>, <code>.htaccess</code> if there is one, a fresh database
+                export and a manifest. Left out: <code>wp-content/cache</code>, <code>upgrade</code>
+                , <code>ai1wm-backups</code>, <code>updraft</code>, <code>backups*</code> and{' '}
+                <code>*.log</code> files. <code>wp-config.php</code> and WordPress’s own files are
+                never read.
+              </Muted>
+              <Muted css={{ marginTop: 6 }}>
+                <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
+                craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
+                craftish has; ops/README.md, “Updating site-pull”, installs it.
+              </Muted>
+            </details>
+          )}
+        </div>
+      </Columns>
+      <Muted>
+        {site.setup === 'done'
+          ? 'Saving grants no update permission: every update is still approved.'
+          : 'Finishing starts the checks. It grants no update permission: every update is still approved.'}
+      </Muted>
+      {error && <FormError>{error}</FormError>}
+      <PrimaryButton type="submit" disabled={busy} css={{ justifySelf: 'start' }}>
+        {site.setup === 'done' ? 'Save changes' : 'Finish'}
+      </PrimaryButton>
+    </Form>
+  );
+  if (!section)
+    return (
+      <Panel aria-labelledby="configure">
+        <PanelTitle id="configure">Configure</PanelTitle>
+        {fields}
+      </Panel>
+    );
+  return (
+    <Disclosure id="configure" open={detail.backupExpectation === null}>
+      <summary>
+        <h2>Configure</h2>
+        <span className="note">{configureSummary(detail)}</span>
+      </summary>
+      <div className="inside">{fields}</div>
+    </Disclosure>
   );
 }
+
+/** A card that opens: its summary is the heading and a line saying what's inside. */
+export const Disclosure = styled.details`
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  & > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    gap: 6px 14px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+  & > summary::-webkit-details-marker {
+    display: none;
+  }
+  /* The marker a flex summary loses, turned when open. */
+  & > summary::before {
+    content: '▸';
+    color: var(--muted);
+    display: inline-block;
+    transition: transform 0.1s;
+  }
+  &[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  & > summary h2 {
+    display: inline;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  & > summary .note {
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: auto;
+  }
+  &[open] > summary {
+    border-bottom: 1px solid var(--line);
+  }
+  .inside {
+    padding: 14px 16px 16px;
+  }
+`;
 
 const REMOVE_WORDS: Record<string, string> = {
   not_confirmed: 'Type the site’s name exactly as shown to remove it.',
 };
 
-/** Remove from Kamaji: the live site is untouched; history is kept. */
-export function RemovePanel({ detail }: { detail: SiteDetailResponse }) {
+/**
+ * Remove from Kamaji: the live site is untouched; history is kept. On the site page it sits closed
+ * at the bottom; the typed name and the plugin forgetting its keys are the same either way.
+ */
+export function RemovePanel({
+  detail,
+  closed = false,
+}: {
+  detail: SiteDetailResponse;
+  closed?: boolean;
+}) {
   const { site } = detail;
   const { navigate } = useRoute();
   const [typed, setTyped] = useState('');
@@ -545,9 +702,8 @@ export function RemovePanel({ detail }: { detail: SiteDetailResponse }) {
         </Button>
       </Panel>
     );
-  return (
-    <Panel aria-labelledby="remove">
-      <PanelTitle id="remove">Remove from Kamaji</PanelTitle>
+  const body = (
+    <>
       <p>
         Monitoring and maintenance of {site.name} stop. The live site and its content are untouched,
         and its history stays.
@@ -572,6 +728,21 @@ export function RemovePanel({ detail }: { detail: SiteDetailResponse }) {
           {busy ? 'Removing…' : `Remove ${site.name}`}
         </Button>
       </Form>
+    </>
+  );
+  if (closed)
+    return (
+      <details>
+        <summary css={{ color: 'var(--red)', cursor: 'pointer', fontSize: 12, fontWeight: 550 }}>
+          Remove site from Kamaji
+        </summary>
+        <div css={{ display: 'grid', gap: 10, maxWidth: 650, paddingTop: 12 }}>{body}</div>
+      </details>
+    );
+  return (
+    <Panel aria-labelledby="remove">
+      <PanelTitle id="remove">Remove from Kamaji</PanelTitle>
+      {body}
     </Panel>
   );
 }

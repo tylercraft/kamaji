@@ -101,7 +101,7 @@ describe('comparing with MainWP', () => {
     expect(result.differences).toEqual([]);
     expect(result.matched).toContain('example-forms/example-forms.php update');
     expect(result.notes).toEqual([
-      'example-mu.php: Must-use; Kamaji reads these from Craftish Care 0.2.0',
+      'example-mu.php: Not reported: Craftish Care lists them from 0.2.0, and this site’s copy is older',
       'craftish-care/craftish-care.php: only in Kamaji',
       'mainwp-child/mainwp-child.php: only in MainWP',
       'theme example-theme: MainWP has no version; Kamaji 1.0',

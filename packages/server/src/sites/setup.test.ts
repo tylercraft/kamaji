@@ -143,6 +143,33 @@ describe('Add site', () => {
     expect(sent).toEqual([]);
   });
 
+  it('renames: the display name changes, the id, domain and history don’t', async () => {
+    const { db, post, detail } = setup(reportOnly, () => ok(HELLO));
+    await post('/api/sites', NEW);
+    await post('/api/sites/kamaji-wp.ddev.site/mode', { mode: 'monitoring' });
+    const config = { expectedText: null, backupExpectation: 'host', notifications: 'normal' };
+    await post('/api/sites/kamaji-wp.ddev.site/configure', config);
+    const before = (await detail('kamaji-wp.ddev.site')).site.name;
+    expect(
+      (await post('/api/sites/kamaji-wp.ddev.site/configure', { ...config, name: '  Renamed  ' }))
+        .status,
+    ).toBe(200);
+    expect((await detail('kamaji-wp.ddev.site')).site).toMatchObject({
+      id: 'kamaji-wp.ddev.site',
+      name: 'Renamed',
+      url: 'https://kamaji-wp.ddev.site/',
+    });
+    // Saving without a name leaves it, and an empty one is refused.
+    await post('/api/sites/kamaji-wp.ddev.site/configure', config);
+    expect((await detail('kamaji-wp.ddev.site')).site.name).toBe('Renamed');
+    expect(
+      (await post('/api/sites/kamaji-wp.ddev.site/configure', { ...config, name: ' ' })).status,
+    ).toBe(400);
+    expect(db.prepare("SELECT summary FROM events WHERE kind = 'site.renamed'").all()).toEqual([
+      { summary: `Renamed ${before} to Renamed` },
+    ]);
+  });
+
   it('connects: the zip, then the handshake as the report key, then step 3', async () => {
     const { post, get, detail, sent } = setup(reportOnly, () => ok(HELLO));
     await post('/api/sites', NEW);

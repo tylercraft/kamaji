@@ -20,6 +20,7 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
+import { DISK_URGENT, DISK_WARN, Meter, Part, PartsRow } from '../components/serverParts';
 import { useResource } from '../useResource';
 
 export const Facts = styled.dl`
@@ -66,120 +67,137 @@ function KnownOr<T>({ value, children }: { value: Known<T>; children: (v: T) => 
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** molcajete: maintenance, resources, services, then system details. */
 export function MacFacts({ health }: { health: MacHealth }) {
+  const u = health.updates;
   return (
-    <Facts>
-      <Fact label="Disks">
-        {health.disks.map((d) => (
-          <div key={d.name}>
-            {!d.mounted ? (
-              <Flag tone="red">{d.name} isn’t mounted</Flag>
+    <>
+      <PartsRow>
+        <Part
+          title="Maintenance"
+          aside={
+            u.known && u.value.items.some((i) => i.restart) ? (
+              <Flag tone="amber">Restart needed to install</Flag>
+            ) : undefined
+          }
+        >
+          <KnownOr value={u}>
+            {(v) => (
+              <>
+                {v.items.length === 0 ? (
+                  <span>No macOS updates waiting</span>
+                ) : (
+                  <span>{v.items.map((i) => i.title).join(', ')} available</span>
+                )}
+                <Muted>
+                  Checked <Time iso={v.checkedAt} />
+                </Muted>
+              </>
+            )}
+          </KnownOr>
+        </Part>
+        <Part title="Resources">
+          {health.disks.map((d) =>
+            !d.mounted ? (
+              <div key={d.name}>
+                <Flag tone="red">{d.name} isn’t mounted</Flag>
+              </div>
             ) : d.usedPercent === null ? (
-              <>
-                {d.name} <Muted css={{ display: 'inline' }}>couldn’t be read</Muted>
-              </>
-            ) : d.usedPercent >= 85 ? (
-              <Flag tone={d.usedPercent >= 95 ? 'red' : 'amber'}>
-                {d.name} {d.usedPercent}% full
-              </Flag>
+              <Muted key={d.name}>{d.name}: couldn’t be read</Muted>
             ) : (
-              <>
-                {d.name} {d.usedPercent}% full
-              </>
-            )}{' '}
-            {d.availableBytes !== null && (
-              <Muted css={{ display: 'inline' }}>{gb(d.availableBytes)} free</Muted>
-            )}
-            {d.smart && d.smart !== 'Verified' && <Flag tone="red">SMART: {d.smart}</Flag>}
-            {d.mounted && d.writable === false && d.mount !== '/' && (
-              <Flag tone="amber">Read-only</Flag>
-            )}
-          </div>
-        ))}
-      </Fact>
-      <Fact label="Updates">
-        <KnownOr value={health.updates}>
-          {(u) => (
-            <>
-              {u.items.length === 0 ? (
-                'Up to date'
-              ) : (
+              <div key={d.name} css={{ display: 'grid', gap: 3 }}>
+                <Meter
+                  label={d.name}
+                  percent={d.usedPercent}
+                  words={`${d.usedPercent}% used${d.availableBytes !== null ? ` · ${gb(d.availableBytes)} free` : ''}`}
+                  thresholds={[DISK_WARN, DISK_URGENT]}
+                />
+                {d.smart && d.smart !== 'Verified' && <Flag tone="red">SMART: {d.smart}</Flag>}
+                {d.writable === false && d.mount !== '/' && <Flag tone="amber">Read-only</Flag>}
+              </div>
+            ),
+          )}
+        </Part>
+        <Part title="Services">
+          <Facts>
+            <Fact label="Docker">
+              <KnownOr value={health.docker}>
+                {(d) => {
+                  const unwell = d.containers.filter((c) => !c.healthy);
+                  return unwell.length > 0 ? (
+                    <Flag tone="amber">
+                      Not running well: {unwell.map((c) => c.name).join(', ')}
+                    </Flag>
+                  ) : (
+                    <>{plural(d.containers.length, 'container')} running</>
+                  );
+                }}
+              </KnownOr>
+            </Fact>
+            <Fact label="Tailscale">
+              <KnownOr value={health.tailscale}>
+                {(t) => (
+                  <>
+                    {t.state === 'Running' ? 'Connected' : <Flag tone="red">{t.state}</Flag>}
+                    {t.health.map((h) => (
+                      <Muted key={h}>{h}</Muted>
+                    ))}
+                  </>
+                )}
+              </KnownOr>
+            </Fact>
+            <Fact label="repo-pull">
+              <KnownOr value={health.repoPull}>
+                {(r) =>
+                  r.failingSince ? (
+                    <>
+                      <Flag tone="amber">
+                        Failing since <Time iso={r.failingSince} />
+                      </Flag>
+                      <Muted>
+                        Last tried <Time iso={r.lastAt} />
+                      </Muted>
+                    </>
+                  ) : (
+                    <>
+                      Pulling{' '}
+                      <Muted css={{ display: 'inline' }}>
+                        · last pulled <Time iso={r.lastAt} />
+                      </Muted>
+                    </>
+                  )
+                }
+              </KnownOr>
+            </Fact>
+          </Facts>
+        </Part>
+      </PartsRow>
+      <details>
+        <summary>System and reporting</summary>
+        <Facts css={{ marginTop: 6 }}>
+          <Fact label="Docker">
+            <KnownOr value={health.docker}>{(d) => d.desktop ?? `Engine ${d.engine}`}</KnownOr>
+          </Fact>
+          <Fact label="Tailscale">
+            <KnownOr value={health.tailscale}>{(t) => `Version ${t.version}`}</KnownOr>
+          </Fact>
+          <Fact label="Restarted">
+            <KnownOr value={health.bootedAt}>
+              {(at) => (
                 <>
-                  {u.items.map((i) => i.title).join(', ')}
-                  {u.items.some((i) => i.restart) && <Muted>Needs a restart to install</Muted>}
+                  <Time iso={at} />
+                  <Muted>The cause isn’t kept long enough to tell</Muted>
                 </>
               )}
-              <Muted>
-                Checked <Time iso={u.checkedAt} />
-              </Muted>
-            </>
-          )}
-        </KnownOr>
-      </Fact>
-      <Fact label="Docker">
-        <KnownOr value={health.docker}>
-          {(d) => {
-            const unwell = d.containers.filter((c) => !c.healthy);
-            return (
-              <>
-                {unwell.length > 0 ? (
-                  <Flag tone="amber">Not running well: {unwell.map((c) => c.name).join(', ')}</Flag>
-                ) : (
-                  `${plural(d.containers.length, 'container')} running`
-                )}
-                <Muted>{d.desktop ?? `Engine ${d.engine}`}</Muted>
-              </>
-            );
-          }}
-        </KnownOr>
-      </Fact>
-      <Fact label="Tailscale">
-        <KnownOr value={health.tailscale}>
-          {(t) => (
-            <>
-              {t.state === 'Running' ? 'Connected' : <Flag tone="red">{t.state}</Flag>}
-              {t.health.map((h) => (
-                <Muted key={h}>{h}</Muted>
-              ))}
-              <Muted>Version {t.version}</Muted>
-            </>
-          )}
-        </KnownOr>
-      </Fact>
-      <Fact label="Restarted">
-        <KnownOr value={health.bootedAt}>
-          {(at) => (
-            <>
-              <Time iso={at} />
-              <Muted>The cause isn’t kept long enough to tell</Muted>
-            </>
-          )}
-        </KnownOr>
-      </Fact>
-      <Fact label="repo-pull">
-        <KnownOr value={health.repoPull}>
-          {(r) =>
-            r.failingSince ? (
-              <>
-                <Flag tone="amber">
-                  Failing since <Time iso={r.failingSince} />
-                </Flag>
-                <Muted>
-                  Last tried <Time iso={r.lastAt} />
-                </Muted>
-              </>
-            ) : (
-              <>
-                Pulling{' '}
-                <Muted>
-                  Last pulled <Time iso={r.lastAt} />
-                </Muted>
-              </>
-            )
-          }
-        </KnownOr>
-      </Fact>
-    </Facts>
+            </KnownOr>
+          </Fact>
+          <Fact label="Reporting">Read locally</Fact>
+          <Fact label="Report">
+            <Time iso={health.checkedAt} />
+          </Fact>
+        </Facts>
+      </details>
+    </>
   );
 }
 
@@ -307,6 +325,50 @@ function CrashList({ crashes }: { crashes: CrashGroup[] }) {
   );
 }
 
+/**
+ * The jobs in a line of counts, from what launchd and the crash log say: running, idle, not
+ * loaded, and how many Kamaji hasn't seen run yet. An idle job or an exit code of 0 isn't counted
+ * as a success; it's only what launchd reports.
+ */
+export function jobCounts(jobs: MacJob[], crashed: (job: MacJob) => number): string {
+  const n = (f: (j: MacJob) => boolean) => jobs.filter(f).length;
+  return [
+    `${plural(jobs.length, 'job')}`,
+    n((j) => Boolean(j.attention) || crashed(j) > 0) > 0 &&
+      `${n((j) => Boolean(j.attention) || crashed(j) > 0)} to look at`,
+    n((j) => j.state === 'running') > 0 && `${n((j) => j.state === 'running')} running`,
+    n((j) => j.state === 'idle') > 0 && `${n((j) => j.state === 'idle')} idle`,
+    n((j) => j.state === 'not-loaded') > 0 && `${n((j) => j.state === 'not-loaded')} not loaded`,
+    n((j) => j.lastRunAt === null) > 0 && `${n((j) => j.lastRunAt === null)} not seen running yet`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function JobTable({ jobs, crashCount }: { jobs: MacJob[]; crashCount: (job: MacJob) => number }) {
+  return (
+    <div css={{ overflowX: 'auto' }}>
+      <Table>
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">State</th>
+            <th scope="col">Last exit</th>
+            <th scope="col">Last run</th>
+            <th scope="col">Crashes (7 days)</th>
+            <th scope="col" aria-label="Details" />
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <JobRow key={job.label} job={job} crashes={crashCount(job)} />
+          ))}
+        </tbody>
+      </Table>
+    </div>
+  );
+}
+
 export function MacJobs({ health }: { health: MacHealth }) {
   const crashCount = (job: MacJob) =>
     health.crashes.filter((g) => g.job === job.label).reduce((n, g) => n + g.recent, 0);
@@ -316,36 +378,27 @@ export function MacJobs({ health }: { health: MacHealth }) {
       crashCount(b) - crashCount(a) ||
       a.name.localeCompare(b.name),
   );
+  const look = jobs.filter((j) => j.attention || crashCount(j) > 0);
   return (
     <Panel aria-labelledby="calcifer-jobs">
       <PanelTitle id="calcifer-jobs">Calcifer’s jobs on molcajete</PanelTitle>
+      <p css={{ margin: 0 }}>{jobCounts(jobs, crashCount)}</p>
       <Muted>
-        Logs and crash messages show only for jobs that never read mail or untrusted text.
+        Idle and an exit code are what launchd reports, not proof a run worked. Logs and crash
+        messages show only for jobs that never read mail or untrusted text.
       </Muted>
-      {health.crashes.length > 0 && (
-        <div css={{ margin: '12px 0' }}>
-          <CrashList crashes={health.crashes} />
-        </div>
+      {health.crashes.length > 0 && <CrashList crashes={health.crashes} />}
+      {look.length > 0 ? (
+        <JobTable jobs={look} crashCount={crashCount} />
+      ) : (
+        <Muted>No job needs a look.</Muted>
       )}
-      <div css={{ overflowX: 'auto' }}>
-        <Table>
-          <thead>
-            <tr>
-              <th scope="col">Job</th>
-              <th scope="col">State</th>
-              <th scope="col">Last exit</th>
-              <th scope="col">Last run</th>
-              <th scope="col">Crashes (7 days)</th>
-              <th scope="col" aria-label="Details" />
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <JobRow key={job.label} job={job} crashes={crashCount(job)} />
-            ))}
-          </tbody>
-        </Table>
-      </div>
+      <details>
+        <summary>All jobs ({jobs.length})</summary>
+        <div css={{ marginTop: 6 }}>
+          <JobTable jobs={jobs} crashCount={crashCount} />
+        </div>
+      </details>
     </Panel>
   );
 }

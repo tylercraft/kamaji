@@ -1,17 +1,19 @@
-// A site's Backups tab, as Kamaji recorded them (backups/evidence.ts on the server), one section
-// per kind so they're never mistaken for each other:
-//   - the database export Kamaji makes on craftish ("Back up now", and before each run), with
-//     "Download latest export";
-//   - backups the host, the client or Tyler vouch for, recorded before each run, never seen;
-//   - whole-site backups (files and database, restic on molcajete) and their restore checks.
-// Checksums and the full history sit in disclosures under the current state.
+// A site's Backups card, as Kamaji recorded them (backups/evidence.ts on the server), in two
+// parts that are never mistaken for each other:
+//   - before-update backups: the database export Kamaji makes on craftish ("Export database
+//     now", and before each run), or the host's, client's or Tyler's backup, which Kamaji records
+//     but never sees;
+//   - scheduled whole-site backups (files and database, restic on molcajete) and their restore
+//     checks.
+// Each part's state sits beside its heading; checksums and history are one click down.
 import { SiteBackupsResponse, type BackupEntry } from '@kamaji/shared';
 import { useState, type ReactNode } from 'react';
 import { z } from 'zod';
 import { getJson, postJson } from '../api';
 import { size } from '../bytes';
 import { FormError } from '../components/forms';
-import { StatusList } from '../components/statusList';
+import { RevealLink } from '../components/reveal';
+import { Rows } from '../components/rows';
 import { failed, reason, saved } from '../components/toast';
 import {
   Button,
@@ -25,7 +27,6 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
-import { backups as backupLines } from '../siteStatus';
 import type { Resource } from '../useResource';
 import { BACKUPS } from './SiteSetup';
 import { WholeSiteBackups } from './WholeSiteBackups';
@@ -54,7 +55,8 @@ function Run({ entry }: { entry: BackupEntry }) {
   );
 }
 
-const Section = ({
+/** A part of the card: its heading and what it covers, in a few words, then its rows. */
+function Part({
   id,
   title,
   note,
@@ -63,21 +65,29 @@ const Section = ({
   id: string;
   title: string;
   note: string;
-  children: ReactNode;
-}) => (
-  <section
-    aria-labelledby={id}
-    css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
-  >
-    <div>
-      <h3 id={id} css={{ margin: 0, fontSize: 13 }}>
-        {title}
-      </h3>
-      <Muted>{note}</Muted>
-    </div>
-    {children}
-  </section>
-);
+  children?: ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby={id}
+      css={{
+        display: 'grid',
+        gap: 8,
+        borderTop: '1px solid var(--line)',
+        paddingTop: 12,
+        '&:first-of-type': { borderTop: 0, paddingTop: 0 },
+      }}
+    >
+      <div css={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <h3 id={id} css={{ margin: 0, fontSize: 13 }}>
+          {title}
+        </h3>
+        <Muted css={{ display: 'inline' }}>{note}</Muted>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 const factsCss = {
   margin: 0,
@@ -89,7 +99,7 @@ const factsCss = {
   dd: { margin: 0 },
 } as const;
 
-/** The newest good export: when, how big, what for; its checksum one click down. */
+/** The newest good export: when, how big, what for, and its checksum. */
 function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
   if (!entry) return <Muted>No export yet.</Muted>;
   return (
@@ -111,19 +121,16 @@ function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
         </dd>
       </dl>
       {entry.sha256 && (
-        <details>
-          <summary>Checksum</summary>
-          <dl css={{ ...factsCss, marginTop: 6 }}>
-            <dt>SHA-256</dt>
-            <dd css={{ overflowWrap: 'anywhere' }}>
-              <code>{entry.sha256}</code>
-            </dd>
-            <dt>Recorded</dt>
-            <dd>
-              <Time iso={entry.recordedAt} />
-            </dd>
-          </dl>
-        </details>
+        <dl css={factsCss}>
+          <dt>SHA-256</dt>
+          <dd css={{ overflowWrap: 'anywhere' }}>
+            <code>{entry.sha256}</code>
+          </dd>
+          <dt>Recorded</dt>
+          <dd>
+            <Time iso={entry.recordedAt} />
+          </dd>
+        </dl>
       )}
     </>
   );
@@ -131,42 +138,39 @@ function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
 
 function History({ history }: { history: BackupEntry[] }) {
   return (
-    <details>
-      <summary>All backup records ({history.length})</summary>
-      <div css={{ overflowX: 'auto' }}>
-        <Table>
-          <thead>
-            <tr>
-              <th scope="col">When</th>
-              <th scope="col">What</th>
-              <th scope="col">Size</th>
-              <th scope="col">SHA-256</th>
-              <th scope="col">For</th>
+    <div css={{ overflowX: 'auto' }}>
+      <Table>
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">What</th>
+            <th scope="col">Size</th>
+            <th scope="col">SHA-256</th>
+            <th scope="col">For</th>
+          </tr>
+        </thead>
+        <tbody>
+          {history.map((e, i) => (
+            <tr key={`${e.recordedAt}-${i}`}>
+              <td>
+                <Time iso={e.recordedAt} />
+              </td>
+              <td>
+                <Pill tone={STATE[e.state][1]}>
+                  <Dot /> {STATE[e.state][0]}
+                </Pill>
+                {e.state !== 'exported' && <Muted>{e.words}</Muted>}
+              </td>
+              <td>{e.bytes === null ? '–' : size(e.bytes)}</td>
+              <td>{e.sha256 ? <code title={e.sha256}>{e.sha256.slice(0, 12)}…</code> : '–'}</td>
+              <td>
+                <Run entry={e} />
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {history.map((e, i) => (
-              <tr key={`${e.recordedAt}-${i}`}>
-                <td>
-                  <Time iso={e.recordedAt} />
-                </td>
-                <td>
-                  <Pill tone={STATE[e.state][1]}>
-                    <Dot /> {STATE[e.state][0]}
-                  </Pill>
-                  {e.state !== 'exported' && <Muted>{e.words}</Muted>}
-                </td>
-                <td>{e.bytes === null ? '–' : size(e.bytes)}</td>
-                <td>{e.sha256 ? <code title={e.sha256}>{e.sha256.slice(0, 12)}…</code> : '–'}</td>
-                <td>
-                  <Run entry={e} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </div>
-    </details>
+          ))}
+        </tbody>
+      </Table>
+    </div>
   );
 }
 
@@ -250,92 +254,176 @@ export function SiteBackupsPanel({
   }
 
   return (
-    <Panel aria-labelledby="backups">
-      <PanelTitle id="backups">Backups</PanelTitle>
+    <Panel aria-labelledby="backups-title" id="backups">
+      <PanelTitle id="backups-title">Backups</PanelTitle>
       <ResourceView resource={backups} label="this site’s backups">
         {(d) => {
           const exports = d.history.filter((e) => e.state !== 'recorded');
-          const vouched = d.history.filter((e) => e.state === 'recorded');
-          const vouchedFor = d.backupExpectation !== null && d.backupExpectation !== 'kamaji';
+          const confirmed = d.history.filter((e) => e.state === 'recorded');
+          const latest = exports[0];
+          const lastGood = exports.find((e) => e.state === 'exported');
+          const kamaji = d.canExport || exports.length > 0;
+          const policy = d.backupExpectation;
+          const unset = (
+            <>
+              <Pill tone="amber">
+                <Dot /> Not set
+              </Pill>
+              <RevealLink to="configure">Configure</RevealLink>
+            </>
+          );
           return (
             <>
-              <StatusList
-                lines={backupLines(d, backups.state === 'ready' ? backups.loadedAt : 0)}
-              />
-              <Muted>
-                Before each update run:{' '}
-                {d.backupExpectation
-                  ? `${BACKUPS[d.backupExpectation]}.`
-                  : 'not set yet. Choose it in Settings.'}
-              </Muted>
               {problem && <FormError>{problem}</FormError>}
-
-              {(d.canExport || exports.length > 0) && (
-                <Section
-                  id="database-export"
-                  title="Database export"
-                  note="The database only, exported by Kamaji on craftish and kept there 14 days. Nothing is kept on the mini."
+              {kamaji ? (
+                <Part
+                  id="before-update"
+                  title="Before-update database exports"
+                  note="Database only, made by Kamaji on craftish"
                 >
-                  <LatestExport entry={exports.find((e) => e.state === 'exported')} />
-                  {(d.canExport || d.download) && (
-                    <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {d.canExport && (
-                        <Button
-                          type="button"
-                          disabled={busy || d.exporting !== null}
-                          onClick={backUpNow}
-                        >
-                          {d.exporting || busy ? 'Exporting…' : 'Back up now'}
-                        </Button>
-                      )}
-                      {d.download && (
-                        <Button
-                          type="button"
-                          disabled={downloading}
-                          onClick={() => void download()}
-                        >
-                          {downloading ? 'Downloading…' : 'Download latest export'}
-                        </Button>
-                      )}
-                      {d.canExport && (
-                        <Muted role="status">
-                          {d.exporting ? (
+                  <Rows>
+                    {latest && latest.state === 'failed' ? (
+                      <>
+                        <dt>Latest attempt</dt>
+                        <dd>
+                          <Pill tone="red">
+                            <Dot /> Failed
+                          </Pill>
+                          <Time iso={latest.recordedAt} />
+                          <span className="why">{latest.words}</span>
+                        </dd>
+                        <dt>Last successful</dt>
+                        <dd>
+                          {lastGood ? (
                             <>
-                              Started <Time iso={d.exporting} />; it can take a few minutes.
+                              <Time iso={lastGood.exportedAt ?? lastGood.recordedAt} />
+                              {lastGood.bytes !== null && <span>{size(lastGood.bytes)}</span>}
                             </>
                           ) : (
-                            'The same export a run makes first.'
+                            'None yet'
                           )}
-                        </Muted>
-                      )}
-                    </div>
-                  )}
-                </Section>
-              )}
-
-              {(vouchedFor || vouched.length > 0) && (
-                <Section
-                  id="confirmed"
-                  title="Confirmed before runs"
-                  note="The host’s, the client’s or your own backup, as confirmed for each run. Kamaji records it but doesn’t make, see or check it."
-                >
-                  {vouched[0] ? (
-                    <p css={{ margin: 0 }}>
-                      {vouched[0].words}{' '}
-                      <Muted css={{ display: 'inline' }}>
-                        · for the run approved{' '}
-                        <Time iso={vouched[0].runApprovedAt ?? vouched[0].recordedAt} />
+                        </dd>
+                      </>
+                    ) : (
+                      <>
+                        <dt>Last export</dt>
+                        <dd>
+                          {lastGood ? (
+                            <>
+                              <Pill tone="green">
+                                <Dot /> Exported
+                              </Pill>
+                              <Time iso={lastGood.exportedAt ?? lastGood.recordedAt} />
+                              {lastGood.bytes !== null && <span>{size(lastGood.bytes)}</span>}
+                            </>
+                          ) : (
+                            'None yet: one is made before each run, or now'
+                          )}
+                        </dd>
+                      </>
+                    )}
+                    {policy !== 'kamaji' && (
+                      <>
+                        <dt>Before updates</dt>
+                        <dd>{policy ? BACKUPS[policy] : unset}</dd>
+                      </>
+                    )}
+                  </Rows>
+                  <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {d.canExport && (
+                      <Button
+                        type="button"
+                        disabled={busy || d.exporting !== null}
+                        onClick={backUpNow}
+                      >
+                        {d.exporting || busy ? 'Exporting…' : 'Export database now'}
+                      </Button>
+                    )}
+                    {d.download && (
+                      <Button type="button" disabled={downloading} onClick={() => void download()}>
+                        {downloading ? 'Downloading…' : 'Download latest database export'}
+                      </Button>
+                    )}
+                    {d.exporting && (
+                      <Muted role="status">
+                        Started <Time iso={d.exporting} />; it can take a few minutes.
                       </Muted>
-                    </p>
-                  ) : (
-                    <Muted>Nothing recorded yet: the first run records it.</Muted>
+                    )}
+                  </div>
+                  {d.history.length > 0 && (
+                    <details>
+                      <summary>Export details, checksum and history ({d.history.length})</summary>
+                      <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
+                        <LatestExport entry={lastGood} />
+                        <Muted>
+                          Exports stay on craftish for 14 days, always the newest 3. Nothing is kept
+                          on the mini.
+                        </Muted>
+                        <History history={d.history} />
+                      </div>
+                    </details>
                   )}
-                </Section>
+                </Part>
+              ) : (
+                <Part
+                  id="before-update"
+                  title="Before-update backups"
+                  note={policy ? 'Not made or checked by Kamaji' : 'Not decided'}
+                >
+                  <Rows>
+                    <dt>Policy</dt>
+                    <dd>{policy ? BACKUPS[policy] : unset}</dd>
+                    {policy && (
+                      <>
+                        <dt>Last confirmed</dt>
+                        <dd>
+                          {confirmed[0] ? (
+                            <>
+                              For the run approved{' '}
+                              <Time iso={confirmed[0].runApprovedAt ?? confirmed[0].recordedAt} />
+                            </>
+                          ) : (
+                            'Nothing recorded yet: the first run records it'
+                          )}
+                        </dd>
+                      </>
+                    )}
+                  </Rows>
+                  {d.history.length > 0 && (
+                    <details>
+                      <summary>Confirmation history ({d.history.length})</summary>
+                      <div css={{ marginTop: 8 }}>
+                        <History history={d.history} />
+                      </div>
+                    </details>
+                  )}
+                </Part>
               )}
-
-              {d.wholeSite && <WholeSiteBackups path={path} data={d.wholeSite} reload={reload} />}
-
-              {d.history.length > 0 && <History history={d.history} />}
+              {d.wholeSite && (
+                <Part
+                  id="whole-site"
+                  title="Scheduled whole-site backups"
+                  note="Files and database, made by Kamaji"
+                >
+                  {d.wholeSite.active ? (
+                    <WholeSiteBackups
+                      path={path}
+                      data={d.wholeSite}
+                      now={backups.state === 'ready' ? backups.loadedAt : 0}
+                      reload={reload}
+                    />
+                  ) : (
+                    <Muted>
+                      {d.wholeSite.schedule === 'off'
+                        ? 'Off. '
+                        : 'Waiting for the client’s agreement. '}
+                      <RevealLink to="configure">
+                        {d.wholeSite.schedule === 'off' ? 'Turn them on' : 'Configure backups'}
+                      </RevealLink>
+                    </Muted>
+                  )}
+                </Part>
+              )}
             </>
           );
         }}

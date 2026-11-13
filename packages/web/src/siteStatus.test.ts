@@ -8,7 +8,7 @@ import type {
   WholeSiteBackups,
 } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { backups, fromOutside, homePage, security } from './siteStatus';
+import { backups, certificate, fromOutside, homePage, security, updates } from './siteStatus';
 
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -31,8 +31,13 @@ const site: SiteSummary = {
     value: { state: 'up', checkedAt: ago(2), responseMs: 240, problem: null },
   },
   outside: { known: true, value: { ok: true, checkedAt: ago(3), problem: null } },
-  certificate: { known: true, value: { validTo: ago(-60 * DAY), daysLeft: 60, checkedAt: ago(5) } },
+  certificate: {
+    known: true,
+    value: { validTo: ago(-60 * DAY), daysLeft: 60, checkedAt: ago(5), problem: null },
+  },
   updates: { known: true, value: 0 },
+  updateWork: { toApprove: 0, held: 0, running: 0, noDownload: 0 },
+  findings: [],
 };
 
 describe('the home page line', () => {
@@ -53,7 +58,7 @@ describe('the home page line', () => {
       },
     } as SiteSummary;
     expect(homePage(old, NOW)).toMatchObject({
-      state: 'Reachable at last check',
+      state: 'Last reachable',
       tone: 'neutral',
       outOfDate: true,
     });
@@ -270,5 +275,61 @@ describe('the backup lines', () => {
         }),
       ),
     ).toEqual({ Backups: 'Not set', 'Whole-site backup': 'Off' });
+  });
+});
+
+describe('the certificate line', () => {
+  it('says a timed-out check timed out, not that it wasn’t checked or is bad', () => {
+    const l = certificate({
+      ...site,
+      certificate: { known: false, reason: 'No answer within 20 seconds' },
+    });
+    expect(l).toMatchObject({ state: 'Check timed out', tone: 'amber' });
+    expect(
+      certificate({ ...site, certificate: { known: false, reason: 'Not read yet' } }).state,
+    ).toBe('Not checked yet');
+  });
+
+  it('never says valid for a certificate that isn’t trusted', () => {
+    const c = site.certificate as Extract<SiteSummary['certificate'], { known: true }>;
+    const l = certificate({
+      ...site,
+      certificate: { known: true, value: { ...c.value, problem: 'Certificate not trusted' } },
+    });
+    expect(l).toMatchObject({ state: 'Certificate not trusted', tone: 'red' });
+  });
+});
+
+describe('informational notes', () => {
+  it('qualify “none known” instead of sitting beside it', () => {
+    const inv = inventory({
+      core: { version: '6.8', offer: null, vulnerabilities: [vuln({ informational: true })] },
+    } as Partial<Inventory>);
+    const l = security(detail({ known: true, value: inv }), NOW);
+    expect(l.state).toBe('No actionable findings');
+    expect(l.detail).toContain('1 informational note');
+  });
+});
+
+describe('the updates line', () => {
+  it('says how many are to approve and how many are held, not one count for both', () => {
+    const l = updates({
+      ...site,
+      updates: { known: true, value: 2 },
+      updateWork: { toApprove: 1, held: 1, running: 0, noDownload: 0 },
+    });
+    expect(l).toMatchObject({ state: '1 to approve · 1 held', tone: 'red' });
+    expect(l.detail).toContain('WordPress offers 2 updates');
+  });
+
+  it('keeps running and download-less offers apart, and none as none', () => {
+    expect(
+      updates({
+        ...site,
+        updates: { known: true, value: 2 },
+        updateWork: { toApprove: 0, held: 0, running: 1, noDownload: 1 },
+      }).state,
+    ).toBe('1 running · 1 without a download');
+    expect(updates(site)).toMatchObject({ state: 'None offered', tone: 'green' });
   });
 });

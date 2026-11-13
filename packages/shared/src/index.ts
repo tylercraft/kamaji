@@ -3,6 +3,8 @@
 // breaks the UI fails to compile, and a response that drifts fails loudly instead of rendering wrong.
 import { z } from 'zod';
 
+export * from './version.js';
+
 /** ISO 8601 timestamp, always UTC on the wire. */
 export const Timestamp = z.iso.datetime();
 
@@ -65,6 +67,8 @@ export const Certificate = z.object({
   validTo: Timestamp,
   daysLeft: z.number().int(),
   checkedAt: Timestamp,
+  /** Read, but not good: "Certificate not trusted", "Certificate expired". Null when it's fine. */
+  problem: z.string().nullable(),
 });
 export type Certificate = z.infer<typeof Certificate>;
 
@@ -82,6 +86,25 @@ export const SiteSummary = Site.extend({
   certificate: known(Certificate),
   /** Components WordPress offers an update for, from the last good report. */
   updates: known(z.number().int()),
+  /**
+   * Those offers split by where they stand: still to approve (what the Updates queue lists), or
+   * already in a run that's held or still going. Every offered component is in one of the three
+   * unless a run has an item WordPress no longer offers.
+   */
+  updateWork: z.object({
+    toApprove: z.number().int(),
+    held: z.number().int(),
+    running: z.number().int(),
+    /** Offered without a download (often a licence missing): can't be approved. */
+    noDownload: z.number().int(),
+  }),
+  /**
+   * Open issues other than reachability and the certificate, which have their own columns: a
+   * site can be up and still need attention (vulnerabilities, end of life, backups, a held run).
+   */
+  findings: z.array(
+    z.object({ kind: z.string(), severity: z.enum(['urgent', 'normal']), summary: z.string() }),
+  ),
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
 
@@ -329,6 +352,8 @@ export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
 
 /** Add site, step 3. The whole-site backup fields are left as they were when absent. */
 export const ConfigureSiteRequest = z.object({
+  /** The display name; left as it was when absent. The id, domain, keys and history never change. */
+  name: z.string().trim().min(1).max(80).optional(),
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
@@ -677,6 +702,9 @@ export const QueueItem = z.object({
   to: z.string(),
   /** A known vulnerability that this version fixes. */
   security: z.boolean(),
+  /** Of the component's known vulnerabilities (not informational ones), how many this version fixes. */
+  fixes: z.number().int(),
+  findings: z.number().int(),
   /** A major version: never in "all routine". */
   major: z.boolean(),
 });
@@ -712,6 +740,9 @@ export const BatchSiteView = z.object({
   siteId: z.string(),
   siteName: z.string(),
   state: z.enum(['waiting', 'running', 'done', 'held']),
+  /** When the updater started and finished this site; null until it has. */
+  startedAt: Timestamp.nullable(),
+  finishedAt: Timestamp.nullable(),
   heldReason: z.string().nullable(),
   backupKind: BackupKind,
   /** The backup evidence as recorded for this run. */
@@ -723,6 +754,9 @@ export type BatchSiteView = z.infer<typeof BatchSiteView>;
 export const BatchView = z.object({
   id: z.string(),
   approvedAt: Timestamp,
+  approvedBy: z.string(),
+  /** When the whole run finished; null while it's going or held. */
+  finishedAt: Timestamp.nullable(),
   state: z.enum(['approved', 'running', 'finished']),
   oneSiteFirst: z.boolean(),
   sites: z.array(BatchSiteView),

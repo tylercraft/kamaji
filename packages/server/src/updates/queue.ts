@@ -86,7 +86,7 @@ export function queue(
       continue;
     }
     if (site.blocked) continue;
-    const fixes = matches(db, site.id).filter((m) => m.fixedIn && !m.vulnerability.informational);
+    const known = matches(db, site.id).filter((m) => !m.vulnerability.informational);
     const offers = db
       .prepare(
         `SELECT type, item, name, version, offer_version FROM components
@@ -100,6 +100,8 @@ export function queue(
       if (busy.has(`${site.id}\u0000${type}\u0000${item}`)) continue;
       const from = String(o.version);
       const to = String(o.offer_version);
+      const own = known.filter((m) => m.type === type && m.item === item);
+      const fixed = own.filter((m) => m.fixedIn && compareVersions(to, m.fixedIn) >= 0).length;
       items.push({
         siteId: site.id,
         siteName: site.name,
@@ -108,9 +110,9 @@ export function queue(
         name: String(o.name),
         from,
         to,
-        security: fixes.some(
-          (m) => m.type === type && m.item === item && compareVersions(to, m.fixedIn!) >= 0,
-        ),
+        security: fixed > 0,
+        fixes: fixed,
+        findings: own.length,
         major: isMajor(type, from, to),
       });
     }

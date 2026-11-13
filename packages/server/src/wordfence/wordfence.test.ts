@@ -300,7 +300,8 @@ describe('the feed', () => {
       {
         kind: 'vulnerable:plugin:wpvivid-backuprestore/wpvivid-backuprestore.php',
         severity: 'urgent',
-        summary: 'Kamaji test: a plugin has a known vulnerability, with a fix to update to',
+        summary:
+          'Kamaji test: a plugin has a known vulnerability, with a fix WordPress isn’t offering yet',
       },
     ]);
 
@@ -317,7 +318,7 @@ describe('the feed', () => {
     await notifyNow(db, T, discord, options);
     await notifyNow(db, T + HOUR, discord, options);
     expect(sent).toEqual([
-      '**Kamaji**\n- Kamaji test: a plugin has a known vulnerability, with a fix to update to\n<https://kamaji.test>',
+      '**Kamaji**\n- Kamaji test: a plugin has a known vulnerability, with a fix WordPress isn’t offering yet\n<https://kamaji.test>',
     ]);
 
     // Updating to the fix resolves it on the next cycle.

@@ -10,7 +10,7 @@ import {
   type Outcome,
   type QueueItem,
 } from '@kamaji/shared';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
@@ -29,8 +29,17 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
+import { reveal, RevealLink } from '../components/reveal';
+import { useLink } from '../router';
+import { byComponent, bySite, runAnchor, runOutcome, siteRuns, type SiteRun } from '../runHistory';
 import { useResource } from '../useResource';
-import { bySite, byUpdate, itemKey as key, needsBackup, type Grouping } from '../updatesView';
+import {
+  bySite as queueBySite,
+  byUpdate,
+  itemKey as key,
+  needsBackup,
+  type Grouping,
+} from '../updatesView';
 
 const BACKUP_WORDS: Record<BackupKind, string> = {
   kamaji: 'Kamaji exports the database on craftish first',
@@ -60,7 +69,10 @@ export function Flags({ item }: { item: QueueItem }) {
     <>
       {item.security && (
         <Pill tone="red">
-          <Dot /> Security fix
+          <Dot />{' '}
+          {item.fixes >= item.findings
+            ? 'Security fix'
+            : `Partial security fix: ${item.fixes} of ${item.findings}`}
         </Pill>
       )}{' '}
       {item.major && (
@@ -93,7 +105,7 @@ function SiteRows({
         </tr>
       </thead>
       <tbody>
-        {bySite(items).map((g) => {
+        {queueBySite(items).map((g) => {
           const first = g[0]!;
           const all = g.every((i) => ticked.has(key(i)));
           return (
@@ -135,11 +147,16 @@ function Queue({
   data,
   ticked,
   setTicked,
+  reviewing,
+  setReviewing,
 }: {
   data: UpdatesResponse;
   ticked: Set<string>;
   setTicked: (next: Set<string>) => void;
+  reviewing: boolean;
+  setReviewing: (on: boolean) => void;
 }) {
+  const chosen = data.items.filter((i) => ticked.has(key(i))).length;
   const toggle = (k: string) => {
     const next = new Set(ticked);
     if (next.has(k)) next.delete(k);
@@ -158,7 +175,7 @@ function Queue({
   const routine = data.items.filter((i) => !i.major);
   return (
     <Panel aria-labelledby="queue">
-      <PanelTitle id="queue">Waiting</PanelTitle>
+      <PanelTitle id="queue">To approve</PanelTitle>
       {data.items.length === 0 ? (
         <Muted>
           {data.unknown > 0
@@ -169,12 +186,21 @@ function Queue({
         <>
           <div css={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <Button type="button" onClick={() => setTicked(new Set(routine.map(key)))}>
-              Tick all routine ({routine.length})
+              Select routine updates ({routine.length})
             </Button>
-            <Button type="button" onClick={() => setTicked(new Set())}>
+            <Button
+              type="button"
+              onClick={() => {
+                setTicked(new Set());
+                setReviewing(false);
+              }}
+            >
               Clear
             </Button>
-            <Muted>Major versions are never routine. Security fixes come first.</Muted>
+            <Muted>
+              Kamaji never updates a site on its own: each update runs only after you review and
+              approve it here. Major versions are never routine; security fixes come first.
+            </Muted>
           </div>
           <div role="group" aria-label="Group by" css={{ display: 'flex', gap: 6 }}>
             {(
@@ -244,6 +270,23 @@ function Queue({
           </div>
         </>
       )}
+      {data.items.length > 0 && !reviewing && (
+        <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <PrimaryButton
+            type="button"
+            disabled={chosen === 0}
+            aria-describedby="queue-review-note"
+            onClick={() => setReviewing(true)}
+          >
+            Review selected updates{chosen > 0 ? ` (${chosen})` : ''}
+          </PrimaryButton>
+          <Muted id="queue-review-note">
+            {chosen === 0
+              ? 'Select updates first. Nothing runs until you approve the review.'
+              : 'Nothing runs until you approve the review.'}
+          </Muted>
+        </div>
+      )}
       {data.sites.some((s) => s.blocked) && (
         <div css={{ display: 'grid', gap: 4 }}>
           {data.sites
@@ -259,9 +302,10 @@ function Queue({
   );
 }
 
-function Review(props: Parameters<typeof ReviewBody>[0]) {
+/** The review, once asked for: the scope, each site's backup, and Approve. */
+function Review(props: Parameters<typeof ReviewBody>[0] & { reviewing: boolean }) {
   const chosen = props.data.items.some((i) => props.ticked.has(key(i)));
-  if (!chosen) return null;
+  if (!chosen || !props.reviewing) return null;
   return (
     <Panel aria-labelledby="review">
       <PanelTitle id="review">Review</PanelTitle>
@@ -381,7 +425,8 @@ export function ReviewBody({
       {waitingOn.length > 0 && (
         <Muted id="approve-waits" role="status" css={{ color: 'var(--amber)' }}>
           Approve waits for the backup: tick “I confirm there’s a backup” for{' '}
-          {waitingOn.map((s) => s.siteName).join(', ')}, or set its backup in the site’s Settings.
+          {waitingOn.map((s) => s.siteName).join(', ')}, or set its backup under Configure on the
+          site’s page.
         </Muted>
       )}
       <PrimaryButton
@@ -448,21 +493,24 @@ export function RunSite({
   batch: b,
   site: s,
   reload,
+  showReason = true,
 }: {
   batch: BatchView;
   site: BatchSiteView;
   reload: () => void;
+  /** False where the summary above already says why it's held. */
+  showReason?: boolean;
 }) {
   return (
     <div css={{ display: 'grid', gap: 6 }}>
       <strong>
         {s.siteName}{' '}
-        <Pill tone={s.state === 'held' ? 'red' : s.state === 'done' ? 'green' : 'neutral'}>
-          <Dot /> {STATE_WORDS[s.state]}
+        <Pill tone={runOutcome(s).tone}>
+          <Dot /> {runOutcome(s).label}
         </Pill>
       </strong>
       {s.backup && <Muted>Backup: {s.backup}</Muted>}
-      {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
+      {showReason && s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
       <div css={{ overflowX: 'auto' }}>
         <Table>
           <tbody>
@@ -491,29 +539,384 @@ export function RunSite({
   );
 }
 
-function Batches({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
-  if (batches.length === 0) return null;
+// dateStyle can't be combined with timeZoneName, so the parts are named one by one.
+const exact = new Intl.DateTimeFormat('en-NZ', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZoneName: 'short',
+});
+
+/** A time as "4 h ago", with the exact time and zone beside it for the record. */
+function Exact({ iso }: { iso: string }) {
   return (
-    <Panel aria-labelledby="batches">
-      <PanelTitle id="batches">Runs</PanelTitle>
-      {batches.map((b) => (
-        <div key={b.id} css={{ display: 'grid', gap: 10 }}>
+    <>
+      <Time iso={iso} /> <Muted css={{ display: 'inline' }}>({exact.format(new Date(iso))})</Muted>
+    </>
+  );
+}
+
+const componentsLine = (r: SiteRun) => {
+  const [first, ...rest] = r.site.items;
+  if (!first) return 'No components';
+  return `${first.name} ${first.from} → ${first.to}${rest.length > 0 ? `, and ${rest.length} more` : ''}`;
+};
+
+/** One site's part of a run: its outcome in the summary; approval, components and backup inside. */
+const isActive = (r: SiteRun) => r.site.state !== 'done' || r.batch.state !== 'finished';
+
+/**
+ * One site's part of a run: its outcome in the summary; approval, components and backup inside.
+ * Only a site's newest run with a problem opens by itself; older ones stay closed with their
+ * outcome in the summary. A run still going or held is
+ * handled once, under "Held and running", and here is only a line pointing there.
+ */
+function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; reload: () => void }) {
+  const { batch: b, site: s } = run;
+  const outcome = runOutcome(s);
+  const anchor = runAnchor({ batchId: b.id, siteId: s.siteId });
+  if (isActive(run))
+    return (
+      <div
+        id={anchor}
+        css={{
+          borderTop: '1px solid var(--line)',
+          padding: '8px 0',
+          display: 'flex',
+          gap: '4px 12px',
+          flexWrap: 'wrap',
+          alignItems: 'baseline',
+        }}
+      >
+        <span css={{ fontWeight: 550 }}>{componentsLine(run)}</span>
+        <Pill tone={outcome.tone}>
+          <Dot /> {outcome.label}
+        </Pill>
+        <span css={{ marginLeft: 'auto', fontSize: 12 }}>
+          <RevealLink to={`active-${anchor}`}>Handled under Held and running</RevealLink>
+        </span>
+      </div>
+    );
+  return (
+    <details
+      id={anchor}
+      open={outcome.problem && latest}
+      css={{ borderTop: '1px solid var(--line)', padding: '8px 0' }}
+    >
+      <summary
+        css={{
+          cursor: 'pointer',
+          display: 'flex',
+          gap: '4px 12px',
+          flexWrap: 'wrap',
+          alignItems: 'baseline',
+        }}
+      >
+        <span css={{ fontWeight: 550 }}>{componentsLine(run)}</span>
+        <Pill tone={outcome.tone}>
+          <Dot /> {outcome.label}
+        </Pill>
+        <Muted css={{ display: 'inline', marginLeft: 'auto' }}>
+          {s.finishedAt ? (
+            <>
+              Finished <Time iso={s.finishedAt} />
+            </>
+          ) : (
+            <>
+              Approved <Time iso={b.approvedAt} />, not finished
+            </>
+          )}
+        </Muted>
+      </summary>
+      <div
+        css={{
+          display: 'grid',
+          gap: 14,
+          gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)',
+          marginTop: 8,
+          '@media (max-width: 760px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+        }}
+      >
+        <div css={{ display: 'grid', gap: 6, alignContent: 'start' }}>
+          <h3 css={{ fontSize: 12 }}>Components and checks</h3>
+          <RunSite batch={b} site={s} reload={reload} />
+        </div>
+        <dl
+          css={{
+            margin: 0,
+            display: 'grid',
+            gridTemplateColumns: 'max-content minmax(0, 1fr)',
+            gap: '4px 12px',
+            fontSize: 12,
+            alignContent: 'start',
+            dt: { color: 'var(--muted)' },
+            dd: { margin: 0 },
+          }}
+        >
+          <dt>Approved</dt>
+          <dd>
+            <Exact iso={b.approvedAt} /> by {b.approvedBy}
+          </dd>
+          <dt>Started</dt>
+          <dd>{s.startedAt ? <Exact iso={s.startedAt} /> : 'Not yet'}</dd>
+          <dt>Finished</dt>
+          <dd>{s.finishedAt ? <Exact iso={s.finishedAt} /> : 'Not yet'}</dd>
+          <dt>Backup</dt>
+          <dd>
+            {BACKUP_WORDS[s.backupKind]}
+            {s.backup && <Muted>Recorded: {s.backup}</Muted>}
+            <Muted>
+              {s.backupKind === 'kamaji'
+                ? 'A database export, not a whole-site backup.'
+                : 'Recorded for this run; Kamaji didn’t make or check it.'}
+            </Muted>
+          </dd>
+          <dt>Run</dt>
+          <dd>
+            <code>{b.id}</code>
+            {b.sites.length > 1 && (
+              <Muted>
+                With {b.sites.length - 1} other {b.sites.length === 2 ? 'site' : 'sites'}
+                {b.oneSiteFirst ? ', one site first' : ''}
+              </Muted>
+            )}
+          </dd>
+        </dl>
+      </div>
+    </details>
+  );
+}
+
+/** Runs still going or held: the first thing to see, and where held sites are handled. */
+function Active({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
+  const runs = siteRuns(batches).filter(isActive);
+  if (runs.length === 0) return null;
+  const held = runs.some((r) => r.site.state === 'held');
+  return (
+    <Panel
+      aria-labelledby="active"
+      css={{ borderLeft: `3px solid var(--${held ? 'red' : 'amber'})` }}
+    >
+      <PanelTitle id="active">{held ? 'Held and running' : 'Running'}</PanelTitle>
+      {runs.map((r) => (
+        <div
+          key={`${r.batch.id}-${r.site.siteId}`}
+          id={`active-${runAnchor({ batchId: r.batch.id, siteId: r.site.siteId })}`}
+          css={{ display: 'grid', gap: 6 }}
+        >
           <Muted>
-            Approved <Time iso={b.approvedAt} /> ·{' '}
-            {b.state === 'finished' ? 'Finished' : b.state === 'running' ? 'Running' : 'Starting'}
+            Approved <Time iso={r.batch.approvedAt} /> · {r.site.siteName}
           </Muted>
-          {b.sites.map((s) => (
-            <RunSite key={s.siteId} batch={b} site={s} reload={reload} />
-          ))}
+          <RunSite batch={r.batch} site={r.site} reload={reload} />
         </div>
       ))}
     </Panel>
   );
 }
 
+function SiteName({ id, name }: { id: string; name: string }) {
+  const link = useLink(`/sites/${id}`);
+  return (
+    <a {...link} css={{ color: 'inherit', fontWeight: 600 }}>
+      {name}
+    </a>
+  );
+}
+
+/** The history, by site or by component, with search. */
+function History({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
+  const [grouping, setGrouping] = useState<'site' | 'component'>('site');
+  const [typed, setTyped] = useState('');
+  // "Open run" switches to By site; once that has rendered, open the run and move to it.
+  // A link from Overview names a run in the address: open it once it's on the page.
+  const goTo = useRef<string | null>(
+    window.location.hash.startsWith('#run-') ? window.location.hash.slice(1) : null,
+  );
+  useEffect(() => {
+    if (goTo.current && reveal(goTo.current)) goTo.current = null;
+  });
+  if (batches.length === 0) return null;
+  const sites = bySite(batches, typed);
+  const components = byComponent(batches, typed);
+  const total = siteRuns(batches).length;
+  const shown = grouping === 'site' ? sites.reduce((n, g) => n + g.runs.length, 0) : null;
+  return (
+    <section aria-labelledby="history" css={{ display: 'grid', gap: 'var(--gap)' }}>
+      <div css={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+        <div css={{ marginRight: 'auto' }}>
+          <h2 id="history" css={{ fontSize: 15 }}>
+            Run history
+          </h2>
+          <Muted>Outcomes first; approval, components and backup evidence inside each run.</Muted>
+        </div>
+        <div role="group" aria-label="Group run history" css={{ display: 'flex', gap: 6 }}>
+          {(
+            [
+              ['site', 'By site'],
+              ['component', 'By component'],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              type="button"
+              aria-pressed={grouping === value}
+              onClick={() => setGrouping(value)}
+              css={
+                grouping === value
+                  ? { borderColor: 'var(--copper)', color: 'var(--copper)' }
+                  : undefined
+              }
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <form
+        role="search"
+        aria-label="Search run history"
+        onSubmit={(e) => e.preventDefault()}
+        css={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}
+      >
+        <label
+          css={{
+            display: 'grid',
+            gap: 4,
+            fontSize: 12,
+            fontWeight: 600,
+            flex: '1 1 240px',
+            maxWidth: 360,
+          }}
+        >
+          Search
+          <input
+            type="search"
+            value={typed}
+            placeholder="Site, component or version"
+            onChange={(e) => setTyped(e.target.value)}
+            css={{
+              font: 'inherit',
+              color: 'var(--ink)',
+              background: 'var(--bg)',
+              border: '1px solid var(--line)',
+              borderRadius: 3,
+              padding: '7px 9px',
+            }}
+          />
+        </label>
+        <Button type="button" disabled={typed === ''} onClick={() => setTyped('')}>
+          Reset
+        </Button>
+        <Muted role="status" aria-live="polite">
+          {grouping === 'site'
+            ? `${shown} of ${total} site runs`
+            : `${components.reduce((n, g) => n + g.changes.length, 0)} component changes`}
+          {batches.length >= 50 ? ' · the 50 newest runs' : ''}
+        </Muted>
+      </form>
+      {(grouping === 'site' ? sites.length : components.length) === 0 && (
+        <Panel>
+          <Empty title="Nothing matches">Try a site name, a component or a version.</Empty>
+        </Panel>
+      )}
+      {grouping === 'site'
+        ? sites.map((g) => (
+            <Panel key={g.siteId} aria-label={g.siteName}>
+              <div css={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                <SiteName id={g.siteId} name={g.siteName} />
+                <Muted css={{ display: 'inline' }}>
+                  {g.runs.length} {g.runs.length === 1 ? 'run' : 'runs'}
+                </Muted>
+              </div>
+              <div>
+                {g.runs.map((r) => (
+                  <RunEntry
+                    key={`${r.batch.id}-${r.site.siteId}`}
+                    run={r}
+                    latest={r === g.runs.find((x) => !isActive(x) && runOutcome(x.site).problem)}
+                    reload={reload}
+                  />
+                ))}
+              </div>
+            </Panel>
+          ))
+        : components.map((g) => (
+            <Panel key={g.name} aria-label={g.name}>
+              <div css={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                <strong>{g.name}</strong>
+                <Muted css={{ display: 'inline' }}>
+                  {g.changes.length} {g.changes.length === 1 ? 'change' : 'changes'} on{' '}
+                  {new Set(g.changes.map((c) => c.site.siteId)).size} sites
+                </Muted>
+              </div>
+              <div css={{ overflowX: 'auto' }}>
+                <Table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Site</th>
+                      <th scope="col">Change</th>
+                      <th scope="col">Result</th>
+                      <th scope="col">Finished</th>
+                      <th scope="col">Run</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.changes.map((c) => (
+                      <tr key={`${c.batch.id}-${c.site.siteId}-${c.item.id}`}>
+                        <td>{c.site.siteName}</td>
+                        <td>
+                          {c.item.from} → {c.item.to}
+                        </td>
+                        <td>
+                          {c.item.outcome ? (
+                            <Pill tone={OUTCOMES[c.item.outcome][1]}>
+                              <Dot /> {OUTCOMES[c.item.outcome][0]}
+                            </Pill>
+                          ) : (
+                            <Muted>{STATE_WORDS[c.item.state]}</Muted>
+                          )}
+                        </td>
+                        <td>
+                          {c.site.finishedAt ? (
+                            <Time iso={c.site.finishedAt} />
+                          ) : (
+                            <Muted>Not yet</Muted>
+                          )}
+                        </td>
+                        <td>
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              setTyped('');
+                              setGrouping('site');
+                              goTo.current = runAnchor({
+                                batchId: c.batch.id,
+                                siteId: c.site.siteId,
+                              });
+                            }}
+                          >
+                            Open run
+                            {c.site.items.length > 1 ? ` (${c.site.items.length} components)` : ''}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+            </Panel>
+          ))}
+    </section>
+  );
+}
+
 export function UpdatesPage() {
   const updates = useResource('/api/updates', UpdatesResponse, { pollMs: 5_000 });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
   return (
     <>
       <PageHeading
@@ -535,16 +938,25 @@ export function UpdatesPage() {
           }
           return (
             <>
-              <Queue data={data} ticked={ticked} setTicked={setTicked} />
+              <Active batches={data.batches} reload={reload} />
+              <Queue
+                data={data}
+                ticked={ticked}
+                setTicked={setTicked}
+                reviewing={reviewing}
+                setReviewing={setReviewing}
+              />
               <Review
                 data={data}
                 ticked={ticked}
+                reviewing={reviewing}
                 done={() => {
                   setTicked(new Set());
+                  setReviewing(false);
                   reload();
                 }}
               />
-              <Batches batches={data.batches} reload={reload} />
+              <History batches={data.batches} reload={reload} />
             </>
           );
         }}

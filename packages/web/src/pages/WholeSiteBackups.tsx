@@ -1,7 +1,8 @@
-// A craftish site's whole-site backups, inside its Backups panel: the schedule and consent, the
-// snapshots and restore checks the backups process recorded, the repository's size, and asking
-// for a backup or a restore check now. The app never runs restic; it asks the backups process.
-import type { RestoreCheck, SiteSnapshot, WholeSiteBackups as Data } from '@kamaji/shared';
+// A craftish site's whole-site backups, inside its Backups card: the latest attempt, the last
+// good backup, the latest restore check and the next run, then asking for either now. Schedule,
+// consent, retention, storage and the snapshot list are one click down. The app never runs
+// restic; it asks the backups process.
+import type { SiteSnapshot, WholeSiteBackups as Data } from '@kamaji/shared';
 import { useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
@@ -9,24 +10,16 @@ import { size } from '../bytes';
 import { FormError } from '../components/forms';
 import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Pill, Table, Time } from '../components/ui';
+import { Rows } from '../components/rows';
+import { CURRENT_FOR, isOutOfDate, OVERDUE_GRACE, SCHEDULE_DAYS, STEP_WORDS } from '../siteStatus';
 import { SCHEDULES } from './SiteSetup';
 
 const WORDS: Record<string, string> = {
-  not_active: 'whole-site backups are off for this site: turn them on in Settings',
+  not_active: 'whole-site backups are off for this site: turn them on under Configure',
   already_requested: 'it’s already asked for',
 };
 
-const STEP_WORDS: Record<string, string> = {
-  restore: 'restoring the snapshot',
-  verify: 'checking it against its manifest',
-  unpack: 'unpacking it',
-  docker: 'starting Docker',
-  database: 'loading the database',
-  wordpress: 'starting WordPress',
-  'home page': 'the home page',
-};
-
-/** The night the next backup runs: the first 03:15 on or after it's due. */
+/** The night a backup due at this time runs: the first 03:15 on or after it. */
 function nextNight(iso: string): string {
   const due = new Date(iso);
   const night = new Date(due);
@@ -35,46 +28,26 @@ function nextNight(iso: string): string {
   return night.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-function Status({ data }: { data: Data }) {
-  if (data.schedule === 'off') {
-    return <p css={{ margin: 0 }}>Off. Turn them on in Settings.</p>;
-  }
-  return (
-    <p css={{ margin: 0 }}>
-      {SCHEDULES[data.schedule]}.{' '}
-      {data.lastGoodAt ? (
-        <>
-          Last good backup <Time iso={data.lastGoodAt} />
-          {data.nextDueAt && <>; the next one on {nextNight(data.nextDueAt)}, at 03:15</>}.
-        </>
-      ) : (
-        'None yet: the first one is tonight at 03:15, or ask for one now.'
-      )}{' '}
-      {data.own ? (
-        'Tyler’s own site.'
-      ) : data.consentAt ? (
-        <>
-          The client agreed (ticked by {data.consentBy} <Time iso={data.consentAt} />
-          ).
-        </>
-      ) : null}
-    </p>
-  );
-}
+const day = (ms: number) =>
+  new Date(ms).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 
-/** The last restore check in words; its flag, and whether it's current, are in the lines above. */
-function LastRestore({ check }: { check: RestoreCheck | undefined }) {
-  if (!check) return <Muted>No restore check yet: one a month, or ask for one now.</Muted>;
-  return check.ok ? (
-    <p css={{ margin: 0 }}>
-      Last restore check: restored to an offline test copy that served its home page,{' '}
-      <Time iso={check.startedAt} /> ({check.seconds} s).
-    </p>
+/** When the next nightly run takes this site, or since when it's been overdue. */
+function NextRun({ data, now }: { data: Data; now: number }) {
+  if (data.schedule === 'off') return null;
+  if (!data.lastGoodAt || !data.nextDueAt) return <>Tonight at 03:15</>;
+  const due = Date.parse(data.nextDueAt);
+  if (due >= now) return <>{nextNight(data.nextDueAt)}, 03:15</>;
+  const overdueAt =
+    Date.parse(data.lastGoodAt) + SCHEDULE_DAYS[data.schedule] * 86_400_000 + OVERDUE_GRACE;
+  return now > overdueAt ? (
+    <>
+      <Pill tone="amber">
+        <Dot /> Overdue
+      </Pill>
+      since {day(overdueAt)}; each night at 03:15 tries again
+    </>
   ) : (
-    <p css={{ margin: 0 }}>
-      Last restore check failed <Time iso={check.startedAt} />, at{' '}
-      {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep}: {check.problem}
-    </p>
+    <>Due since {nextNight(data.nextDueAt)}; each night at 03:15 tries again</>
   );
 }
 
@@ -127,10 +100,13 @@ function Snapshots({ snapshots }: { snapshots: SiteSnapshot[] }) {
 export function WholeSiteBackups({
   path,
   data,
+  now,
   reload,
 }: {
   path: string;
   data: Data;
+  /** When the data loaded: a due date before it is past. */
+  now: number;
   reload: () => void;
 }) {
   const [problem, setProblem] = useState<string | null>(null);
@@ -160,22 +136,75 @@ export function WholeSiteBackups({
     reload();
   }
 
+  const latest = data.snapshots[0];
+  const check = data.restoreChecks[0];
+  const checkOld = check ? isOutOfDate(check.startedAt, CURRENT_FOR.restoreCheck, now) : false;
+  const lastGood = data.snapshots.find((x) => x.ok);
   return (
-    <section
-      aria-labelledby="whole-site"
-      css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
-    >
-      <div>
-        <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
-          Whole-site backup
-        </h3>
-        <Muted>
-          Files and a fresh database from craftish, made by Kamaji into restic on molcajete, read
-          back after each run, and restored to an offline test copy once a month.
-        </Muted>
-      </div>
-      <Status data={data} />
-      {data.active && <LastRestore check={data.restoreChecks[0]} />}
+    <>
+      <Rows>
+        {latest && !latest.ok ? (
+          <>
+            <dt>Latest attempt</dt>
+            <dd>
+              <Pill tone="red">
+                <Dot /> Failed
+              </Pill>
+              <Time iso={latest.startedAt} />
+              {latest.problem && <span className="why">{latest.problem}</span>}
+            </dd>
+            <dt>Last successful</dt>
+            <dd>{data.lastGoodAt ? <Time iso={data.lastGoodAt} /> : 'None yet'}</dd>
+          </>
+        ) : (
+          <>
+            <dt>Last backup</dt>
+            <dd>
+              {data.lastGoodAt ? (
+                <>
+                  <Pill tone="green">
+                    <Dot /> Backed up
+                  </Pill>
+                  <Time iso={data.lastGoodAt} />
+                  {lastGood?.bytes != null && <span>{size(lastGood.bytes)}</span>}
+                </>
+              ) : (
+                'None yet'
+              )}
+            </dd>
+          </>
+        )}
+        <dt>Restore check</dt>
+        <dd>
+          {!check ? (
+            'Not run yet'
+          ) : check.ok ? (
+            <>
+              <Pill tone={checkOld ? 'neutral' : 'green'}>
+                <Dot /> {checkOld ? 'Passed, out of date' : 'Passed'}
+              </Pill>
+              <Time iso={check.startedAt} />
+              <span>{check.seconds} s</span>
+            </>
+          ) : (
+            <>
+              <Pill tone="red">
+                <Dot /> Failed
+              </Pill>
+              <Time iso={check.startedAt} />
+              <span className="why">
+                While{' '}
+                {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep ?? 'at an unknown step'}:{' '}
+                {check.problem}
+              </span>
+            </>
+          )}
+        </dd>
+        <dt>Next run</dt>
+        <dd>
+          <NextRun data={data} now={now} />
+        </dd>
+      </Rows>
       {data.active && (
         <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button
@@ -203,21 +232,44 @@ export function WholeSiteBackups({
         </div>
       )}
       {problem && <FormError>{problem}</FormError>}
-      {(data.snapshots.length > 0 || data.repository) && (
-        <details>
-          <summary>Snapshots and storage ({data.snapshots.length})</summary>
-          <div css={{ display: 'grid', gap: 8, marginTop: 6 }}>
-            {data.snapshots.length > 0 && <Snapshots snapshots={data.snapshots} />}
+      <details>
+        <summary>Snapshots, storage and consent ({data.snapshots.length})</summary>
+        <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
+          <Rows>
+            <dt>Schedule</dt>
+            <dd>{SCHEDULES[data.schedule]}, nightly at 03:15 when due</dd>
+            <dt>Agreement</dt>
+            <dd>
+              {data.own ? (
+                'Tyler’s own site: no client to ask'
+              ) : data.consentAt ? (
+                <>
+                  The client agreed: ticked by {data.consentBy} <Time iso={data.consentAt} />
+                </>
+              ) : (
+                'Not recorded'
+              )}
+            </dd>
+            <dt>Kept</dt>
+            <dd>4 weekly and 6 monthly snapshots</dd>
+            <dt>Where</dt>
+            <dd>
+              Encrypted with restic on molcajete. Arq copies that repository off-site; Kamaji
+              doesn’t check Arq.
+            </dd>
             {data.repository && (
-              <Muted>
-                All sites’ backups take {size(data.repository.bytes)} on molcajete (measured{' '}
-                <Time iso={data.repository.at} />
-                ).
-              </Muted>
+              <>
+                <dt>Repository</dt>
+                <dd>
+                  {size(data.repository.bytes)} for all sites, measured{' '}
+                  <Time iso={data.repository.at} />
+                </dd>
+              </>
             )}
-          </div>
-        </details>
-      )}
-    </section>
+          </Rows>
+          {data.snapshots.length > 0 && <Snapshots snapshots={data.snapshots} />}
+        </div>
+      </details>
+    </>
   );
 }
