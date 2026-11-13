@@ -1,5 +1,11 @@
-// One site: its unfinished setup to resume, or once done, its connection and Remove.
-import { SiteDetailResponse } from '@kamaji/shared';
+// One site: its unfinished setup to resume, or once done, tabs. Status says what's true now and
+// what needs doing (updates to approve); Backups, Inventory and Settings hold the detail.
+import { Handshake, SiteBackupsResponse, SiteDetailResponse } from '@kamaji/shared';
+import { useState } from 'react';
+import { postJson } from '../api';
+import { StatusList } from '../components/statusList';
+import { Tabs } from '../components/tabs';
+import { failed, reason, saved } from '../components/toast';
 import {
   Button,
   Grid,
@@ -10,7 +16,10 @@ import {
   ResourceView,
 } from '../components/ui';
 import { useLink } from '../router';
-import { useResource } from '../useResource';
+import { backups, certificate, fromOutside, homePage, security, updates } from '../siteStatus';
+import { useResource, type Resource } from '../useResource';
+import { InventoryPanel } from './InventoryPanel';
+import { SiteBackupsPanel } from './SiteBackupsPanel';
 import {
   Capabilities,
   ConfigureStep,
@@ -19,12 +28,6 @@ import {
   RemovePanel,
   Steps,
 } from './SiteSetup';
-import { postJson } from '../api';
-import { Handshake } from '@kamaji/shared';
-import { useState } from 'react';
-import { failed, reason, saved } from '../components/toast';
-import { InventoryPanel } from './InventoryPanel';
-import { SiteBackupsPanel } from './SiteBackupsPanel';
 import { SiteUpdatesPanel } from './SiteUpdatesPanel';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
@@ -50,14 +53,93 @@ function Recheck({ id, reload }: { id: string; reload: () => void }) {
   );
 }
 
+/** What's true now: the site's checks, then its backups. */
+function Status({
+  detail,
+  now,
+  backupsResource,
+}: {
+  detail: SiteDetailResponse;
+  /** When the detail loaded: checks are aged against it. */
+  now: number;
+  backupsResource: Resource<SiteBackupsResponse>;
+}) {
+  const { site } = detail;
+  return (
+    <Grid columns="repeat(2, minmax(0, 1fr))">
+      <Panel aria-labelledby="site-now">
+        <PanelTitle id="site-now">Site</PanelTitle>
+        <StatusList
+          lines={[
+            homePage(site, now),
+            fromOutside(site, now),
+            certificate(site),
+            security(detail, now),
+            updates(site),
+          ]}
+        />
+        <Muted>Reachable only means the home page answered. Health is all of these together.</Muted>
+      </Panel>
+      <Panel aria-labelledby="backups-now">
+        <PanelTitle id="backups-now">Backups</PanelTitle>
+        <ResourceView resource={backupsResource} label="this site’s backups">
+          {(b) => (
+            <StatusList
+              lines={backups(b, backupsResource.state === 'ready' ? backupsResource.loadedAt : now)}
+            />
+          )}
+        </ResourceView>
+      </Panel>
+    </Grid>
+  );
+}
+
+function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: () => void }) {
+  const { site } = detail;
+  return (
+    <Panel aria-labelledby="connection">
+      <PanelTitle id="connection">Connection</PanelTitle>
+      {site.mode === 'connected' && detail.handshake ? (
+        <>
+          <Capabilities handshake={detail.handshake} detail={detail} />
+          <Recheck id={site.id} reload={reload} />
+          <Muted>
+            <a href={`/api/sites/${site.id}/craftish-care.zip`} download="craftish-care.zip">
+              Download this site’s copy of Craftish Care
+            </a>
+            , with its keys built in, to upload over the installed one (Plugins → Add New Plugin →
+            Upload Plugin, then “Replace current with uploaded”).
+          </Muted>
+        </>
+      ) : (
+        <>
+          <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
+          {detail.canConnect && (
+            <details>
+              <summary>Connect with Craftish Care</summary>
+              <InstallSteps detail={detail} reload={reload} />
+            </details>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 export function SitePage({ id }: { id: string }) {
-  const detail = useResource(`/api/sites/${id}`, SiteDetailResponse);
+  const detail = useResource(`/api/sites/${id}`, SiteDetailResponse, { pollMs: 60_000 });
+  const backupsResource = useResource(
+    `/api/sites/${encodeURIComponent(id)}/backups`,
+    SiteBackupsResponse,
+    { pollMs: 15_000 },
+  );
   const back = useLink('/sites');
   return (
     <ResourceView resource={detail} label="the site">
       {(d) => {
         const reload = detail.state === 'ready' ? detail.reload : () => {};
         const { site } = d;
+        const connected = site.mode === 'connected';
         return (
           <>
             <PageHeading
@@ -83,47 +165,62 @@ export function SitePage({ id }: { id: string }) {
                 <ConfigureStep detail={d} reload={reload} />
               </>
             )}
+            {site.setup !== 'done' && <RemovePanel detail={d} />}
             {site.setup === 'done' && (
-              <>
-                {/* Connection and Configure side by side, stacked on narrow screens. */}
-                <Grid columns="repeat(2, minmax(0, 1fr))">
-                  <Panel aria-labelledby="connection">
-                    <PanelTitle id="connection">Connection</PanelTitle>
-                    {site.mode === 'connected' && d.handshake ? (
+              <Tabs
+                label={site.name}
+                tabs={[
+                  {
+                    id: 'status',
+                    label: 'Status',
+                    panel: () => (
                       <>
-                        <Capabilities handshake={d.handshake} detail={d} />
-                        <Recheck id={site.id} reload={reload} />
-                        <Muted>
-                          <a
-                            href={`/api/sites/${site.id}/craftish-care.zip`}
-                            download="craftish-care.zip"
-                          >
-                            Download this site’s copy of Craftish Care
-                          </a>
-                          , with its keys built in, to upload over the installed one (Plugins → Add
-                          New Plugin → Upload Plugin, then “Replace current with uploaded”).
-                        </Muted>
+                        <Status
+                          detail={d}
+                          now={detail.state === 'ready' ? detail.loadedAt : 0}
+                          backupsResource={backupsResource}
+                        />
+                        {connected && <SiteUpdatesPanel siteId={site.id} />}
                       </>
-                    ) : (
+                    ),
+                  },
+                  {
+                    id: 'backups',
+                    label: 'Backups',
+                    panel: () => <SiteBackupsPanel siteId={site.id} backups={backupsResource} />,
+                  },
+                  ...(connected
+                    ? [
+                        {
+                          id: 'inventory',
+                          label: 'Inventory',
+                          panel: () => (
+                            <InventoryPanel
+                              detail={d}
+                              now={detail.state === 'ready' ? detail.loadedAt : 0}
+                              reload={reload}
+                            />
+                          ),
+                        },
+                      ]
+                    : []),
+                  {
+                    id: 'settings',
+                    label: 'Settings',
+                    panel: () => (
                       <>
-                        <Muted>Monitoring only: uptime and certificate, nothing installed.</Muted>
-                        {d.canConnect && (
-                          <details>
-                            <summary>Connect with Craftish Care</summary>
-                            <InstallSteps detail={d} reload={reload} />
-                          </details>
-                        )}
+                        {/* Connection and Configure side by side, stacked on narrow screens. */}
+                        <Grid columns="repeat(2, minmax(0, 1fr))">
+                          <Connection detail={d} reload={reload} />
+                          <ConfigureStep detail={d} reload={reload} />
+                        </Grid>
+                        <RemovePanel detail={d} />
                       </>
-                    )}
-                  </Panel>
-                  <ConfigureStep detail={d} reload={reload} />
-                </Grid>
-                {site.mode === 'connected' && <SiteUpdatesPanel siteId={site.id} />}
-                <SiteBackupsPanel siteId={site.id} />
-                {site.mode === 'connected' && <InventoryPanel detail={d} reload={reload} />}
-              </>
+                    ),
+                  },
+                ]}
+              />
             )}
-            <RemovePanel detail={d} />
           </>
         );
       }}

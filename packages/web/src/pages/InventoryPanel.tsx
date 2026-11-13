@@ -13,7 +13,9 @@ import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError } from '../components/forms';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Table, Time } from '../components/ui';
+import { StatusList } from '../components/statusList';
 import { saved } from '../components/toast';
+import { security } from '../siteStatus';
 
 const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
@@ -152,9 +154,12 @@ function MuPlugins({ muPlugins }: { muPlugins: Inventory['muPlugins'] }) {
 
 export function InventoryPanel({
   detail,
+  now,
   reload,
 }: {
   detail: SiteDetailResponse;
+  /** When the detail loaded: the report is aged against it. */
+  now: number;
   reload: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -178,6 +183,7 @@ export function InventoryPanel({
   return (
     <Panel aria-labelledby="inventory">
       <PanelTitle id="inventory">Inventory</PanelTitle>
+      <StatusList lines={[security(detail, now)]} />
       <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button type="button" disabled={busy} onClick={refresh}>
           {busy ? 'Asking the site…' : 'Refresh now'}

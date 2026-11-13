@@ -12,7 +12,7 @@ import { Button, Dot, Muted, Pill, Table, Time } from '../components/ui';
 import { SCHEDULES } from './SiteSetup';
 
 const WORDS: Record<string, string> = {
-  not_active: 'whole-site backups are off for this site: turn them on under Configure',
+  not_active: 'whole-site backups are off for this site: turn them on in Settings',
   already_requested: 'it’s already asked for',
 };
 
@@ -37,7 +37,7 @@ function nextNight(iso: string): string {
 
 function Status({ data }: { data: Data }) {
   if (data.schedule === 'off') {
-    return <p css={{ margin: 0 }}>Off. Turn them on under Configure.</p>;
+    return <p css={{ margin: 0 }}>Off. Turn them on in Settings.</p>;
   }
   return (
     <p css={{ margin: 0 }}>
@@ -62,23 +62,18 @@ function Status({ data }: { data: Data }) {
   );
 }
 
+/** The last restore check in words; its flag, and whether it's current, are in the lines above. */
 function LastRestore({ check }: { check: RestoreCheck | undefined }) {
   if (!check) return <Muted>No restore check yet: one a month, or ask for one now.</Muted>;
   return check.ok ? (
     <p css={{ margin: 0 }}>
-      <Pill tone="green">
-        <Dot /> Restores
-      </Pill>{' '}
-      Restored to an offline test copy that served its home page, <Time iso={check.startedAt} /> (
-      {check.seconds} s).
+      Last restore check: restored to an offline test copy that served its home page,{' '}
+      <Time iso={check.startedAt} /> ({check.seconds} s).
     </p>
   ) : (
     <p css={{ margin: 0 }}>
-      <Pill tone="red">
-        <Dot /> Restore failed
-      </Pill>{' '}
-      <Time iso={check.startedAt} />, at {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep}:{' '}
-      {check.problem}
+      Last restore check failed <Time iso={check.startedAt} />, at{' '}
+      {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep}: {check.problem}
     </p>
   );
 }
@@ -170,9 +165,15 @@ export function WholeSiteBackups({
       aria-labelledby="whole-site"
       css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
     >
-      <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
-        Whole-site backups
-      </h3>
+      <div>
+        <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
+          Whole-site backup
+        </h3>
+        <Muted>
+          Files and a fresh database from craftish, made by Kamaji into restic on molcajete, read
+          back after each run, and restored to an offline test copy once a month.
+        </Muted>
+      </div>
       <Status data={data} />
       {data.active && <LastRestore check={data.restoreChecks[0]} />}
       {data.active && (
@@ -197,24 +198,24 @@ export function WholeSiteBackups({
                 Asked <Time iso={(data.pending.backup ?? data.pending.restore)!} />; the backups
                 process works on it now.
               </>
-            ) : (
-              'Files and a fresh database from craftish, into restic on molcajete.'
-            )}
+            ) : null}
           </Muted>
         </div>
       )}
       {problem && <FormError>{problem}</FormError>}
-      {data.repository && (
-        <Muted>
-          All sites’ backups take {size(data.repository.bytes)} on molcajete (measured{' '}
-          <Time iso={data.repository.at} />
-          ).
-        </Muted>
-      )}
-      {data.snapshots.length > 0 && (
+      {(data.snapshots.length > 0 || data.repository) && (
         <details>
-          <summary>Snapshots ({data.snapshots.length})</summary>
-          <Snapshots snapshots={data.snapshots} />
+          <summary>Snapshots and storage ({data.snapshots.length})</summary>
+          <div css={{ display: 'grid', gap: 8, marginTop: 6 }}>
+            {data.snapshots.length > 0 && <Snapshots snapshots={data.snapshots} />}
+            {data.repository && (
+              <Muted>
+                All sites’ backups take {size(data.repository.bytes)} on molcajete (measured{' '}
+                <Time iso={data.repository.at} />
+                ).
+              </Muted>
+            )}
+          </div>
         </details>
       )}
     </section>
