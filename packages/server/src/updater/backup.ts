@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { z } from 'zod';
+import { exportTime } from '../backups/exportTime.js';
 import type { Db } from '../db.js';
 import type { BackupResult, RunSite } from './run.js';
 
@@ -12,7 +13,7 @@ const Answer = z.discriminatedUnion('ok', [
     format: z.literal(1),
     ok: z.literal(true),
     site: z.string(),
-    at: z.string(),
+    at: z.string().max(40),
     bytes: z.number().int(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
   }),
@@ -90,20 +91,25 @@ export function craftishBackup(config: BackupConfig | undefined): Backup {
           }),
       );
     });
-    const line = out.stdout.trim().split('\n').pop() ?? '';
-    const parsed = readAnswer(line);
-    if (!parsed)
-      return {
-        ok: false,
-        words: `The export on craftish didn’t answer as expected (exit ${out.code ?? 'unknown'})`,
-      };
-    if (!parsed.ok) return { ok: false, words: `The export on craftish failed: ${parsed.problem}` };
-    if (parsed.site !== site.id)
-      return { ok: false, words: 'The export on craftish answered for another site' };
+    return readExport(out.stdout, out.code, site.id);
+  };
+}
+
+/** What the export's last line says, for this site, as the run and Back up now record it. */
+export function readExport(stdout: string, code: number | null, siteId: string): BackupResult {
+  const line = stdout.trim().split('\n').pop() ?? '';
+  const parsed = readAnswer(line);
+  if (!parsed)
     return {
-      ok: true,
-      words: `Kamaji exported the database on craftish at ${parsed.at} (${parsed.bytes} bytes, SHA-256 ${parsed.sha256.slice(0, 12)}…)`,
-      answer: { at: parsed.at, bytes: parsed.bytes, sha256: parsed.sha256 },
+      ok: false,
+      words: `The export on craftish didn’t answer as expected (exit ${code ?? 'unknown'})`,
     };
+  if (!parsed.ok) return { ok: false, words: `The export on craftish failed: ${parsed.problem}` };
+  if (parsed.site !== siteId)
+    return { ok: false, words: 'The export on craftish answered for another site' };
+  return {
+    ok: true,
+    words: `Kamaji exported the database on craftish at ${exportTime(parsed.at) ?? parsed.at} (${parsed.bytes} bytes, SHA-256 ${parsed.sha256.slice(0, 12)}…)`,
+    answer: { at: parsed.at, bytes: parsed.bytes, sha256: parsed.sha256 },
   };
 }

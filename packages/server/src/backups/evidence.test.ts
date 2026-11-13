@@ -50,7 +50,7 @@ describe('a site’s backup history', () => {
       at: T - 1_000,
       ok: true,
       words: 'exported',
-      answer: { at: '2026-11-12T00:59:59Z', bytes: 1234, sha256: HASH },
+      answer: { at: '20261112T005959Z', bytes: 1234, sha256: HASH },
     });
     recordEvidence(db, {
       siteId: 'one.test',
@@ -60,10 +60,34 @@ describe('a site’s backup history', () => {
       ok: false,
       words: 'The export on craftish failed: not on the list',
     });
-    expect(backupHistory(db, 'one.test').map((e) => [e.state, e.batchId, e.bytes])).toEqual([
-      ['failed', null, null],
-      ['exported', 'new', 1234],
-      ['recorded', 'old', null],
+    expect(
+      backupHistory(db, 'one.test').map((e) => [e.state, e.batchId, e.bytes, e.exportedAt]),
+    ).toEqual([
+      ['failed', null, null, null],
+      ['exported', 'new', 1234, '2026-11-12T00:59:59.000Z'],
+      ['recorded', 'old', null, null],
+    ]);
+  });
+
+  it('keeps a time it can’t read in the words, without breaking the rest', () => {
+    const db = testDb();
+    site(db, 'one.test');
+    for (const [at, when] of [
+      ['not a time', T - 1_000],
+      ['20261113T004147Z', T],
+    ] as const)
+      recordEvidence(db, {
+        siteId: 'one.test',
+        batchId: null,
+        requestedBy: LOGIN,
+        at: when,
+        ok: true,
+        words: 'exported',
+        answer: { at, bytes: 1, sha256: HASH },
+      });
+    expect(backupHistory(db, 'one.test').map((e) => [e.exportedAt, e.words])).toEqual([
+      ['2026-11-13T00:41:47.000Z', 'exported'],
+      [null, 'exported (the export gave its time as “not a time”)'],
     ]);
   });
 });
@@ -117,13 +141,14 @@ describe('Back up now', () => {
     finish({
       ok: true,
       words: 'Kamaji exported the database on craftish',
-      answer: { at: '2026-11-12T01:00:00Z', bytes: 99, sha256: HASH },
+      answer: { at: '20261112T010000Z', bytes: 99, sha256: HASH },
     });
     await new Promise((r) => setImmediate(r));
     const after = await get('one.test');
     expect(after.exporting).toBeNull();
     expect(after.latest).toMatchObject({
       state: 'exported',
+      exportedAt: '2026-11-12T01:00:00.000Z',
       batchId: null,
       bytes: 99,
       sha256: HASH,

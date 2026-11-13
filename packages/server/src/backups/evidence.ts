@@ -2,6 +2,7 @@
 // and only that. The exports themselves stay on craftish; this never lists or reads them.
 import type { BackupEntry, SiteBackupsResponse } from '@kamaji/shared';
 import type { Db } from '../db.js';
+import { exportTime } from './exportTime.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -53,16 +54,25 @@ export function backupHistory(db: Db, siteId: string): BackupEntry[] {
        WHERE e.site_id = ? ORDER BY e.recorded_at DESC, e.id DESC`,
     )
     .all(siteId)
-    .map((r) => ({
-      recordedAt: iso(Number(r.recorded_at)),
-      state: Number(r.ok) === 1 ? 'exported' : 'failed',
-      batchId: r.batch_id === null ? null : String(r.batch_id),
-      runApprovedAt: r.approved_at === null ? null : iso(Number(r.approved_at)),
-      exportedAt: r.exported_at === null ? null : new Date(String(r.exported_at)).toISOString(),
-      bytes: r.bytes === null ? null : Number(r.bytes),
-      sha256: r.sha256 === null ? null : String(r.sha256),
-      words: String(r.words),
-    }));
+    .map((r) => {
+      // Kept as the export answered it; one time that doesn't read as a time stays in the words
+      // rather than breaking the whole history.
+      const raw = r.exported_at === null ? null : String(r.exported_at);
+      const exportedAt = raw === null ? null : exportTime(raw);
+      return {
+        recordedAt: iso(Number(r.recorded_at)),
+        state: Number(r.ok) === 1 ? 'exported' : 'failed',
+        batchId: r.batch_id === null ? null : String(r.batch_id),
+        runApprovedAt: r.approved_at === null ? null : iso(Number(r.approved_at)),
+        exportedAt,
+        bytes: r.bytes === null ? null : Number(r.bytes),
+        sha256: r.sha256 === null ? null : String(r.sha256),
+        words:
+          raw !== null && exportedAt === null
+            ? `${String(r.words)} (the export gave its time as “${raw}”)`
+            : String(r.words),
+      };
+    });
   const runs: BackupEntry[] = db
     .prepare(
       `SELECT bs.batch_id, bs.backup, b.approved_at, COALESCE(bs.started_at, b.approved_at) AS at

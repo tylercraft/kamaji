@@ -473,13 +473,18 @@ describe('the updater', () => {
   it('keeps what a good export answered, apart, for the site’s Backups', async () => {
     const { db, deps } = setup('kamaji');
     await approve(db);
-    const answer = { at: '2026-11-12T00:00:00Z', bytes: 4096, sha256: 'b'.repeat(64) };
+    const answer = { at: '20261112T000000Z', bytes: 4096, sha256: 'b'.repeat(64) };
     await runUpdater({
       ...deps(),
       backup: async () => ({ ok: true, words: 'Kamaji exported the database on craftish', answer }),
     });
     const [entry] = backupHistory(db, SITE);
-    expect(entry).toMatchObject({ state: 'exported', batchId: batchViews(db)[0]!.id, bytes: 4096 });
+    expect(entry).toMatchObject({
+      state: 'exported',
+      batchId: batchViews(db)[0]!.id,
+      exportedAt: '2026-11-12T00:00:00.000Z',
+      bytes: 4096,
+    });
     expect(backupHistory(db, SITE)).toHaveLength(1);
   });
 
