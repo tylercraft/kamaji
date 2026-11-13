@@ -114,10 +114,27 @@ export function fromOutside(site: SiteSummary, now: number): StatusLine {
 export function certificate(site: SiteSummary): StatusLine {
   const label = 'Certificate';
   const c = site.certificate;
-  if (!c.known) return line(label, 'neutral', 'Not checked yet', c.reason);
+  // A check that failed says how; a timeout doesn't mean the certificate is bad.
+  if (!c.known)
+    return c.reason === 'Not read yet'
+      ? line(label, 'neutral', 'Not checked yet', 'The first check is pending.')
+      : line(
+          label,
+          'amber',
+          /^No answer within/.test(c.reason) ? 'Check timed out' : 'Check failed',
+          `${c.reason}. That alone doesn’t mean the certificate is bad.`,
+        );
   const days = c.value.daysLeft;
   const left = `${days} ${days === 1 ? 'day' : 'days'} left.`;
   if (days < 0) return line(label, 'red', 'Expired', 'Visitors see a warning.', c.value.checkedAt);
+  if (c.value.problem)
+    return line(
+      label,
+      'red',
+      c.value.problem,
+      `${left} Visitors may see a warning.`,
+      c.value.checkedAt,
+    );
   if (days <= 7) return line(label, 'red', 'Expiring', left, c.value.checkedAt);
   if (days <= 14) return line(label, 'amber', 'Expiring soon', left, c.value.checkedAt);
   return line(label, 'green', 'Valid', left, c.value.checkedAt);
@@ -131,6 +148,15 @@ export function findings(inventory: Inventory): { name: string; v: Vulnerability
     ...inventory.themes.flatMap((t) => t.vulnerabilities.map((v) => ({ name: t.name, v }))),
   ];
   return all.filter((f) => !f.v.informational);
+}
+
+/** Wordfence's general notes ("all known versions"): shown, never counted as a finding. */
+export function informationalCount(inventory: Inventory): number {
+  return [
+    ...inventory.core.vulnerabilities,
+    ...inventory.plugins.flatMap((p) => p.vulnerabilities),
+    ...inventory.themes.flatMap((t) => t.vulnerabilities),
+  ].filter((v) => v.informational).length;
 }
 
 /** Security findings. "None known" only with vulnerability data and a report that's current. */
@@ -150,6 +176,12 @@ export function security(detail: SiteDetailResponse, now: number): StatusLine {
     return line(label, 'neutral', 'Not checked', inv.vulnerabilityData.reason);
   const old = isOutOfDate(inv.reportedAt, CURRENT_FOR.report, now);
   const found = findings(inv);
+  const informational = informationalCount(inv);
+  const none = informational > 0 ? 'No actionable findings' : 'None known';
+  const info =
+    informational > 0
+      ? ` ${informational} informational ${informational === 1 ? 'note' : 'notes'}, shown under Software.`
+      : '';
   if (found.length > 0) {
     const names = [...new Set(found.map((f) => f.name))];
     const fixable = found.filter((f) => f.v.fixedIn).length;
@@ -174,10 +206,10 @@ export function security(detail: SiteDetailResponse, now: number): StatusLine {
     return line(
       label,
       'amber',
-      'None known, data out of date',
+      `${none}, data out of date`,
       `Kamaji’s Wordfence data is out of date${
         inv.vulnerabilityData.value.problem ? `: ${inv.vulnerabilityData.value.problem}` : ''
-      }.${mu}`,
+      }.${info}${mu}`,
       inv.reportedAt,
       old,
     );
@@ -185,16 +217,16 @@ export function security(detail: SiteDetailResponse, now: number): StatusLine {
     return line(
       label,
       'neutral',
-      'None known at last report',
-      `The site hasn’t reported since, so this isn’t current.${mu}`,
+      `${none} at last report`,
+      `The site hasn’t reported since, so this isn’t current.${info}${mu}`,
       inv.reportedAt,
       true,
     );
   return line(
     label,
     'green',
-    'None known',
-    `Its last report, matched against Wordfence’s list.${mu}`,
+    none,
+    `Its last report, matched against Wordfence’s list.${info}${mu}`,
     inv.reportedAt,
   );
 }
@@ -207,13 +239,23 @@ export function updates(site: SiteSummary): StatusLine {
   const n = site.updates.value;
   return n === 0
     ? line(label, 'green', 'None waiting', 'WordPress offers no updates here.')
-    : line(label, 'amber', `${n} waiting`, 'Review and approve them below.');
+    : line(label, 'amber', `${n} waiting`, 'Review and approve them under Updates.');
 }
 
 const VOUCHED: Record<'host' | 'client' | 'tyler', string> = {
   host: 'The host backs this site up.',
   client: 'The client backs this site up.',
   tyler: 'You confirm a backup before each run.',
+};
+
+const STEP_WORDS: Record<string, string> = {
+  restore: 'restoring the snapshot',
+  verify: 'checking it against its manifest',
+  unpack: 'unpacking it',
+  docker: 'starting Docker',
+  database: 'loading the database',
+  wordpress: 'starting WordPress',
+  'home page': 'fetching the home page',
 };
 
 const SCHEDULE_DAYS = { weekly: 7, fortnightly: 14 } as const;
@@ -230,7 +272,7 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
 
   if (b.backupExpectation === null)
     lines.push(
-      line('Backups', 'amber', 'Not set', 'Choose how this site is backed up in Settings.'),
+      line('Backups', 'amber', 'Not set', 'Choose how this site is backed up under Configure.'),
     );
   else if (b.backupExpectation !== 'kamaji') {
     const vouched = b.history.find((e) => e.state === 'recorded');
@@ -292,7 +334,7 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
           'Off',
           w.schedule === 'off'
             ? 'Files and database aren’t backed up by Kamaji.'
-            : 'Waiting for the client’s agreement in Settings.',
+            : 'Waiting for the client’s agreement under Configure.',
         ),
       );
     else {
@@ -333,7 +375,15 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
         lines.push(line('Restore check', 'neutral', 'Not run yet', 'One a month, or ask for one.'));
       else if (!check.ok)
         lines.push(
-          line('Restore check', 'red', 'Failed', check.problem ?? 'It failed.', check.startedAt),
+          line(
+            'Restore check',
+            'red',
+            'Failed',
+            `While ${STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep ?? 'at an unknown step'}: ${
+              check.problem ?? 'it failed'
+            }.`,
+            check.startedAt,
+          ),
         );
       else {
         const old = isOutOfDate(check.startedAt, CURRENT_FOR.restoreCheck, now);
@@ -342,7 +392,7 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
             'Restore check',
             old ? 'neutral' : 'green',
             old ? 'Passed, out of date' : 'Passed',
-            `Restored to an offline test copy in ${check.seconds} s.`,
+            `Restored to an offline test copy that served its home page, in ${check.seconds} s.`,
             check.startedAt,
             old,
           ),
