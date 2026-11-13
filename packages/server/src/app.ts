@@ -7,6 +7,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import {
   ApproveRequest,
   ConfigureSiteRequest,
+  WholeSiteRequest,
   NewSiteRequest,
   RemoveSiteRequest,
   type BackupExpectation,
@@ -14,7 +15,9 @@ import {
 } from '@kamaji/shared';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { recordEvidence, siteBackups } from './backups/evidence.js';
+import { openDownload, type FetchExport } from './backups/download.js';
+import { latestExport, recordEvidence, siteBackups } from './backups/evidence.js';
+import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportSite } from './inventory/report.js';
@@ -59,6 +62,10 @@ export interface AppOptions {
   startUpdater?: UpdaterStart;
   /** The craftish export the updater runs before a batch, for "Back up now" (updater/backup.ts). */
   backup?: Backup;
+  /** One export from craftish, streamed for "Download latest export" (backups/download.ts). */
+  fetchExport?: FetchExport;
+  /** Wakes the backups process for a request from a site's Backups panel. */
+  startBackups?: () => void;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -97,6 +104,8 @@ export function createApp({
   care,
   startUpdater = () => {},
   backup,
+  fetchExport,
+  startBackups = () => {},
   now = Date.now,
   log,
 }: AppOptions): Hono {
@@ -224,6 +233,43 @@ export function createApp({
       })
       .finally(() => exporting.delete(id));
     return c.json({ started: true }, 202);
+  });
+  // The latest export, from craftish to the browser; nothing is kept on the mini.
+  app.get('/api/sites/:id/backups/download', async (c) => {
+    const row = backupSite(c.req.param('id'));
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    const id = String(row.id);
+    if (String(row.host_kind) !== 'craftish') return c.json({ error: 'not_craftish' }, 400);
+    const latest = latestExport(db, id);
+    if (!latest) return c.json({ error: 'no_export' }, 404);
+    const stream = fetchExport?.(id, latest.at);
+    if (!stream) return c.json({ error: 'not_set_up' }, 409);
+    const opened = await openDownload(stream, ({ sha256, exit }) => {
+      if (exit !== 0) log?.(`download: ${id} stopped early`);
+      else if (latest.sha256 && sha256 !== latest.sha256)
+        log?.(`download: ${id} differs from its recorded SHA-256`);
+      else log?.(`download: ${id} sent`);
+    });
+    if (!opened.ok) return c.json({ error: 'export_unavailable', problem: opened.problem }, 502);
+    return new Response(opened.body, {
+      headers: {
+        'Content-Type': 'application/gzip',
+        'Content-Disposition': `attachment; filename="${id}-${latest.at}.sql.gz"`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  });
+  // Whole-site backups: asks the backups process, which holds restic and the pull key.
+  app.post('/api/sites/:id/backups/whole-site', async (c) => {
+    const body = await readJson(c, WholeSiteRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const row = backupSite(c.req.param('id'));
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    const result = requestWholeSite(db, String(row.id), body.kind, login, now());
+    if (result === 'not-active') return c.json({ error: 'not_active' }, 409);
+    if (result === 'already') return c.json({ error: 'already_requested' }, 409);
+    startBackups();
+    return c.json({ queued: true }, 202);
   });
   // Refresh now: a report with WordPress's own update checks first (the plugin allows one per 10 minutes).
   app.post('/api/sites/:id/report', async (c) => {
