@@ -1,17 +1,17 @@
-// A site's Backups tab, as Kamaji recorded them (backups/evidence.ts on the server), one section
-// per kind so they're never mistaken for each other:
-//   - the database export Kamaji makes on craftish ("Back up now", and before each run), with
-//     "Download latest export";
-//   - backups the host, the client or Tyler vouch for, recorded before each run, never seen;
-//   - whole-site backups (files and database, restic on molcajete) and their restore checks.
-// Checksums and the full history sit in disclosures under the current state.
+// A site's Backups card, as Kamaji recorded them (backups/evidence.ts on the server), in two
+// parts that are never mistaken for each other:
+//   - before-update backups: the database export Kamaji makes on craftish ("Export database
+//     now", and before each run), or the host's, client's or Tyler's backup, which Kamaji records
+//     but never sees;
+//   - scheduled whole-site backups (files and database, restic on molcajete) and their restore
+//     checks.
+// Each part's state sits beside its heading; checksums and history are one click down.
 import { SiteBackupsResponse, type BackupEntry } from '@kamaji/shared';
 import { useState, type ReactNode } from 'react';
 import { z } from 'zod';
 import { getJson, postJson } from '../api';
 import { size } from '../bytes';
 import { FormError } from '../components/forms';
-import { StatusList } from '../components/statusList';
 import { failed, reason, saved } from '../components/toast';
 import {
   Button,
@@ -25,9 +25,8 @@ import {
   Time,
   type Tone,
 } from '../components/ui';
-import { backups as backupLines } from '../siteStatus';
+import { backups as backupLines, type StatusLine } from '../siteStatus';
 import type { Resource } from '../useResource';
-import { BACKUPS } from './SiteSetup';
 import { WholeSiteBackups } from './WholeSiteBackups';
 
 const WORDS: Record<string, string> = {
@@ -54,30 +53,72 @@ function Run({ entry }: { entry: BackupEntry }) {
   );
 }
 
-const Section = ({
+/** A part of the card: its heading with its state flag beside it, the state's words, then the rest. */
+function Part({
   id,
   title,
-  note,
+  lines,
   children,
 }: {
   id: string;
   title: string;
-  note: string;
-  children: ReactNode;
-}) => (
-  <section
-    aria-labelledby={id}
-    css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
-  >
-    <div>
+  lines: StatusLine[];
+  children?: ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby={id}
+      css={{
+        display: 'grid',
+        gap: 8,
+        borderTop: '1px solid var(--line)',
+        paddingTop: 12,
+        '&:first-of-type': { borderTop: 0, paddingTop: 0 },
+      }}
+    >
       <h3 id={id} css={{ margin: 0, fontSize: 13 }}>
         {title}
       </h3>
-      <Muted>{note}</Muted>
-    </div>
-    {children}
-  </section>
-);
+      {lines.map((l) => (
+        <div key={l.label} css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
+          <span css={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {lines.length > 1 && <span css={{ fontSize: 12 }}>{l.label}</span>}
+            <Pill tone={l.tone}>
+              <Dot /> {l.state}
+            </Pill>
+            {l.at && (
+              <Muted css={{ display: 'inline' }}>
+                <Time iso={l.at} />
+                {l.outOfDate && <span css={{ color: 'var(--amber)' }}> · out of date</span>}
+              </Muted>
+            )}
+          </span>
+          <Muted>{l.detail}</Muted>
+        </div>
+      ))}
+      {children}
+    </section>
+  );
+}
+
+/** Opens Configure, further down the page, and moves there. */
+export function ConfigureLink({ children }: { children: ReactNode }) {
+  return (
+    <a
+      href="#configure"
+      onClick={(event) => {
+        const target = document.getElementById('configure');
+        if (!(target instanceof HTMLDetailsElement)) return;
+        event.preventDefault();
+        target.open = true;
+        target.scrollIntoView({ block: 'start' });
+        target.querySelector('summary')?.focus({ preventScroll: true });
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 const factsCss = {
   margin: 0,
@@ -89,7 +130,7 @@ const factsCss = {
   dd: { margin: 0 },
 } as const;
 
-/** The newest good export: when, how big, what for; its checksum one click down. */
+/** The newest good export: when, how big, what for, and its checksum. */
 function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
   if (!entry) return <Muted>No export yet.</Muted>;
   return (
@@ -111,19 +152,16 @@ function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
         </dd>
       </dl>
       {entry.sha256 && (
-        <details>
-          <summary>Checksum</summary>
-          <dl css={{ ...factsCss, marginTop: 6 }}>
-            <dt>SHA-256</dt>
-            <dd css={{ overflowWrap: 'anywhere' }}>
-              <code>{entry.sha256}</code>
-            </dd>
-            <dt>Recorded</dt>
-            <dd>
-              <Time iso={entry.recordedAt} />
-            </dd>
-          </dl>
-        </details>
+        <dl css={factsCss}>
+          <dt>SHA-256</dt>
+          <dd css={{ overflowWrap: 'anywhere' }}>
+            <code>{entry.sha256}</code>
+          </dd>
+          <dt>Recorded</dt>
+          <dd>
+            <Time iso={entry.recordedAt} />
+          </dd>
+        </dl>
       )}
     </>
   );
@@ -132,7 +170,7 @@ function LatestExport({ entry }: { entry: BackupEntry | undefined }) {
 function History({ history }: { history: BackupEntry[] }) {
   return (
     <details>
-      <summary>All backup records ({history.length})</summary>
+      <summary>Backup history ({history.length})</summary>
       <div css={{ overflowX: 'auto' }}>
         <Table>
           <thead>
@@ -250,92 +288,86 @@ export function SiteBackupsPanel({
   }
 
   return (
-    <Panel aria-labelledby="backups">
-      <PanelTitle id="backups">Backups</PanelTitle>
+    <Panel aria-labelledby="backups-title" id="backups">
+      <PanelTitle id="backups-title">Backups</PanelTitle>
       <ResourceView resource={backups} label="this site’s backups">
         {(d) => {
           const exports = d.history.filter((e) => e.state !== 'recorded');
-          const vouched = d.history.filter((e) => e.state === 'recorded');
-          const vouchedFor = d.backupExpectation !== null && d.backupExpectation !== 'kamaji';
+          const lines = backupLines(d, backups.state === 'ready' ? backups.loadedAt : 0);
+          const pick = (...labels: string[]) => lines.filter((l) => labels.includes(l.label));
+          const kamaji = d.canExport || exports.length > 0;
+          const latest = exports.find((e) => e.state === 'exported');
           return (
             <>
-              <StatusList
-                lines={backupLines(d, backups.state === 'ready' ? backups.loadedAt : 0)}
-              />
-              <Muted>
-                Before each update run:{' '}
-                {d.backupExpectation
-                  ? `${BACKUPS[d.backupExpectation]}.`
-                  : 'not set yet. Choose it in Settings.'}
-              </Muted>
               {problem && <FormError>{problem}</FormError>}
-
-              {(d.canExport || exports.length > 0) && (
-                <Section
-                  id="database-export"
-                  title="Database export"
-                  note="The database only, exported by Kamaji on craftish and kept there 14 days. Nothing is kept on the mini."
-                >
-                  <LatestExport entry={exports.find((e) => e.state === 'exported')} />
-                  {(d.canExport || d.download) && (
-                    <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {d.canExport && (
-                        <Button
-                          type="button"
-                          disabled={busy || d.exporting !== null}
-                          onClick={backUpNow}
-                        >
-                          {d.exporting || busy ? 'Exporting…' : 'Back up now'}
-                        </Button>
-                      )}
-                      {d.download && (
-                        <Button
-                          type="button"
-                          disabled={downloading}
-                          onClick={() => void download()}
-                        >
-                          {downloading ? 'Downloading…' : 'Download latest export'}
-                        </Button>
-                      )}
-                      {d.canExport && (
-                        <Muted role="status">
-                          {d.exporting ? (
-                            <>
-                              Started <Time iso={d.exporting} />; it can take a few minutes.
-                            </>
-                          ) : (
-                            'The same export a run makes first.'
-                          )}
-                        </Muted>
-                      )}
-                    </div>
-                  )}
-                </Section>
-              )}
-
-              {(vouchedFor || vouched.length > 0) && (
-                <Section
-                  id="confirmed"
-                  title="Confirmed before runs"
-                  note="The host’s, the client’s or your own backup, as confirmed for each run. Kamaji records it but doesn’t make, see or check it."
-                >
-                  {vouched[0] ? (
-                    <p css={{ margin: 0 }}>
-                      {vouched[0].words}{' '}
-                      <Muted css={{ display: 'inline' }}>
-                        · for the run approved{' '}
-                        <Time iso={vouched[0].runApprovedAt ?? vouched[0].recordedAt} />
+              <Part
+                id="before-update"
+                title={
+                  d.backupExpectation === 'kamaji'
+                    ? 'Before-update database exports'
+                    : 'Before-update backups'
+                }
+                lines={pick('Backups', 'Database export')}
+              >
+                {d.backupExpectation === null && (
+                  <Muted>
+                    <ConfigureLink>Choose how this site is backed up</ConfigureLink>
+                  </Muted>
+                )}
+                {kamaji && (
+                  <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {d.canExport && (
+                      <Button
+                        type="button"
+                        disabled={busy || d.exporting !== null}
+                        onClick={backUpNow}
+                      >
+                        {d.exporting || busy ? 'Exporting…' : 'Export database now'}
+                      </Button>
+                    )}
+                    {d.download && (
+                      <Button type="button" disabled={downloading} onClick={() => void download()}>
+                        {downloading ? 'Downloading…' : 'Download latest database export'}
+                      </Button>
+                    )}
+                    {d.exporting && (
+                      <Muted role="status">
+                        Started <Time iso={d.exporting} />; it can take a few minutes.
                       </Muted>
-                    </p>
-                  ) : (
-                    <Muted>Nothing recorded yet: the first run records it.</Muted>
-                  )}
-                </Section>
+                    )}
+                  </div>
+                )}
+                {d.history.length > 0 && (
+                  <details>
+                    <summary>
+                      Backup history ({d.history.length}){latest?.sha256 ? ' and checksum' : ''}
+                    </summary>
+                    <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
+                      {kamaji && <LatestExport entry={latest} />}
+                      <History history={d.history} />
+                    </div>
+                  </details>
+                )}
+              </Part>
+              {d.wholeSite && (
+                <Part
+                  id="whole-site"
+                  title="Scheduled whole-site backups"
+                  lines={pick('Whole-site backup', 'Restore check')}
+                >
+                  <Muted>
+                    <ConfigureLink>
+                      {d.wholeSite.schedule === 'off' ? 'Turn them on' : 'Configure backups'}
+                    </ConfigureLink>
+                  </Muted>
+                  <WholeSiteBackups
+                    path={path}
+                    data={d.wholeSite}
+                    now={backups.state === 'ready' ? backups.loadedAt : 0}
+                    reload={reload}
+                  />
+                </Part>
               )}
-
-              {d.wholeSite && <WholeSiteBackups path={path} data={d.wholeSite} reload={reload} />}
-
-              {d.history.length > 0 && <History history={d.history} />}
             </>
           );
         }}

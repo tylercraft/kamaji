@@ -14,8 +14,9 @@ export const Panel = styled.section`
   display: grid;
   gap: 10px;
   align-content: start;
-  /* A title that opens the panel becomes its label strip. */
-  & > h2:first-child {
+  /* A title that opens the panel becomes its label strip; PanelHead adds a tag beside it. */
+  & > h2:first-child,
+  & > .panel-head:first-child {
     margin: -14px -16px 0;
     padding: 10px 16px;
     border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
@@ -23,6 +24,33 @@ export const Panel = styled.section`
     border-bottom: 1px solid var(--line);
   }
 `;
+
+/** A panel's label strip with something on the right: a count, a state, a button. */
+export function PanelHead({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div
+      className="panel-head"
+      css={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+      }}
+    >
+      <PanelTitle id={id}>{title}</PanelTitle>
+      {children}
+    </div>
+  );
+}
 
 /** A panel's label: small mono capitals, like a plate on the machine. */
 export const PanelTitle = styled.h2`
@@ -123,7 +151,7 @@ export function PageHeading({
   children,
 }: {
   title: string;
-  purpose: string;
+  purpose: ReactNode;
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLHeadingElement>(null);

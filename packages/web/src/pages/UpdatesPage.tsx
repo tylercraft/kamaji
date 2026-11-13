@@ -381,7 +381,8 @@ export function ReviewBody({
       {waitingOn.length > 0 && (
         <Muted id="approve-waits" role="status" css={{ color: 'var(--amber)' }}>
           Approve waits for the backup: tick “I confirm there’s a backup” for{' '}
-          {waitingOn.map((s) => s.siteName).join(', ')}, or set its backup in the site’s Settings.
+          {waitingOn.map((s) => s.siteName).join(', ')}, or set its backup under Configure on the
+          site’s page.
         </Muted>
       )}
       <PrimaryButton

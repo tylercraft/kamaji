@@ -1,7 +1,7 @@
-// A craftish site's whole-site backups, inside its Backups panel: the schedule and consent, the
+// A craftish site's whole-site backups, inside its Backups panel's subsection: the schedule and consent, the
 // snapshots and restore checks the backups process recorded, the repository's size, and asking
 // for a backup or a restore check now. The app never runs restic; it asks the backups process.
-import type { RestoreCheck, SiteSnapshot, WholeSiteBackups as Data } from '@kamaji/shared';
+import type { SiteSnapshot, WholeSiteBackups as Data } from '@kamaji/shared';
 import { useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
@@ -12,18 +12,8 @@ import { Button, Dot, Muted, Pill, Table, Time } from '../components/ui';
 import { SCHEDULES } from './SiteSetup';
 
 const WORDS: Record<string, string> = {
-  not_active: 'whole-site backups are off for this site: turn them on in Settings',
+  not_active: 'whole-site backups are off for this site: turn them on under Configure',
   already_requested: 'it’s already asked for',
-};
-
-const STEP_WORDS: Record<string, string> = {
-  restore: 'restoring the snapshot',
-  verify: 'checking it against its manifest',
-  unpack: 'unpacking it',
-  docker: 'starting Docker',
-  database: 'loading the database',
-  wordpress: 'starting WordPress',
-  'home page': 'the home page',
 };
 
 /** The night the next backup runs: the first 03:15 on or after it's due. */
@@ -35,9 +25,9 @@ function nextNight(iso: string): string {
   return night.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-function Status({ data }: { data: Data }) {
+function Status({ data, now }: { data: Data; now: number }) {
   if (data.schedule === 'off') {
-    return <p css={{ margin: 0 }}>Off. Turn them on in Settings.</p>;
+    return null;
   }
   return (
     <p css={{ margin: 0 }}>
@@ -45,7 +35,13 @@ function Status({ data }: { data: Data }) {
       {data.lastGoodAt ? (
         <>
           Last good backup <Time iso={data.lastGoodAt} />
-          {data.nextDueAt && <>; the next one on {nextNight(data.nextDueAt)}, at 03:15</>}.
+          {data.nextDueAt &&
+            (Date.parse(data.nextDueAt) < now ? (
+              <>; it was due on {nextNight(data.nextDueAt)}, and each night at 03:15 tries again</>
+            ) : (
+              <>; the next one on {nextNight(data.nextDueAt)}, at 03:15</>
+            ))}
+          .
         </>
       ) : (
         'None yet: the first one is tonight at 03:15, or ask for one now.'
@@ -58,22 +54,6 @@ function Status({ data }: { data: Data }) {
           ).
         </>
       ) : null}
-    </p>
-  );
-}
-
-/** The last restore check in words; its flag, and whether it's current, are in the lines above. */
-function LastRestore({ check }: { check: RestoreCheck | undefined }) {
-  if (!check) return <Muted>No restore check yet: one a month, or ask for one now.</Muted>;
-  return check.ok ? (
-    <p css={{ margin: 0 }}>
-      Last restore check: restored to an offline test copy that served its home page,{' '}
-      <Time iso={check.startedAt} /> ({check.seconds} s).
-    </p>
-  ) : (
-    <p css={{ margin: 0 }}>
-      Last restore check failed <Time iso={check.startedAt} />, at{' '}
-      {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep}: {check.problem}
     </p>
   );
 }
@@ -127,10 +107,13 @@ function Snapshots({ snapshots }: { snapshots: SiteSnapshot[] }) {
 export function WholeSiteBackups({
   path,
   data,
+  now,
   reload,
 }: {
   path: string;
   data: Data;
+  /** When the data loaded: a due date before it is past. */
+  now: number;
   reload: () => void;
 }) {
   const [problem, setProblem] = useState<string | null>(null);
@@ -161,21 +144,8 @@ export function WholeSiteBackups({
   }
 
   return (
-    <section
-      aria-labelledby="whole-site"
-      css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
-    >
-      <div>
-        <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
-          Whole-site backup
-        </h3>
-        <Muted>
-          Files and a fresh database from craftish, made by Kamaji into restic on molcajete, read
-          back after each run, and restored to an offline test copy once a month.
-        </Muted>
-      </div>
-      <Status data={data} />
-      {data.active && <LastRestore check={data.restoreChecks[0]} />}
+    <>
+      <Status data={data} now={now} />
       {data.active && (
         <div css={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button
@@ -218,6 +188,6 @@ export function WholeSiteBackups({
           </div>
         </details>
       )}
-    </section>
+    </>
   );
 }
