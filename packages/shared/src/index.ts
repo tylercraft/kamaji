@@ -383,6 +383,39 @@ export const Server = z.object({
 });
 export type Server = z.infer<typeof Server>;
 
+/** One package waiting on a server, as the Servers page lists it. */
+export const ServerPackage = z.object({
+  name: z.string(),
+  /** Empty when an older report (format 1) didn't say. */
+  from: z.string(),
+  to: z.string(),
+  /** When Kamaji first saw this version waiting. */
+  waitingSince: Timestamp,
+  /** What it's part of, when that's internet-facing: "OpenSSL", "the kernel". */
+  internetFacing: z.string().nullable(),
+  /** Why it deserves a careful pass ("restarts the database"), or null. */
+  care: z.string().nullable(),
+});
+export type ServerPackage = z.infer<typeof ServerPackage>;
+
+/** A server's package updates, rated (TY-167; checks/serverUpdates.ts on the server). */
+export const ServerUpdates = z.object({
+  level: z.enum(['urgent', 'digest', 'ok']),
+  /** The rating in words, most pressing first. */
+  words: z.array(z.string()),
+  security: z.array(ServerPackage),
+  /** Not security, but deserve a careful pass: MariaDB, the web server, PHP, the kernel. */
+  care: z.array(ServerPackage),
+  routine: z.array(ServerPackage),
+  /** Ubuntu Pro's ESM updates: information only. */
+  esm: z.array(z.string()),
+  total: z.number().int(),
+  /** The report's list was cut at its cap; total is the full count. */
+  truncated: z.boolean(),
+  reboot: z.object({ since: Timestamp.nullable(), packages: z.array(z.string()) }).nullable(),
+});
+export type ServerUpdates = z.infer<typeof ServerUpdates>;
+
 /** What craftish's report last said. */
 export const LinuxHealth = z.object({
   kind: z.literal('linux-ssh'),
@@ -391,8 +424,7 @@ export const LinuxHealth = z.object({
   /** End of the OS's standard support, as a date; null when Kamaji doesn't know it. */
   osSupportEnds: z.string().nullable(),
   uptimeSeconds: z.number().int().nullable(),
-  securityUpdates: z.array(z.string()),
-  otherUpdates: z.number().int(),
+  updates: ServerUpdates,
   rebootRequired: z.boolean(),
   /** Failed or stopped services. */
   stopped: z.array(z.string()),

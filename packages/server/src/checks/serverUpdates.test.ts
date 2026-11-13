@@ -92,6 +92,8 @@ describe('craftish’s updates, rated', () => {
     const quiet = { services: { apache2: 'inactive', mariadb: 'active' } };
     await at(db, T0, report(quiet));
     await at(db, T0 + DAY, report(quiet));
+    // Watched only for the rating: Apache installed and stopped isn't a stopped service.
+    expect(issue(db, 'services')).toBeNull();
     expect(issue(db, 'security-updates')).toMatchObject({
       severity: 'normal',
       summary: 'craftish: 8 security updates waiting for over a day',

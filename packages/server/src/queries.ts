@@ -17,7 +17,14 @@ import type {
 } from '@kamaji/shared';
 import type { CertificateResult, HomePageResult } from './checks/http.js';
 import type { OutsideResult } from './checks/outside.js';
-import { UBUNTU_EOL, type ReportReading } from './checks/serverReport.js';
+import {
+  rebootSince,
+  stoppedServices,
+  UBUNTU_EOL,
+  upgradableOf,
+  type ReportReading,
+} from './checks/serverReport.js';
+import { rateUpdates, updateRows, updatesView } from './checks/serverUpdates.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
@@ -144,25 +151,40 @@ export function listServers(db: Db): Server[] {
     .map(toServer);
 }
 
-function health(at: number, r: Extract<ReportReading, { ok: true }>['report']): LinuxHealth {
+function health(
+  db: Db,
+  server: Server,
+  at: number,
+  r: Extract<ReportReading, { ok: true }>['report'],
+): LinuxHealth {
   const { totalBytes, availableBytes } = r.memory;
+  // Format 2's list lives in server_updates; a format 1 report still has its names.
+  const rows =
+    r.format === 2
+      ? updateRows(db, server.id)
+      : upgradableOf(r).map((p) => ({ ...p, firstSeenAt: at }));
+  const reboot = {
+    required: r.rebootRequired,
+    since: rebootSince(db, server.id, r),
+    packages: r.rebootPackages,
+  };
+  const rating = rateUpdates({ server: server.name, now: at, rows, services: r.services, reboot });
   return {
     kind: 'linux-ssh',
     checkedAt: iso(at),
     os: r.os.name,
     osSupportEnds: (r.os.id === 'ubuntu' && UBUNTU_EOL[r.os.codename]) || null,
     uptimeSeconds: r.uptimeSeconds === null ? null : Math.round(r.uptimeSeconds),
-    securityUpdates: r.packages.security,
-    otherUpdates: r.packages.other.length,
+    updates: updatesView({
+      rating,
+      rows,
+      services: r.services,
+      total: r.upgradableTotal ?? rows.length,
+      truncated: r.truncated ?? false,
+      reboot,
+    }),
     rebootRequired: r.rebootRequired,
-    stopped: [
-      ...new Set([
-        ...r.failedUnits.map((u) => u.replace(/\.service$/, '')),
-        ...Object.entries(r.services)
-          .filter(([, state]) => state === 'failed' || state === 'inactive')
-          .map(([unit]) => unit),
-      ]),
-    ].sort(),
+    stopped: stoppedServices(r),
     disks: r.disks.map((d) => ({
       mount: d.mount,
       usedPercent: d.sizeBytes > 0 ? Math.round((d.usedBytes / d.sizeBytes) * 100) : 0,
@@ -201,7 +223,7 @@ function serverSummary(db: Db, server: Server): ServerSummary {
     ...server,
     health:
       good && good.value.ok
-        ? { known: true, value: health(good.at, good.value.report) }
+        ? { known: true, value: health(db, server, good.at, good.value.report) }
         : { known: false, reason: last ? 'No report has been read yet' : 'First report pending' },
     lastAttempt: last
       ? {

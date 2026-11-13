@@ -11,6 +11,7 @@
 //
 // "Waiting" counts from when Kamaji first saw that version (server_updates), since apt doesn't say
 // when a package became upgradable; a restart counts from /var/run/reboot-required's time.
+import type { ServerPackage, ServerUpdates } from '@kamaji/shared';
 import type { Db } from '../db.js';
 
 const DAY = 86_400_000;
@@ -140,8 +141,9 @@ export function updateRows(db: Db, serverId: string): UpdateRow[] {
 
 /** A wait in words: "under a day", "1 day", "9 days". */
 export function waited(ms: number): string {
-  const days = Math.floor(ms / DAY);
-  if (days < 1) return 'under a day';
+  if (ms < DAY) return 'under a day';
+  // Rounded, as the page's times are: 2 days 23 hours reads "3 days".
+  const days = Math.round(ms / DAY);
   return days === 1 ? '1 day' : `${days} days`;
 }
 
@@ -262,5 +264,41 @@ export function rateUpdates(input: {
     security: securityFinding,
     reboot: rebootFinding,
     stale: staleFinding,
+  };
+}
+
+/** The Servers page's view: the rating, and the list grouped as security / needs care / routine. */
+export function updatesView(input: {
+  rating: Rating;
+  rows: UpdateRow[];
+  services: Record<string, string>;
+  total: number;
+  truncated: boolean;
+  reboot: { required: boolean; since: number | null; packages: string[] };
+}): ServerUpdates {
+  const { rows, services } = input;
+  const pkg = (r: UpdateRow): ServerPackage => ({
+    name: r.name,
+    from: r.from,
+    to: r.to,
+    waitingSince: new Date(r.firstSeenAt).toISOString(),
+    ...classify(r.name, services),
+  });
+  const counted = rows.filter((r) => !r.esm);
+  return {
+    level: input.rating.level,
+    words: input.rating.words,
+    security: counted.filter((r) => r.security).map(pkg),
+    care: counted.filter((r) => !r.security && classify(r.name, services).care).map(pkg),
+    routine: counted.filter((r) => !r.security && !classify(r.name, services).care).map(pkg),
+    esm: rows.filter((r) => r.esm).map((r) => r.name),
+    total: input.total,
+    truncated: input.truncated,
+    reboot: input.reboot.required
+      ? {
+          since: input.reboot.since === null ? null : new Date(input.reboot.since).toISOString(),
+          packages: input.reboot.packages,
+        }
+      : null,
   };
 }

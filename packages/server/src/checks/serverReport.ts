@@ -173,6 +173,25 @@ export function upgradableOf(r: ServerReport): Upgradable[] {
   ];
 }
 
+/**
+ * Services the report watches only to rate updates: Apache counts as internet-facing while it
+ * runs (serverUpdates.ts), but craftish may have it installed and stopped, which isn't a problem.
+ */
+export const RATING_ONLY_SERVICES = new Set(['apache2']);
+
+/** Failed units, and watched services that aren't running. */
+export function stoppedServices(r: ServerReport): string[] {
+  return [
+    ...new Set([
+      ...r.failedUnits.map((u) => u.replace(/\.service$/, '')),
+      ...Object.entries(r.services)
+        .filter(([unit]) => !RATING_ONLY_SERVICES.has(unit))
+        .filter(([, state]) => state === 'failed' || state === 'inactive')
+        .map(([unit]) => unit),
+    ]),
+  ].sort();
+}
+
 const REBOOT_STATE = (serverId: string) => `server.reboot-since.${serverId}`;
 
 /**
@@ -248,13 +267,7 @@ export function judgeServer(
   apply('reboot', rating.reboot);
   apply('stale-updates', rating.stale);
 
-  const down = [
-    ...r.failedUnits,
-    ...Object.entries(r.services)
-      .filter(([, state]) => state === 'failed' || state === 'inactive')
-      .map(([unit]) => unit),
-  ];
-  const failed = [...new Set(down.map((u) => u.replace(/\.service$/, '')))].sort();
+  const failed = stoppedServices(r);
   if (failed.length > 0) {
     raiseIssue(db, at, {
       ...key('services'),

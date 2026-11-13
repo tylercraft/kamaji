@@ -11,6 +11,7 @@ import {
 } from '../components/ui';
 import { useResource } from '../useResource';
 import { Fact, Facts, Flag, gb, MacFacts, MacJobs } from './MolcajeteFacts';
+import { ServerUpdatesPanel, UpdatesRating } from './ServerUpdatesPanel';
 
 function uptime(seconds: number): string {
   const days = Math.floor(seconds / 86_400);
@@ -19,25 +20,31 @@ function uptime(seconds: number): string {
   return hours >= 1 ? `${hours} h` : `${Math.floor(seconds / 60)} min`;
 }
 
+/** Pending over 7 days: the point it turns urgent (checks/serverUpdates.ts). */
+function restartOverdue(health: LinuxHealth): boolean {
+  const since = health.updates.reboot?.since;
+  return since !== null && since !== undefined
+    ? Date.parse(health.checkedAt) - Date.parse(since) > 7 * 86_400_000
+    : false;
+}
+
 function LinuxFacts({ health }: { health: LinuxHealth }) {
-  const security = health.securityUpdates.length;
   return (
     <Facts>
       <Fact label="Updates">
-        {security > 0 ? (
-          <Flag tone="amber">
-            {security} security {security === 1 ? 'update' : 'updates'}
-          </Flag>
-        ) : (
-          <Flag tone="green">No security updates</Flag>
-        )}{' '}
-        <Muted css={{ display: 'inline' }}>
-          {health.otherUpdates} other {health.otherUpdates === 1 ? 'package' : 'packages'}
-        </Muted>
-        {security > 0 && <Muted>{health.securityUpdates.join(', ')}</Muted>}
+        <UpdatesRating updates={health.updates} />
       </Fact>
       <Fact label="Restart">
-        {health.rebootRequired ? <Flag tone="amber">Needed</Flag> : 'Not needed'}
+        {health.rebootRequired ? (
+          <Flag tone={restartOverdue(health) ? 'red' : 'amber'}>Needed</Flag>
+        ) : (
+          'Not needed'
+        )}
+        {health.updates.reboot?.since && (
+          <Muted>
+            Pending since <Time iso={health.updates.reboot.since} />
+          </Muted>
+        )}
         {health.uptimeSeconds !== null && <Muted>Up {uptime(health.uptimeSeconds)}</Muted>}
       </Fact>
       <Fact label="Services">
@@ -158,6 +165,15 @@ export function ServersPage() {
                   <ServerCard key={server.id} server={server} />
                 ))}
               </Grid>
+              {servers.map((server) =>
+                server.health.known && server.health.value.kind === 'linux-ssh' ? (
+                  <ServerUpdatesPanel
+                    key={server.id}
+                    name={server.name}
+                    health={server.health.value}
+                  />
+                ) : null,
+              )}
               {servers.map((server) =>
                 server.health.known && server.health.value.kind === 'local-mac' ? (
                   <MacJobs key={server.id} health={server.health.value} />
