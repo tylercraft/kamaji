@@ -61,7 +61,7 @@ The **Download** link on a site's Backups panel, for the latest export (Tyler's 
   5. the repository's size, for the panel.
 - **On demand:** "Back up site now" and "Check restore now" on the Backups panel queue a request, and the app kickstarts the agent, as it does the updater.
 - **Configure → Backups** gets "Whole-site backups: off / weekly / fortnightly", off by default, shown only on craftish sites, with the client-agreed tick on client sites. A site also has to be on craftish's `site-pull.sites`; until it is, a pull fails with "not on the allowlist".
-- A failed pull or restore check is an event in Activity, with the reason.
+- **Alerts,** through the same issues and notifications as everything else (`sitebackups/alerts.ts`): a failed backup, a snapshot that didn't read back and a failed restore check go to Discord at once, like a site going down, and clear with the next one that works. A site 2 days past its week or fortnight goes in the morning digest; the app's cycle looks for those, so a backups process that never runs is noticed too.
 
 ## The restore check ("restore to a test copy")
 
@@ -125,4 +125,3 @@ Full commands, with checks between them, are in `ops/README.md`, "Whole-site bac
 - S3 (`restic copy`, with the Arq replacement).
 - Sites off craftish.
 - Restoring for real: the check proves a restore. Putting one back on craftish is a runbook for later.
-- Overdue backups in the morning digest, and Discord for a failed pull: Activity only, for now.

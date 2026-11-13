@@ -369,7 +369,7 @@ Restic snapshots of a craftish site's files and a fresh database, pulled over SS
 - **Repository:** `/Users/tylercraft/kamaji-backups/restic`, mode 700, encrypted. Arq takes it off-site as ciphertext. Restore checks unpack into `/Users/tylercraft/kamaji-restore` (mode 700, emptied after each check), outside what Arq copies.
 - **Secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read by this process only. Names only: `RESTIC_PASSWORD`. Tyler keeps a copy in his password manager: without it the backups can't be read.
 - **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
-- **Log:** `~/Library/Logs/kamaji-backups.log`: one line per site, never restic's own output. Results go to Activity and the site's Backups panel.
+- **Log:** `~/Library/Logs/kamaji-backups.log`: one line per site, never restic's own output. Results go to Activity and the site's Backups panel. A failed backup or restore check goes to Discord at once; a backup 2 days overdue goes in the morning digest.
 
 Tyler runs these one at a time, in order.
 

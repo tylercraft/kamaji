@@ -155,7 +155,7 @@ describe('backing up a site', () => {
     site(db, 'one.test');
     const { d } = deps(db, () => ({ problem: 'craftish: not on the allowlist' }));
     expect(await backUpSite(d, 'one.test')).toBe(false);
-    expect(rows(db, 'SELECT summary FROM events')).toEqual([
+    expect(rows(db, "SELECT summary FROM events WHERE kind = 'site.backup-failed'")).toEqual([
       { summary: 'Whole-site backup of one.test failed: craftish: not on the allowlist' },
     ]);
   });

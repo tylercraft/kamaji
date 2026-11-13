@@ -4,6 +4,8 @@
 // site_snapshots, restore_checks and Activity; failures say why in plain words.
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
+import { ELIGIBLE, eligible } from './eligible.js';
+import { backupFailed, backupWorked, restoreFailed, restoreWorked } from './alerts.js';
 import { readState, writeState } from '../state.js';
 import type { RestoreResult } from './restore.js';
 import type { Restic } from './restic.js';
@@ -15,6 +17,7 @@ export const INTERVAL = { weekly: 6.5 * DAY, fortnightly: 13.5 * DAY } as const;
 export const RESTORE_EVERY = 30 * DAY;
 export const REPOSITORY = 'sitebackups.repository';
 const UPKEEP = 'sitebackups.upkeep';
+export { eligible };
 
 export interface BackupsDeps {
   db: Db;
@@ -28,14 +31,6 @@ export interface BackupsDeps {
   now: () => number;
   log: (message: string) => void;
   signal?: AbortSignal;
-}
-
-/** Sites whose whole-site backups are on: on craftish, and Tyler's own or the client agreed. */
-const ELIGIBLE = `removed_at IS NULL AND host_kind = 'craftish' AND site_backup_schedule != 'off'
-  AND (own = 1 OR site_backup_consent_at IS NOT NULL)`;
-
-export function eligible(db: Db, siteId: string): boolean {
-  return db.prepare(`SELECT 1 FROM sites WHERE id = ? AND ${ELIGIBLE}`).get(siteId) !== undefined;
 }
 
 export function dueSites(db: Db, now: number): string[] {
@@ -127,6 +122,8 @@ export async function backUpSite(deps: BackupsDeps, siteId: string): Promise<boo
       resourceType: 'site',
       resourceId: siteId,
     });
+    if (fields.ok) backupWorked(db, now(), siteId, name);
+    else backupFailed(db, now(), siteId, `Whole-site backup of ${name} failed: ${fields.problem}`);
     deps.log(`backups: ${siteId} ${fields.ok ? 'backed up' : 'failed'}`);
     return fields.ok;
   };
@@ -202,6 +199,14 @@ export async function checkRestore(deps: BackupsDeps, siteId: string): Promise<b
     resourceType: 'site',
     resourceId: siteId,
   });
+  if (result.ok) restoreWorked(db, finishedAt, siteId, name);
+  else
+    restoreFailed(
+      db,
+      finishedAt,
+      siteId,
+      `${name}’s restore check failed at “${result.step}”: ${result.problem}`,
+    );
   deps.log(`backups: ${siteId} restore check ${result.ok ? 'passed' : 'failed'}`);
   return result.ok;
 }

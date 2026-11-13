@@ -25,6 +25,7 @@ import { enqueue } from './jobs/store.js';
 import { notifyNow, sendDigest, type NotifyOptions } from './notify.js';
 import { backupConfig, craftishBackup } from './updater/backup.js';
 import { craftishFetch } from './backups/download.js';
+import { checkBackupsOverdue } from './sitebackups/alerts.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 
@@ -82,6 +83,7 @@ const runChecks = async (signal: AbortSignal) => {
     log,
   });
   checkEndOfLife(db, Date.now());
+  checkBackupsOverdue(db, Date.now());
   // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
   if (pendingWork(db)) startUpdater();
   const servers = await checkServers(db, {
