@@ -18,6 +18,7 @@ import { Choices, Field, Form, FormError, PrimaryButton } from '../components/fo
 import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
+import { RememberedDetails } from '../components/remembered';
 
 const OK = z.object({ ok: z.literal(true) });
 
@@ -562,7 +563,7 @@ export function ConfigureStep({
             />
           )}
           {site.hostKind === 'craftish' && (
-            <details>
+            <RememberedDetails name="backup-contents">
               <summary>What a whole-site backup holds</summary>
               <Muted css={{ marginTop: 6 }}>
                 <code>wp-content</code>, <code>.htaccess</code> if there is one, a fresh database
@@ -576,7 +577,7 @@ export function ConfigureStep({
                 craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
                 craftish has; ops/README.md, “Updating site-pull”, installs it.
               </Muted>
-            </details>
+            </RememberedDetails>
           )}
         </div>
       </Columns>
@@ -599,13 +600,18 @@ export function ConfigureStep({
       </Panel>
     );
   return (
-    <Disclosure id="configure" open={detail.backupExpectation === null}>
+    <RememberedDetails
+      component={Disclosure}
+      id="configure"
+      name="configure"
+      force={detail.backupExpectation === null}
+    >
       <summary>
         <h2>Configure</h2>
         <span className="note">{configureSummary(detail)}</span>
       </summary>
       <div className="inside">{fields}</div>
-    </Disclosure>
+    </RememberedDetails>
   );
 }
 

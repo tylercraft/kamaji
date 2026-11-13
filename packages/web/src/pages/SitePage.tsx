@@ -45,6 +45,7 @@ import {
   Steps,
 } from './SiteSetup';
 import { SiteUpdatesPanel } from './SiteUpdatesPanel';
+import { RememberedDetails } from '../components/remembered';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -78,12 +79,12 @@ function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: ()
         </PanelHead>
         <Muted>Uptime and certificate from outside. Nothing installed on the site.</Muted>
         {detail.canConnect && (
-          <details>
+          <RememberedDetails name="connect">
             <summary>Connect with Craftish Care</summary>
             <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
               <InstallSteps detail={detail} reload={reload} />
             </div>
-          </details>
+          </RememberedDetails>
         )}
       </Panel>
     );
@@ -126,7 +127,7 @@ function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: ()
           Last tested <Time iso={handshake.at} />
         </Muted>
       </div>
-      <details id="connection-diagnostics" open={problems.length > 0}>
+      <RememberedDetails id="connection-diagnostics" name="diagnostics" force={problems.length > 0}>
         <summary>Capabilities and diagnostics</summary>
         <div css={{ display: 'grid', gap: 8, marginTop: 8 }}>
           <Capabilities handshake={handshake} detail={detail} />
@@ -137,7 +138,7 @@ function Connection({ detail, reload }: { detail: SiteDetailResponse; reload: ()
             </Muted>
           )}
         </div>
-      </details>
+      </RememberedDetails>
     </Panel>
   );
 }
@@ -170,13 +171,13 @@ function PluginZip({ siteId }: { siteId: string }) {
           Download plugin
         </a>
       </div>
-      <details>
+      <RememberedDetails name="install-instructions">
         <summary>Installation instructions</summary>
         <Muted css={{ marginTop: 6 }}>
           In wp-admin: Plugins → Add New Plugin → Upload Plugin. Upload the zip, then choose
           “Replace current with uploaded”.
         </Muted>
-      </details>
+      </RememberedDetails>
     </Panel>
   );
 }

@@ -18,6 +18,7 @@ import { Button, Dot, Muted, Panel, PanelHead, Pill, Table, Time } from '../comp
 import { saved } from '../components/toast';
 import { remedy, securityGroups } from '../securityGroups';
 import { CURRENT_FOR, isOutOfDate, security } from '../siteStatus';
+import { RememberedDetails } from '../components/remembered';
 
 const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
@@ -488,22 +489,22 @@ export function InventoryPanel({
               {plural(g.items.length, 'known vulnerability', 'known vulnerabilities')}
             </p>
             <Muted>{remedy(g)}.</Muted>
-            <details open={g.items.length <= 2}>
+            <RememberedDetails name="findings" fallback={g.items.length <= 2}>
               <summary>
                 {g.items.length <= 2 ? 'Findings' : `All ${g.items.length} findings`}
               </summary>
               <FindingsTable items={g.items} />
-            </details>
+            </RememberedDetails>
           </div>
         ))}
         {notes.length > 0 && (
-          <details>
+          <RememberedDetails name="informational">
             <summary>
               {plural(notes.length, 'informational note')}:{' '}
               {[...new Set(notes.map((n) => n.name))].join(', ')}
             </summary>
             <FindingsTable items={notes.map((n) => n.v)} />
-          </details>
+          </RememberedDetails>
         )}
         <Muted>
           {vd.known ? (
@@ -535,7 +536,7 @@ export function InventoryPanel({
       )}
 
       <div>
-        <Row>
+        <RememberedDetails component={Row} name="plugins">
           <summary>
             <strong>Plugins</strong>
             <span className="count">{inv.plugins.length}</span>
@@ -582,28 +583,28 @@ export function InventoryPanel({
               </tbody>
             </Table>
           </div>
-        </Row>
+        </RememberedDetails>
         {inv.muPlugins.known ? (
           inv.muPlugins.value.length === 0 ? (
             <Muted css={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
               <strong>Must-use plugins</strong> · None installed
             </Muted>
           ) : (
-            <Row>
+            <RememberedDetails component={Row} name="mu-plugins">
               <summary>
                 <strong>Must-use plugins</strong>
                 <span className="count">{inv.muPlugins.value.length}</span>
                 <span className="note">Security not checked</span>
               </summary>
               <MuPlugins muPlugins={inv.muPlugins} />
-            </Row>
+            </RememberedDetails>
           )
         ) : (
           <Muted css={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
             <strong>Must-use plugins</strong> · {inv.muPlugins.reason}
           </Muted>
         )}
-        <Row>
+        <RememberedDetails component={Row} name="themes">
           <summary>
             <strong>Themes</strong>
             <span className="count">{inv.themes.length}</span>
@@ -649,7 +650,7 @@ export function InventoryPanel({
               </tbody>
             </Table>
           </div>
-        </Row>
+        </RememberedDetails>
       </div>
     </Panel>
   );

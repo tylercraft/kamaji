@@ -10,6 +10,7 @@ import { workTone, workWords } from '../siteStatus';
 import { itemKey as key } from '../updatesView';
 import { useResource } from '../useResource';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
+import { RememberedDetails } from '../components/remembered';
 
 /** Items of this site's unfinished runs, held or still going (the batches are this site's only). */
 function inRuns(batches: UpdatesResponse['batches']): { held: number; running: number } {
@@ -199,12 +200,12 @@ export function SiteUpdatesPanel({
                   {run.heldReason && (
                     <p css={{ margin: 0, color: 'var(--red)' }}>{run.heldReason}</p>
                   )}
-                  <details open={outcome.problem}>
+                  <RememberedDetails name="run-details" force={outcome.problem}>
                     <summary>Run details and backup evidence</summary>
                     <div css={{ marginTop: 6 }}>
                       <RunSite batch={latest} site={run} reload={reload} showReason={false} />
                     </div>
-                  </details>
+                  </RememberedDetails>
                 </div>
               )}
             </>
