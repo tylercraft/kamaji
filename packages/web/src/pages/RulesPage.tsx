@@ -5,7 +5,7 @@ export function RulesPage() {
     <>
       <PageHeading
         title="Rules"
-        purpose="Set the boundaries for automatic updates. Review these when your needs change."
+        purpose="Not in this version: every update is approved by you under Updates."
       />
       <Panel>
         <Empty title="No rules: every update is approved by you">

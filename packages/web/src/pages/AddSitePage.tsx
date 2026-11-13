@@ -54,7 +54,7 @@ export function AddSitePage() {
         purpose="Name it, connect it or just watch it, then say what to check."
       />
       <Steps current="identify" />
-      <Panel aria-labelledby="identify">
+      <Panel aria-labelledby="identify" css={{ maxWidth: 640, width: '100%' }}>
         <PanelTitle id="identify">Identify</PanelTitle>
         <Form onSubmit={submit} noValidate>
           <Field id="name" label="Name">

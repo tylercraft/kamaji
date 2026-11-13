@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   PackageCheck,
   Server,
-  SlidersHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -23,10 +22,10 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
   { path: '/updates', label: 'Updates', icon: PackageCheck },
   { path: '/servers', label: 'Servers', icon: Server },
   { path: '/activity', label: 'Activity', icon: History },
-  { path: '/rules', label: 'Rules', icon: SlidersHorizontal },
+  // Rules (/rules) is left out until there are rules to set: every update is approved by hand.
 ];
 
-// One iron header at laptop widths: the brand, the six tabs, then Kamaji's own health. Under
+// One iron header at laptop widths: the brand, the five tabs, then Kamaji's own health. Under
 // 980px the tabs wrap onto their own row below the brand.
 const Top = styled.header`
   display: flex;
