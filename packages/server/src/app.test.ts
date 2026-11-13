@@ -131,6 +131,34 @@ describe('activity', () => {
     expect(last.events.map((e) => e.summary)).toEqual(['event 1']);
     expect(last.nextBefore).toBeNull();
   });
+  it('orders by when events happened, ties by the order they were written, across pages', async () => {
+    const db = testDb();
+    // Written out of order, as a backup's events are when its process finishes later.
+    for (const [at, summary] of [
+      [4000, 'four'],
+      [1000, 'one'],
+      [5000, 'five, first written'],
+      [2000, 'two'],
+      [5000, 'five, second written'],
+      [3000, 'three'],
+    ] as const)
+      recordEvent(db, at, { kind: 'test', summary });
+    const { get } = setup({ db });
+    const pages: string[][] = [];
+    let before: number | null = null;
+    do {
+      const page = ActivityResponse.parse(
+        await (await get(`/api/activity?limit=2${before ? `&before=${before}` : ''}`)).json(),
+      );
+      pages.push(page.events.map((e) => e.summary));
+      before = page.nextBefore;
+    } while (before !== null);
+    expect(pages).toEqual([
+      ['five, second written', 'five, first written'],
+      ['four', 'three'],
+      ['two', 'one'],
+    ]);
+  });
 });
 
 describe('the web app', () => {
