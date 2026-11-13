@@ -4,10 +4,10 @@
 # root, and run only as www-data through the one sudo rule kamaji-site-pull uses (README.md). The
 # site must be a line of /etc/kamaji/site-pull.sites; its WordPress is /var/www/<site>/public.
 #
-# The tar holds wp-content (without caches, other backup plugins' archives and logs), .htaccess if
-# there is one, database.sql and, last, manifest.json. Never wp-config.php: its names are in the
-# manifest, never its values. Problems go to stderr, since stdout is the backup; any non-zero exit
-# means restic keeps no snapshot.
+# The tar holds wp-content (without caches, other backup plugins' archives, logs and Wordfence's
+# live log folder wflogs), .htaccess if there is one, database.sql and, last, manifest.json. Never
+# wp-config.php: its names are in the manifest, never its values. Problems go to stderr, since
+# stdout is the backup; any non-zero exit means restic keeps no snapshot.
 set -u -o pipefail
 export LC_ALL=C PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
@@ -52,6 +52,7 @@ parts=(wp-content)
 tar --create --format=gnu --sort=name --warning=no-file-changed --no-wildcards-match-slash \
   --exclude=wp-content/cache --exclude=wp-content/upgrade --exclude=wp-content/ai1wm-backups \
   --exclude=wp-content/updraft --exclude='wp-content/backups*' --exclude='*.log' \
+  --exclude=wp-content/wflogs \
   -C "$root" "${parts[@]}" -C "$work" database.sql manifest.json
 code=$?
 [ "$code" -le 1 ] || exit "$code"

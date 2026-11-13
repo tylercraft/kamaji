@@ -14,7 +14,7 @@ How Kamaji backs up WordPress sites on craftish. Decided with Tyler on 2026-11-1
 - **Two keys, two forced commands,** each `restrict`ed and accepted only `from="100.106.213.63"` (molcajete). Scripts and their README are in `server-pull/`.
   - **The app's download key** → `kamaji-fetch-export`, with `<site> <time>`. It streams one existing export, `/var/backups/kamaji/<site>/<time>.sql.gz`, and nothing else. The site must be a plain domain on `/etc/kamaji/db-export.sites`, and the time must match db-export's `^[0-9]{8}T[0-9]{6}Z$`. It runs as `www-data` through one sudo rule. Paths are never accepted.
   - **The backup process's key** → `kamaji-site-pull`, with `<site>`. The site must be on a new list, `/etc/kamaji/site-pull.sites`. It's separate from the export list on purpose: a site can have exports before updates without whole-site pulls. As `www-data` (one sudo rule), it writes one tar to stdout:
-    - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/` or `*.log`;
+    - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/`, `wflogs/` (Wordfence's live logs) or `*.log`;
     - `.htaccess`, if there is one;
     - `database.sql`: a fresh `wp db export --single-transaction`, uncompressed so restic can deduplicate it, written to a www-data-only temp folder and deleted after;
     - `manifest.json`, written last: the format, site, time, WordPress version, table prefix, the names (never the values) of wp-config's constants, and `database.sql`'s bytes and SHA-256.

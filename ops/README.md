@@ -595,6 +595,30 @@ In Kamaji:
 
 34. Backups → "Download latest export", once there's an export (Back up now makes one): the file should open with `gunzip -t`.
 
+### Updating site-pull
+
+After a change to `server-pull/site-pull` reaches main (the latest: leave out `wp-content/wflogs`, Wordfence's live logs). Nothing on the mini changes; the next backup uses it.
+
+1. On the laptop, copy it and its check up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/server-pull/site-pull /Users/tyler/kamaji/server-pull/check-exclusions craftish:/tmp/
+```
+
+2. On craftish, check the exclusions with GNU tar (it builds a made-up site in a temporary folder; it reads nothing real). Expect `ok: 7 exclusions`:
+
+```
+bash /tmp/check-exclusions /tmp/site-pull
+```
+
+3. On craftish, install it:
+
+```
+sudo install -m 755 -o root -g root /tmp/site-pull /usr/local/lib/kamaji/ && rm /tmp/site-pull /tmp/check-exclusions
+```
+
+Existing snapshots keep what they hold; restic's retention lets them go in time. No file on the site is touched.
+
 ## Deploying a change
 
 On the mini, after the change is on `main`:

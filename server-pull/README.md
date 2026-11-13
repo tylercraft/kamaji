@@ -11,7 +11,7 @@ What Kamaji on molcajete may read from craftish: one database export to download
   - `site-pull` against `/etc/kamaji/site-pull.sites`, a separate list, so a site can have exports before updates without whole-site pulls.
 - **The download** streams `/var/backups/kamaji/<site>/<time>.sql.gz`, a plain file (never a link), or one JSON line saying why not: `{"format":1,"ok":false,"problem":"…"}`. A gzip starts with bytes `1f 8b` and the JSON with `{`, which is how Kamaji tells them apart.
 - **The pull** writes one GNU tar to stdout:
-  - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/` or `*.log`;
+  - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/`, `wflogs/` (Wordfence's live logs) or `*.log`;
   - `.htaccess`, if there is one;
   - `database.sql`, from `wp db export --single-transaction` into a www-data-only work folder under `/var/backups/kamaji/.pull`, deleted after;
   - `manifest.json`, always last: `format`, `site`, `at`, `wordpress`, `tablePrefix`, `config` (wp-config's names from `wp config list --fields=name`, never values) and `database` (`bytes`, `sha256`).
@@ -36,6 +36,10 @@ restrict,command="/usr/local/bin/kamaji-site-pull",from="100.106.213.63" ssh-ed2
 ```
 kamaji-pull ALL=(www-data) NOPASSWD: /usr/local/lib/kamaji/fetch-export, /usr/local/lib/kamaji/site-pull
 ```
+
+## Checking the exclusions
+
+`check-exclusions` runs `site-pull`'s own `--exclude` flags over a made-up WordPress tree with GNU tar and checks what's kept: `wp-content/wflogs/` and the rest are left out, while `wflogs-notes/`, an upload folder named `wflogs` and the Wordfence plugin stay in. macOS's tar matches differently, so run it on craftish or in an Ubuntu container: `docker run --rm --network none -v "$PWD":/sp:ro ubuntu:24.04 /sp/check-exclusions /sp/site-pull`.
 
 ## Installing on craftish
 
