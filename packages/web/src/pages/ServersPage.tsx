@@ -11,7 +11,7 @@ import {
 } from '../components/ui';
 import { CURRENT_FOR, isOutOfDate } from '../siteStatus';
 import { useResource } from '../useResource';
-import { DISK_URGENT, DISK_WARN, Meter, Part } from '../components/serverParts';
+import { DISK_URGENT, DISK_WARN, Meter, Part, PartsRow } from '../components/serverParts';
 import { Fact, Facts, Flag, gb, MacFacts, MacJobs } from './MolcajeteFacts';
 import { PackageLists, UpdatesRating } from './ServerUpdatesPanel';
 
@@ -36,83 +36,85 @@ function LinuxParts({ health, now }: { health: LinuxHealth; now: number }) {
   const listed = u.security.length + u.care.length + u.routine.length;
   return (
     <>
-      <Part title="Maintenance">
-        <div css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
-          <UpdatesRating updates={u} />
-        </div>
-        <Facts>
-          <Fact label="Restart">
-            {health.rebootRequired ? (
-              <>
-                <Flag tone={restartOverdue(health) ? 'red' : 'amber'}>Needed</Flag>
-                {u.reboot?.since && (
-                  <Muted>
-                    Pending since <Time iso={u.reboot.since} />
-                    {u.reboot.packages.length > 0 ? ` for ${u.reboot.packages.join(', ')}` : ''}
-                  </Muted>
-                )}
-              </>
-            ) : (
-              'Not needed'
-            )}
-          </Fact>
-          <Fact label="Waiting">
-            {u.total === 0
-              ? 'Nothing waiting'
-              : `${u.security.length} security · ${u.care.length} need care · ${u.routine.length} routine`}
-          </Fact>
-        </Facts>
-        <Muted>
-          This is what the latest report lists as waiting. Kamaji doesn’t see whether automatic
-          upgrades installed anything until the next report stops listing it.
-        </Muted>
-        {listed > 0 && (
-          <details>
-            <summary>Packages and impact ({u.total})</summary>
-            <div css={{ marginTop: 6 }}>
-              <PackageLists updates={u} />
-            </div>
-          </details>
-        )}
-      </Part>
-      <Part title="Resources">
-        {health.disks.map((d) => (
-          <Meter
-            key={d.mount}
-            label={`Disk ${d.mount}`}
-            percent={d.usedPercent}
-            words={`${d.usedPercent}% used · ${gb(d.availableBytes)} free`}
-            thresholds={[DISK_WARN, DISK_URGENT]}
-          />
-        ))}
-        {health.memoryUsedPercent === null ? (
-          <Muted>Memory: unknown</Muted>
-        ) : (
-          <Meter
-            label="Memory"
-            percent={health.memoryUsedPercent}
-            words={`${health.memoryUsedPercent}% in use`}
-          />
-        )}
-        <Muted>
-          Load{' '}
-          {health.load.one === null
-            ? 'unknown'
-            : `${health.load.one.toFixed(2)}${health.load.cpus ? ` on ${health.load.cpus} CPUs` : ''}`}
-        </Muted>
-      </Part>
-      <Part
-        title="Services"
-        aside={
-          health.stopped.length > 0 ? (
-            <Flag tone="red">Stopped: {health.stopped.join(', ')}</Flag>
+      <PartsRow>
+        <Part title="Maintenance">
+          <div css={{ display: 'grid', gap: 2, justifyItems: 'start' }}>
+            <UpdatesRating updates={u} />
+          </div>
+          <Facts>
+            <Fact label="Restart">
+              {health.rebootRequired ? (
+                <>
+                  <Flag tone={restartOverdue(health) ? 'red' : 'amber'}>Needed</Flag>
+                  {u.reboot?.since && (
+                    <Muted>
+                      Pending since <Time iso={u.reboot.since} />
+                      {u.reboot.packages.length > 0 ? ` for ${u.reboot.packages.join(', ')}` : ''}
+                    </Muted>
+                  )}
+                </>
+              ) : (
+                'Not needed'
+              )}
+            </Fact>
+            <Fact label="Waiting">
+              {u.total === 0
+                ? 'Nothing waiting'
+                : `${u.security.length} security · ${u.care.length} need care · ${u.routine.length} routine`}
+            </Fact>
+          </Facts>
+          <Muted>
+            This is what the latest report lists as waiting. Kamaji doesn’t see whether automatic
+            upgrades installed anything until the next report stops listing it.
+          </Muted>
+        </Part>
+        <Part title="Resources">
+          {health.disks.map((d) => (
+            <Meter
+              key={d.mount}
+              label={`Disk ${d.mount}`}
+              percent={d.usedPercent}
+              words={`${d.usedPercent}% used · ${gb(d.availableBytes)} free`}
+              thresholds={[DISK_WARN, DISK_URGENT]}
+            />
+          ))}
+          {health.memoryUsedPercent === null ? (
+            <Muted>Memory: unknown</Muted>
           ) : (
-            <Muted css={{ display: 'inline' }}>All running</Muted>
-          )
-        }
-      >
-        {health.uptimeSeconds !== null && <Muted>Up {uptime(health.uptimeSeconds)}</Muted>}
-      </Part>
+            <Meter
+              label="Memory"
+              percent={health.memoryUsedPercent}
+              words={`${health.memoryUsedPercent}% in use`}
+            />
+          )}
+          <Muted>
+            Load{' '}
+            {health.load.one === null
+              ? 'unknown'
+              : `${health.load.one.toFixed(2)}${health.load.cpus ? ` on ${health.load.cpus} CPUs` : ''}`}
+          </Muted>
+        </Part>
+        <Part
+          title="Services"
+          aside={
+            health.stopped.length > 0 ? (
+              <Flag tone="red">Stopped: {health.stopped.join(', ')}</Flag>
+            ) : (
+              <Muted css={{ display: 'inline' }}>All running</Muted>
+            )
+          }
+        >
+          {health.uptimeSeconds !== null && <Muted>Up {uptime(health.uptimeSeconds)}</Muted>}
+        </Part>
+      </PartsRow>
+      {listed > 0 && (
+        <details>
+          <summary>Packages and impact ({u.total})</summary>
+          <div css={{ marginTop: 6 }}>
+            <PackageLists updates={u} />
+          </div>
+        </details>
+      )}
       <details>
         <summary>System and reporting</summary>
         <Facts css={{ marginTop: 6 }}>
@@ -208,7 +210,7 @@ export function ServersPage() {
             </Panel>
           ) : (
             <>
-              <Grid columns="repeat(2, minmax(0, 1fr))">
+              <Grid>
                 {servers.map((server) => (
                   <ServerCard key={server.id} server={server} now={now} />
                 ))}
