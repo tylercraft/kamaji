@@ -9,6 +9,7 @@ import {
   ResourceView,
   Time,
 } from '../components/ui';
+import { CURRENT_FOR, isOutOfDate } from '../siteStatus';
 import { useResource } from '../useResource';
 import { Fact, Facts, Flag, gb, MacFacts, MacJobs } from './MolcajeteFacts';
 import { ServerUpdatesPanel, UpdatesRating } from './ServerUpdatesPanel';
@@ -91,7 +92,7 @@ function LinuxFacts({ health }: { health: LinuxHealth }) {
   );
 }
 
-function ServerCard({ server }: { server: ServerSummary }) {
+function ServerCard({ server, now }: { server: ServerSummary; now: number }) {
   const attempt = server.lastAttempt;
   return (
     <Panel aria-labelledby={`server-${server.id}`}>
@@ -107,6 +108,9 @@ function ServerCard({ server }: { server: ServerSummary }) {
             {attempt.value.ok ? (
               <Muted>
                 Read <Time iso={attempt.value.at} />
+                {isOutOfDate(attempt.value.at, CURRENT_FOR.serverRead, now) && (
+                  <span css={{ color: 'var(--amber)' }}> · out of date</span>
+                )}
               </Muted>
             ) : (
               <>
@@ -142,6 +146,7 @@ function ServerCard({ server }: { server: ServerSummary }) {
 
 export function ServersPage() {
   const servers = useResource('/api/servers', ServersResponse, { pollMs: 60_000 });
+  const now = servers.state === 'ready' ? servers.loadedAt : 0;
   return (
     <>
       <PageHeading
@@ -162,7 +167,7 @@ export function ServersPage() {
             <>
               <Grid columns="repeat(2, minmax(0, 1fr))">
                 {servers.map((server) => (
-                  <ServerCard key={server.id} server={server} />
+                  <ServerCard key={server.id} server={server} now={now} />
                 ))}
               </Grid>
               {servers.map((server) =>

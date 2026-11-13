@@ -13,6 +13,7 @@ import {
   type Tone,
 } from '../components/ui';
 import { useLink } from '../router';
+import { CURRENT_FOR, isOutOfDate } from '../siteStatus';
 import { matchesSite } from '../sitesView';
 import { useResource } from '../useResource';
 
@@ -24,42 +25,56 @@ const hostNames: Record<SiteSummary['hostKind'], string> = {
 };
 
 const stateLabels = {
-  up: ['Up', 'green'],
+  up: ['Reachable', 'green'],
   failing: ['Failed once', 'amber'],
   down: ['Down', 'red'],
 } as const satisfies Record<string, [string, Tone]>;
 
-function Availability({ site }: { site: SiteSummary }) {
+/** When a check is older than it should be, its time says so, and a pass stops looking green. */
+function Checked({ iso, old }: { iso: string; old: boolean }) {
+  return (
+    <>
+      <Time iso={iso} />
+      {old && <span css={{ color: 'var(--amber)' }}> · out of date</span>}
+    </>
+  );
+}
+
+/** Reachable: the home page answered (with its expected text, if set). Not the same as healthy. */
+function Availability({ site, now }: { site: SiteSummary; now: number }) {
   if (site.setup !== 'done') return <Pill tone="amber">Setup unfinished</Pill>;
+  if (site.pausedAt) return <Pill>Paused</Pill>;
   const a = site.availability;
   // Unknown is never "up": until the first check lands, it says why it doesn't know.
   if (!a.known) return <Muted>{a.reason}</Muted>;
+  const old = isOutOfDate(a.value.checkedAt, CURRENT_FOR.pageCheck, now);
   const [label, tone] = stateLabels[a.value.state];
   return (
     <div css={{ display: 'grid', gap: 3, justifyItems: 'start' }}>
-      <Pill tone={tone}>
+      <Pill tone={old && a.value.state === 'up' ? 'neutral' : tone}>
         <Dot /> {label}
       </Pill>
       <Muted>
         {a.value.problem ?? (a.value.responseMs !== null ? `${a.value.responseMs} ms` : '')}
         {' · '}
-        <Time iso={a.value.checkedAt} />
+        <Checked iso={a.value.checkedAt} old={old} />
       </Muted>
     </div>
   );
 }
 
-function Outside({ site }: { site: SiteSummary }) {
+function Outside({ site, now }: { site: SiteSummary; now: number }) {
   const o = site.outside;
   if (!o.known) return <Muted>{o.reason}</Muted>;
+  const old = isOutOfDate(o.value.checkedAt, CURRENT_FOR.pageCheck, now);
   return (
     <div css={{ display: 'grid', gap: 3, justifyItems: 'start' }}>
-      <Pill tone={o.value.ok ? 'green' : 'red'}>
-        <Dot /> {o.value.ok ? 'Up' : 'Failing'}
+      <Pill tone={o.value.ok ? (old ? 'neutral' : 'green') : 'red'}>
+        <Dot /> {o.value.ok ? 'Reachable' : 'Failing'}
       </Pill>
       <Muted>
         {o.value.problem ? `${o.value.problem} · ` : ''}
-        <Time iso={o.value.checkedAt} />
+        <Checked iso={o.value.checkedAt} old={old} />
       </Muted>
     </div>
   );
@@ -78,7 +93,7 @@ function CertificateCell({ site }: { site: SiteSummary }) {
 }
 
 function UpdatesCell({ site }: { site: SiteSummary }) {
-  if (site.mode !== 'connected') return <Muted>–</Muted>;
+  if (site.mode !== 'connected') return <Muted>Not checked</Muted>;
   if (!site.updates.known) return <Muted>{site.updates.reason}</Muted>;
   return site.updates.value === 0 ? (
     <Muted>None offered</Muted>
@@ -151,6 +166,7 @@ function Filter({ value, onChange }: { value: string; onChange: (value: string) 
 export function SitesPage() {
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
   const [typed, setTyped] = useState('');
+  const now = sites.state === 'ready' ? sites.loadedAt : 0;
   return (
     <>
       <PageHeading title="Sites" purpose="Your sites, their health and their connection to Kamaji.">
@@ -181,8 +197,6 @@ export function SitesPage() {
                           <th scope="col">From the mini</th>
                           <th scope="col">From outside</th>
                           <th scope="col">Certificate</th>
-                          <th scope="col">Host</th>
-                          <th scope="col">Connection</th>
                           <th scope="col">Updates</th>
                         </tr>
                       </thead>
@@ -202,25 +216,19 @@ export function SitesPage() {
                                 </a>
                                 {site.tailnetOnly ? ' · tailnet only' : ''}
                               </Muted>
+                              <Muted>
+                                {hostNames[site.hostKind]} ·{' '}
+                                {site.mode === 'connected' ? 'Craftish Care' : 'Monitoring only'}
+                              </Muted>
                             </td>
                             <td>
-                              <Availability site={site} />
+                              <Availability site={site} now={now} />
                             </td>
                             <td>
-                              <Outside site={site} />
+                              <Outside site={site} now={now} />
                             </td>
                             <td>
                               <CertificateCell site={site} />
-                            </td>
-                            <td>{hostNames[site.hostKind]}</td>
-                            <td>
-                              {site.mode === 'connected' ? (
-                                <Pill tone="copper">
-                                  <Dot /> Craftish Care
-                                </Pill>
-                              ) : (
-                                <Pill>Monitoring only</Pill>
-                              )}
                             </td>
                             <td>
                               <UpdatesCell site={site} />
