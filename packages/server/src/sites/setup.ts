@@ -166,11 +166,14 @@ export function configureSite(
       : hadConsent
         ? { at: Number(row.site_backup_consent_at), by: String(row.site_backup_consent_by) }
         : { at: now, by: login };
+  const beforeName = String(row.name);
+  const name = request.name ?? beforeName;
   db.prepare(
-    `UPDATE sites SET expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
+    `UPDATE sites SET name = ?, expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
        own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?
      WHERE id = ?`,
   ).run(
+    name,
     request.expectedText || null,
     request.backupExpectation,
     request.notifications,
@@ -180,9 +183,9 @@ export function configureSite(
     consent?.by ?? null,
     id,
   );
-  const name = String(row.name);
   const event = (kind: string, summary: string) =>
     recordEvent(db, now, { kind, summary, resourceType: 'site', resourceId: id });
+  if (name !== beforeName) event('site.renamed', `Renamed ${beforeName} to ${name}`);
   if (row.setup !== 'done') event('site.added', `Added ${name}: first checks pending`);
   if (consent && !hadConsent) {
     event(

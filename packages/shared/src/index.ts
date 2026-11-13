@@ -65,6 +65,8 @@ export const Certificate = z.object({
   validTo: Timestamp,
   daysLeft: z.number().int(),
   checkedAt: Timestamp,
+  /** Read, but not good: "Certificate not trusted", "Certificate expired". Null when it's fine. */
+  problem: z.string().nullable(),
 });
 export type Certificate = z.infer<typeof Certificate>;
 
@@ -329,6 +331,8 @@ export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
 
 /** Add site, step 3. The whole-site backup fields are left as they were when absent. */
 export const ConfigureSiteRequest = z.object({
+  /** The display name; left as it was when absent. The id, domain, keys and history never change. */
+  name: z.string().trim().min(1).max(80).optional(),
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),

@@ -130,6 +130,7 @@ function certificate(db: Db, site: Site): Known<Certificate> {
       validTo: iso(last.value.validTo),
       daysLeft: last.value.daysLeft,
       checkedAt: iso(last.at),
+      problem: last.value.problem,
     },
   };
 }
