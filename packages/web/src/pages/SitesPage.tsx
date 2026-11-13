@@ -14,7 +14,7 @@ import {
   type Tone,
 } from '../components/ui';
 import { useLink } from '../router';
-import { certificate, CURRENT_FOR, isOutOfDate } from '../siteStatus';
+import { certificate, CURRENT_FOR, fromOutside, isOutOfDate, updates } from '../siteStatus';
 import { filterSites, NO_FILTERS, present, type SiteFilters } from '../sitesView';
 import { useResource } from '../useResource';
 
@@ -53,7 +53,7 @@ function Availability({ site, now }: { site: SiteSummary; now: number }) {
   return (
     <div css={{ display: 'grid', gap: 3, justifyItems: 'start' }}>
       <Pill tone={old && a.value.state === 'up' ? 'neutral' : tone}>
-        <Dot /> {label}
+        <Dot /> {old && a.value.state === 'up' ? 'Last reachable' : label}
       </Pill>
       <Muted>
         {a.value.problem ?? (a.value.responseMs !== null ? `${a.value.responseMs} ms` : '')}
@@ -73,7 +73,7 @@ function Outside({ site, now }: { site: SiteSummary; now: number }) {
   return (
     <div css={{ display: 'grid', gap: 3, justifyItems: 'start' }}>
       <Pill tone={o.value.ok ? (old ? 'neutral' : 'green') : 'red'}>
-        <Dot /> {o.value.ok ? 'Reachable' : 'Failing'}
+        <Dot /> {o.value.ok ? (old ? 'Last reachable' : 'Reachable') : 'Failing'}
       </Pill>
       <Muted>
         {o.value.problem ? `${o.value.problem} · ` : ''}
@@ -176,6 +176,94 @@ const field = {
   padding: '7px 9px',
   '&:focus-visible': { outline: '2px solid var(--copper)', outlineOffset: 1 },
 } as const;
+
+/**
+ * On a phone, a site per card: its home page check always, then a flag for anything else that
+ * needs a look (outside check, certificate, updates, findings), and every check one click down.
+ */
+function SiteCard({ site, now }: { site: SiteSummary; now: number }) {
+  const lines =
+    site.setup !== 'done'
+      ? []
+      : [
+          ...(site.tailnetOnly ? [] : [fromOutside(site, now)]),
+          certificate(site),
+          ...(site.mode === 'connected' ? [updates(site)] : []),
+        ].filter((l) => l.tone === 'red' || l.tone === 'amber' || l.outOfDate);
+  return (
+    <li
+      css={{
+        borderTop: '1px solid var(--line)',
+        padding: '10px 0',
+        display: 'grid',
+        gap: 4,
+        '&:first-of-type': { borderTop: 0 },
+      }}
+    >
+      <SiteLink site={site} />
+      <Muted>
+        <a href={site.url} target="_blank" rel="noreferrer" css={{ color: 'inherit' }}>
+          {new URL(site.url).host} ↗
+        </a>{' '}
+        · {hostNames[site.hostKind]} · {MODES[site.mode]}
+        {site.tailnetOnly ? ' · private' : ''}
+      </Muted>
+      <div css={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Availability site={site} now={now} />
+        {lines.map((l) => (
+          <Pill key={l.label} tone={l.tone === 'green' ? 'neutral' : l.tone}>
+            <Dot /> {l.label}:{' '}
+            {l.outOfDate && l.tone !== 'red' && l.tone !== 'amber' ? 'out of date' : l.state}
+          </Pill>
+        ))}
+        {site.findings.length > 0 && (
+          <Pill tone={site.findings.some((f) => f.severity === 'urgent') ? 'red' : 'amber'}>
+            <Dot /> {site.findings.length} {site.findings.length === 1 ? 'finding' : 'findings'}
+          </Pill>
+        )}
+      </div>
+      <details>
+        <summary css={{ fontSize: 12 }}>All checks</summary>
+        <dl
+          css={{
+            margin: '6px 0 0',
+            display: 'grid',
+            gridTemplateColumns: 'max-content minmax(0, 1fr)',
+            gap: '6px 12px',
+            fontSize: 12,
+            dt: { color: 'var(--muted)' },
+            dd: { margin: 0 },
+          }}
+        >
+          <dt>From outside</dt>
+          <dd>
+            <Outside site={site} now={now} />
+          </dd>
+          <dt>Certificate</dt>
+          <dd>
+            <CertificateCell site={site} />
+          </dd>
+          <dt>Updates</dt>
+          <dd>
+            <UpdatesCell site={site} />
+          </dd>
+          {site.findings.length > 0 && (
+            <>
+              <dt>Findings</dt>
+              <dd>
+                <ul css={{ margin: 0, paddingLeft: 16 }}>
+                  {site.findings.map((f) => (
+                    <li key={f.kind}>{f.summary}</li>
+                  ))}
+                </ul>
+              </dd>
+            </>
+          )}
+        </dl>
+      </details>
+    </li>
+  );
+}
 
 /** Search, host and mode, together; Escape in the search clears it, Reset clears all three. */
 function Toolbar({
@@ -291,55 +379,72 @@ export function SitesPage() {
                     Try another host or mode, or reset the filters.
                   </Empty>
                 ) : (
-                  <div css={{ overflowX: 'auto' }}>
-                    <Table>
-                      <thead>
-                        <tr>
-                          <th scope="col">Site</th>
-                          <th scope="col">From the mini</th>
-                          <th scope="col">From outside</th>
-                          <th scope="col">Certificate</th>
-                          <th scope="col">Updates</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sites.map((site) => (
-                          <tr key={site.id}>
-                            <td>
-                              <SiteLink site={site} />
-                              <Muted>
-                                <a
-                                  href={site.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  css={{ color: 'inherit' }}
-                                >
-                                  {new URL(site.url).host} ↗
-                                </a>
-                              </Muted>
-                              <Muted>
-                                {hostNames[site.hostKind]} · {MODES[site.mode]}
-                                {site.tailnetOnly ? ' · private' : ''}
-                              </Muted>
-                              <Findings site={site} />
-                            </td>
-                            <td>
-                              <Availability site={site} now={now} />
-                            </td>
-                            <td>
-                              <Outside site={site} now={now} />
-                            </td>
-                            <td>
-                              <CertificateCell site={site} />
-                            </td>
-                            <td>
-                              <UpdatesCell site={site} />
-                            </td>
+                  <>
+                    <ul
+                      aria-label="Sites"
+                      css={{
+                        margin: 0,
+                        padding: 0,
+                        listStyle: 'none',
+                        '@media (min-width: 761px)': { display: 'none' },
+                      }}
+                    >
+                      {sites.map((site) => (
+                        <SiteCard key={site.id} site={site} now={now} />
+                      ))}
+                    </ul>
+                    <div
+                      css={{ overflowX: 'auto', '@media (max-width: 760px)': { display: 'none' } }}
+                    >
+                      <Table>
+                        <thead>
+                          <tr>
+                            <th scope="col">Site</th>
+                            <th scope="col">From the mini</th>
+                            <th scope="col">From outside</th>
+                            <th scope="col">Certificate</th>
+                            <th scope="col">Updates</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </Table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sites.map((site) => (
+                            <tr key={site.id}>
+                              <td>
+                                <SiteLink site={site} />
+                                <Muted>
+                                  <a
+                                    href={site.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    css={{ color: 'inherit' }}
+                                  >
+                                    {new URL(site.url).host} ↗
+                                  </a>
+                                </Muted>
+                                <Muted>
+                                  {hostNames[site.hostKind]} · {MODES[site.mode]}
+                                  {site.tailnetOnly ? ' · private' : ''}
+                                </Muted>
+                                <Findings site={site} />
+                              </td>
+                              <td>
+                                <Availability site={site} now={now} />
+                              </td>
+                              <td>
+                                <Outside site={site} now={now} />
+                              </td>
+                              <td>
+                                <CertificateCell site={site} />
+                              </td>
+                              <td>
+                                <UpdatesCell site={site} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </div>
+                  </>
                 )}
                 <Muted>
                   Reachable means the home page answered; findings are listed under each site.

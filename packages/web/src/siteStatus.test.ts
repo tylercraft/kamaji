@@ -57,7 +57,7 @@ describe('the home page line', () => {
       },
     } as SiteSummary;
     expect(homePage(old, NOW)).toMatchObject({
-      state: 'Reachable at last check',
+      state: 'Last reachable',
       tone: 'neutral',
       outOfDate: true,
     });

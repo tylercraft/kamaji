@@ -70,7 +70,7 @@ export function homePage(site: SiteSummary, now: number): StatusLine {
     return line(
       label,
       old ? 'neutral' : 'green',
-      old ? 'Reachable at last check' : 'Reachable',
+      old ? 'Last reachable' : 'Reachable',
       `${speed} ${content}`,
       v.checkedAt,
       old,
@@ -96,7 +96,7 @@ export function fromOutside(site: SiteSummary, now: number): StatusLine {
     return line(
       label,
       old ? 'neutral' : 'green',
-      old ? 'Reachable at last check' : 'Reachable',
+      old ? 'Last reachable' : 'Reachable',
       'Cloudflare’s network reached the home page too.',
       o.value.checkedAt,
       old,
