@@ -11,7 +11,7 @@ What Kamaji on molcajete may read from craftish: one database export to download
   - `site-pull` against `/etc/kamaji/site-pull.sites`, a separate list, so a site can have exports before updates without whole-site pulls.
 - **The download** streams `/var/backups/kamaji/<site>/<time>.sql.gz`, a plain file (never a link), or one JSON line saying why not: `{"format":1,"ok":false,"problem":"…"}`. A gzip starts with bytes `1f 8b` and the JSON with `{`, which is how Kamaji tells them apart.
 - **The pull** writes one GNU tar to stdout:
-  - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/`, `wflogs/` (Wordfence's live logs) or `*.log`;
+  - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/`, `wflogs/` (Wordfence's live logs; only once craftish runs the 2026-11-13 `site-pull`, installed by `ops/README.md`, "Updating site-pull") or `*.log`;
   - `.htaccess`, if there is one;
   - `database.sql`, from `wp db export --single-transaction` into a www-data-only work folder under `/var/backups/kamaji/.pull`, deleted after;
   - `manifest.json`, always last: `format`, `site`, `at`, `wordpress`, `tablePrefix`, `config` (wp-config's names from `wp config list --fields=name`, never values) and `database` (`bytes`, `sha256`).

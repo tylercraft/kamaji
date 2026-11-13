@@ -567,9 +567,14 @@ export function ConfigureStep({
               <Muted css={{ marginTop: 6 }}>
                 <code>wp-content</code>, <code>.htaccess</code> if there is one, a fresh database
                 export and a manifest. Left out: <code>wp-content/cache</code>, <code>upgrade</code>
-                , <code>ai1wm-backups</code>, <code>updraft</code>, <code>backups*</code>,{' '}
-                <code>wflogs</code> (Wordfence’s live logs) and <code>*.log</code> files.{' '}
-                <code>wp-config.php</code> and WordPress’s own files are never read.
+                , <code>ai1wm-backups</code>, <code>updraft</code>, <code>backups*</code> and{' '}
+                <code>*.log</code> files. <code>wp-config.php</code> and WordPress’s own files are
+                never read.
+              </Muted>
+              <Muted css={{ marginTop: 6 }}>
+                <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
+                craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
+                craftish has; ops/README.md, “Updating site-pull”, installs it.
               </Muted>
             </details>
           )}
