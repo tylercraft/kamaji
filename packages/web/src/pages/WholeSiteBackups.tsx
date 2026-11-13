@@ -26,6 +26,15 @@ const STEP_WORDS: Record<string, string> = {
   'home page': 'the home page',
 };
 
+/** The night the next backup runs: the first 03:15 on or after it's due. */
+function nextNight(iso: string): string {
+  const due = new Date(iso);
+  const night = new Date(due);
+  night.setHours(3, 15, 0, 0);
+  if (night < due) night.setDate(night.getDate() + 1);
+  return night.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
 function Status({ data }: { data: Data }) {
   if (data.schedule === 'off') {
     return <p css={{ margin: 0 }}>Off. Turn them on under Configure.</p>;
@@ -36,12 +45,7 @@ function Status({ data }: { data: Data }) {
       {data.lastGoodAt ? (
         <>
           Last good backup <Time iso={data.lastGoodAt} />
-          {data.nextDueAt && (
-            <>
-              ; the next one from <Time iso={data.nextDueAt} />, at 03:15
-            </>
-          )}
-          .
+          {data.nextDueAt && <>; the next one on {nextNight(data.nextDueAt)}, at 03:15</>}.
         </>
       ) : (
         'None yet: the first one is tonight at 03:15, or ask for one now.'
@@ -162,7 +166,10 @@ export function WholeSiteBackups({
   }
 
   return (
-    <section aria-labelledby="whole-site" css={{ display: 'grid', gap: 10 }}>
+    <section
+      aria-labelledby="whole-site"
+      css={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}
+    >
       <h3 id="whole-site" css={{ margin: 0, fontSize: 13 }}>
         Whole-site backups
       </h3>
