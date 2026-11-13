@@ -86,6 +86,13 @@ export const SiteSummary = Site.extend({
   certificate: known(Certificate),
   /** Components WordPress offers an update for, from the last good report. */
   updates: known(z.number().int()),
+  /**
+   * Open issues other than reachability and the certificate, which have their own columns: a
+   * site can be up and still need attention (vulnerabilities, end of life, backups, a held run).
+   */
+  findings: z.array(
+    z.object({ kind: z.string(), severity: z.enum(['urgent', 'normal']), summary: z.string() }),
+  ),
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
 
@@ -721,6 +728,9 @@ export const BatchSiteView = z.object({
   siteId: z.string(),
   siteName: z.string(),
   state: z.enum(['waiting', 'running', 'done', 'held']),
+  /** When the updater started and finished this site; null until it has. */
+  startedAt: Timestamp.nullable(),
+  finishedAt: Timestamp.nullable(),
   heldReason: z.string().nullable(),
   backupKind: BackupKind,
   /** The backup evidence as recorded for this run. */
@@ -732,6 +742,9 @@ export type BatchSiteView = z.infer<typeof BatchSiteView>;
 export const BatchView = z.object({
   id: z.string(),
   approvedAt: Timestamp,
+  approvedBy: z.string(),
+  /** When the whole run finished; null while it's going or held. */
+  finishedAt: Timestamp.nullable(),
   state: z.enum(['approved', 'running', 'finished']),
   oneSiteFirst: z.boolean(),
   sites: z.array(BatchSiteView),

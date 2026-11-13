@@ -187,12 +187,16 @@ export function batchViews(db: Db, limit = 10, siteId?: string): BatchView[] {
     return {
       id,
       approvedAt: iso(Number(b.approved_at)),
+      approvedBy: String(b.approved_by),
+      finishedAt: b.finished_at === null ? null : iso(Number(b.finished_at)),
       state: String(b.state) as BatchView['state'],
       oneSiteFirst: Number(b.one_site_first) === 1,
       sites: sites.map((s) => ({
         siteId: String(s.site_id),
         siteName: String(s.name),
         state: String(s.state) as BatchView['sites'][number]['state'],
+        startedAt: s.started_at === null ? null : iso(Number(s.started_at)),
+        finishedAt: s.finished_at === null ? null : iso(Number(s.finished_at)),
         heldReason: s.held_reason === null ? null : String(s.held_reason),
         backupKind: String(s.backup_kind) as BackupKind,
         backup: s.backup === null ? null : String(s.backup),

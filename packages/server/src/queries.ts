@@ -142,7 +142,25 @@ export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
     outside: outside(db, site, workerOn),
     certificate: certificate(db, site),
     updates: updatesWaiting(db, site),
+    findings: siteFindings(db, site.id),
   }));
+}
+
+/** A site's open issues that aren't its reachability or certificate, most urgent first. */
+function siteFindings(db: Db, siteId: string): SiteSummary['findings'] {
+  return db
+    .prepare(
+      `SELECT kind, severity, summary FROM issues
+       WHERE resource_type = 'site' AND resource_id = ? AND resolved_at IS NULL
+       AND kind NOT IN ('down', 'certificate')
+       ORDER BY severity = 'urgent' DESC, first_seen_at`,
+    )
+    .all(siteId)
+    .map((r) => ({
+      kind: String(r.kind),
+      severity: String(r.severity) === 'urgent' ? 'urgent' : 'normal',
+      summary: String(r.summary),
+    }));
 }
 
 export function listServers(db: Db): Server[] {

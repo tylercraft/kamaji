@@ -36,6 +36,7 @@ const site: SiteSummary = {
     value: { validTo: ago(-60 * DAY), daysLeft: 60, checkedAt: ago(5), problem: null },
   },
   updates: { known: true, value: 0 },
+  findings: [],
 };
 
 describe('the home page line', () => {
