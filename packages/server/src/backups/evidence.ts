@@ -2,6 +2,7 @@
 // and only that. The exports themselves stay on craftish; this never lists or reads them.
 import type { BackupEntry, SiteBackupsResponse } from '@kamaji/shared';
 import type { Db } from '../db.js';
+import { wholeSiteView } from '../sitebackups/view.js';
 import { exportTime } from './exportTime.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -105,8 +106,11 @@ export function siteBackups(
   exportingSince: number | undefined,
 ): SiteBackupsResponse {
   const history = backupHistory(db, site.id);
+  const download = latestExport(db, site.id);
   return {
     backupExpectation: site.backupExpectation,
+    download: download ? { exportedAt: download.exportedAt } : null,
+    wholeSite: wholeSiteView(db, site.id),
     canExport: site.hostKind === 'craftish',
     exporting: exportingSince === undefined ? null : iso(exportingSince),
     latest:
@@ -115,4 +119,25 @@ export function siteBackups(
       null,
     history,
   };
+}
+
+/**
+ * The newest export Kamaji recorded for a site, for its download: the raw time craftish named
+ * the file with (db-export's basic format), and its SHA-256 to compare as it streams.
+ */
+export function latestExport(
+  db: Db,
+  siteId: string,
+): { at: string; exportedAt: string; sha256: string | null } | null {
+  const row = db
+    .prepare(
+      `SELECT exported_at, sha256 FROM backup_evidence WHERE site_id = ? AND ok = 1
+       AND exported_at IS NOT NULL ORDER BY recorded_at DESC, id DESC LIMIT 1`,
+    )
+    .get(siteId);
+  if (!row) return null;
+  const at = String(row.exported_at);
+  const exportedAt = exportTime(at);
+  if (!/^[0-9]{8}T[0-9]{6}Z$/.test(at) || !exportedAt) return null;
+  return { at, exportedAt, sha256: row.sha256 === null ? null : String(row.sha256) };
 }

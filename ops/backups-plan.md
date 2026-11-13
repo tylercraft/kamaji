@@ -1,113 +1,124 @@
 # Backups plan (TY-166)
 
-The plan before code, for Tyler to agree or change. Only for sites on craftish: Kinsta and WP Engine keep their own backups; Minton has no SSH.
+How Kamaji backs up WordPress sites on craftish. Decided with Tyler on 2026-11-13; calcifer `explore/kamaji.md`, "Backups (TY-166)", is the product side. Only for sites on craftish: Kinsta and WP Engine keep their own backups, and Minton has no SSH.
 
-## Three things to settle first
+## Settled (Tyler, 2026-11-13)
 
-1. **launchd can't reach Respaldo.** calcifer `ops/molcajete/README.md` says macOS privacy controls block `/Volumes/Respaldo` for launchd jobs; only a compiled binary that holds the permission, or Docker Desktop, gets through. Kamaji's processes are launchd jobs, so restic can't simply run from one. **Recommendation:** run restic in Docker (a pinned `restic/restic` image with the repository folder mounted), which uses Docker Desktop's own access, the way the stack already reaches the drives. The other route is an echoocho-mirror-style compiled wrapper as the LaunchAgent's program. That's more to build, and a rebuilt binary loses the permission. Step 1 of Tyler's steps proves the Docker route from launchd before any code is written.
-2. **calcifer `explore/kamaji.md` disagrees.** "Backups as a service" (2026-11-08) says home is the wrong place for clients' data, with S3 as the main copy, and the client's consent switched on in the plugin. TY-166 (2026-11-13) puts the first copy on Respaldo, with S3 later and the switch under Configure. TY-166 is the newer decision, so this plan follows it. explore wins over everything, though, so a Calcifer session should update it, or tell me it still stands.
-3. **Arq backs up Respaldo.** The restic repository would go to Arq Cloud too: ciphertext only, and an offsite copy until S3 arrives, but it doubles the storage. Exclude `/Volumes/Respaldo/kamaji` in Arq, or keep it there as the interim offsite copy. **Recommendation:** keep it until `restic copy` to S3 exists.
+1. **The repository is on the mini's internal disk,** `/Users/tylercraft/kamaji-backups/restic` (mode 700), not Respaldo. launchd jobs can read home, so restic runs natively: no Docker and no compiled wrapper to reach it.
+2. **Consent lives in Kamaji only.** Turning whole-site backups on for a client's site under Configure needs a tick that the client agreed. Kamaji records who ticked it and when. Tyler's own sites (First & Last, Yoga, both accounting sites) don't ask; a site's Configure says whether it's Tyler's own.
+3. **Arq takes the repository off-site** as ciphertext, until `restic copy` to S3 comes with the Arq replacement. One of Tyler's steps checks that Arq's plan covers `/Users/tylercraft/kamaji-backups`.
 
 ## craftish
 
-- **A new user, `kamaji-pull`,** not `kamaji-backup`. `kamaji-backup` can make an export but can't read one, and that's worth keeping. `kamaji-pull` can read, and only through its two forced commands. It's a system user with no password and no shell, like `kamaji-backup`.
-- **Two keys, two forced commands,** each `restrict`ed and accepted only `from="100.106.213.63"` (molcajete):
-  - **The app's download key** → `kamaji-fetch-export <site> <time>`. It streams one existing export, `/var/backups/kamaji/<site>/<time>.sql.gz`, and nothing else. The site must be a plain domain on `/etc/kamaji/db-export.sites`, and the time must match db-export's `^\d{8}T\d{6}Z$`. It runs `cat` as `www-data` through one sudo rule. Paths are never accepted.
-  - **The backup process's key** → `kamaji-site-pull <site>`. The site must be on a new list, `/etc/kamaji/site-pull.sites`. It's separate from the export list on purpose: a site can have exports before updates without whole-site pulls. As `www-data` (one sudo rule), it writes one tar to stdout:
+- **A new user, `kamaji-pull`,** not `kamaji-backup`. `kamaji-backup` can make an export but can't read one, and that's worth keeping. `kamaji-pull` can read, and only through its two forced commands. It's a system user with no password, like `kamaji-backup`, whose shell is there only for sshd to run the forced commands.
+- **Two keys, two forced commands,** each `restrict`ed and accepted only `from="100.106.213.63"` (molcajete). Scripts and their README are in `server-pull/`.
+  - **The app's download key** → `kamaji-fetch-export`, with `<site> <time>`. It streams one existing export, `/var/backups/kamaji/<site>/<time>.sql.gz`, and nothing else. The site must be a plain domain on `/etc/kamaji/db-export.sites`, and the time must match db-export's `^[0-9]{8}T[0-9]{6}Z$`. It runs as `www-data` through one sudo rule. Paths are never accepted.
+  - **The backup process's key** → `kamaji-site-pull`, with `<site>`. The site must be on a new list, `/etc/kamaji/site-pull.sites`. It's separate from the export list on purpose: a site can have exports before updates without whole-site pulls. As `www-data` (one sudo rule), it writes one tar to stdout:
     - `wp-content/`, without `cache/`, `upgrade/`, `ai1wm-backups/`, `updraft/`, `backups*/` or `*.log`;
     - `.htaccess`, if there is one;
-    - `database.sql`: a fresh `wp db export --single-transaction`, uncompressed so restic can deduplicate it, written to a www-data-only temp file and deleted after;
-    - `manifest.json`, written last: the format, site, time, WordPress version, table prefix, the names (not values) of wp-config's constants, and each part's bytes and SHA-256.
+    - `database.sql`: a fresh `wp db export --single-transaction`, uncompressed so restic can deduplicate it, written to a www-data-only temp folder and deleted after;
+    - `manifest.json`, written last: the format, site, time, WordPress version, table prefix, the names (never the values) of wp-config's constants, and `database.sql`'s bytes and SHA-256.
 - **What it reads:** `/var/www/<site>/public/wp-content`, `.htaccess`, the database through wp-cli, and the exports folder. Never `wp-config.php`, core files or another site.
-- **Leaving out wp-config.php:** that keeps the database password, the salts and any keys in constants out of the backup. A restore writes a new wp-config from the manifest: the table prefix plus fresh salts. Logging everyone out is the only cost, and the constants' names show what to put back. The database still holds what plugins keep in options, API keys included. That's unavoidable, which is why it's encrypted on the mini.
-- `tar --sort=name`, so an unchanged site gives an almost identical stream, and restic stores almost nothing new.
+- **Leaving out wp-config.php:** that keeps the database password, the salts and any keys in constants out of the backup. A restore writes a new wp-config: the manifest's table prefix plus fresh salts. Logging everyone out is the only cost, and the constants' names show what to put back. The database still holds what plugins keep in options, API keys included. That's unavoidable, and it's why the repository is encrypted.
+- `tar --sort=name`, so an unchanged site gives an almost identical stream and restic stores almost nothing new. A file that changes while it's read is a warning, not a failure: a live site's uploads can.
 
 ## How files travel
 
-**tar over SSH, piped straight into restic.** The backup process runs `ssh … kamaji-site-pull <site>` and pipes it into `docker run -i … restic backup --stdin --stdin-filename <site>.tar`. Nothing is written to the mini outside the repository.
+**tar over SSH, straight into restic:** `restic backup --stdin-from-command --stdin-filename <site>.tar -- /usr/bin/ssh … kamaji-pull@craftish <site>`. If ssh or the pull exits non-zero, restic makes no snapshot (restic's docs). Nothing is written on the mini outside the repository.
 
-The alternative, rsync through `rrsync -ro` into a mirror folder on the mini, sends only changed files. But it keeps a plain copy of every client's files in home, the opposite of encrypted at rest. With weekly runs and a few sites, sending the whole site each time is fine.
+After each snapshot, the process reads it back (`restic dump`) through a tar reader that checks the stream ended properly, that `manifest.json` came last and names the site, and that `database.sql` matches the manifest's SHA-256. A snapshot that fails this is forgotten straight away, and the failure is recorded with the reason.
 
-A pull counts only if both sides exit 0 and the manifest arrived and checks out. If not, the process deletes the snapshot it just made (`restic forget <id>`) and records the failure with the reason.
+rsync through `rrsync -ro` would send only changed files, but it means a plain copy of every client's files on the mini. With weekly runs and a few sites, sending the whole site each time is fine.
 
 ## The download
 
-The **Download** button on a site's Backups panel, for the latest export (Tyler's login only, like every request):
+The **Download** link on a site's Backups panel, for the latest export (Tyler's login only, like every request):
 
 1. The app looks up the latest `exported` row in `backup_evidence`.
-2. It runs `ssh … kamaji-fetch-export <site> <exported_at>` with the download key.
-3. It streams the output to the browser as `<site>-<time>.sql.gz`, computing the SHA-256 as it goes. A mismatch with the evidence is logged and shown afterwards.
+2. It runs `ssh … kamaji-pull@craftish <site> <exported_at>` with the download key.
+3. It streams the result to the browser as `<site>-<time>.sql.gz`, computing the SHA-256 as it goes. A mismatch with the evidence is logged.
 
-- **Where the file lives:** only on craftish, under the export's own retention (14 days, always the newest 3). Nothing is stored on the mini, and the copy that lands in the laptop's Downloads is Tyler's to delete. Once craftish has pruned it, the button says so.
-- The download key is the app's, in `~/.ssh/kamaji-fetch` (`KAMAJI_FETCH_SSH_KEY`, not a secret value). The app never holds the pull key or the restic password.
+- **Where the file lives:** only on craftish, under the export's own retention (14 days, always the newest 3). Nothing is stored on the mini, and the copy that lands in the laptop's Downloads is Tyler's to delete. If craftish has pruned it, the answer says so.
+- The download key is the app's, `~/.ssh/kamaji-fetch` (`KAMAJI_FETCH_SSH_KEY` overrides the path). The app never holds the pull key or the restic password.
 
 ## restic
 
-- **One repository** at `/Volumes/Respaldo/kamaji/restic`, mode 700, owned by `tylercraft`. It uses repository format 2 (compressed), with snapshots tagged `site:<id>`. One repository lets WordPress and plugin files deduplicate across sites. `restic copy --tag site:<id>` can still split it into per-client repositories in S3 later, matching explore's "one prefix per client".
-- **Retention:** after each site's snapshot, `restic forget --tag site:<id> --keep-weekly 4 --keep-monthly 6`. `restic prune` runs once a week, on Sundays. `restic check --read-data-subset 5%` runs monthly.
-- **The password:** `RESTIC_PASSWORD` in a new Doppler config, **`backup`**, not `checker`, so the app never has it. It's scoped to `~/.kamaji-backups` like the updater's. It's made with `openssl rand` piped straight into `doppler secrets set … > /dev/null`, and never printed, logged or put on argv. It reaches the container through `-e RESTIC_PASSWORD` with no value, so the environment passes it.
-- **Losing the password loses every backup.** If Doppler is the only copy, a lost Doppler account means unreadable backups. **Recommendation:** after making it, Tyler copies it once from Doppler's dashboard into his password manager.
+- **One repository** at `/Users/tylercraft/kamaji-backups/restic`, made with `--repository-version 2` (compressed), with snapshots tagged `site:<id>`. One repository lets WordPress and plugin files deduplicate across sites. `restic copy --tag site:<id>` can still split it per client in S3 later.
+- **restic from Homebrew** (`/opt/homebrew/bin/restic`, 0.17 or newer for `--stdin-from-command`). `KAMAJI_RESTIC` overrides the path.
+- **Retention:** after each site's snapshot, `restic forget --tag site:<id> --group-by tags --keep-weekly 4 --keep-monthly 6`. `restic prune` runs on Sundays, and `restic check --read-data-subset 5%` on the 1st of the month.
+- **The password:** `RESTIC_PASSWORD` in a new Doppler config, **`backup`**, not `checker`, so the app never has it. It's scoped to `~/.kamaji-backups` like the updater's to `~/.kamaji-updater`. It's made with `openssl rand` piped straight into `doppler secrets set … > /dev/null`, and never printed, logged or put on a command line. restic reads it from the environment.
+- **Losing the password loses every backup.** Tyler keeps a copy in his password manager.
+- The parsers follow restic's documented JSON (`restic.readthedocs.io`, "Scripting"); the fixtures in `packages/server/src/sitebackups/fixtures/` were written from those docs. One of Tyler's steps captures real ones on the mini to replace them.
 
 ## The process and the schedule
 
-- **A third process,** `dev.craftish.kamaji-backups` (`packages/server/src/backups/main.ts`), the same shape as the updater. It runs under Doppler's `backup` config, holds the pull key and the password, takes a lock in `kamaji.db`, does its work, writes what happened to `kamaji.db`, and exits.
-- **Nightly at 03:15** (StartCalendarInterval, the mini's NZ time). It backs up each site whose last good snapshot is older than its setting (weekly: 6½ days; fortnightly: 13½), one site at a time. Then it runs at most one restore check, for the site whose last check is oldest, if that's more than 30 days ago.
-- **On demand:** "Back up site now" and "Check restore now" on the Backups panel queue a request row, and the app kickstarts the agent, as it does the updater.
-- **Configure → Backups** gets "Whole-site backups: off / weekly / fortnightly", off by default, shown only on craftish sites. A site also has to be on craftish's `site-pull.sites`. Until it is, the first pull fails with "not on the allowlist" and the panel says so.
-- **If Respaldo isn't mounted or Docker isn't running,** the process records why and stops. Kamaji already alerts on an unmounted Respaldo. A site overdue by more than a day goes in the morning digest's "backups overdue".
+- **A third process,** `dev.craftish.kamaji-backups` (`packages/server/src/sitebackups/main.ts`), the same shape as the updater. It runs under Doppler's `backup` config, holds the pull key and the password, takes its own lock in `kamaji.db`, does its work, writes what happened to `kamaji.db`, and exits.
+- **Nightly at 03:15** (StartCalendarInterval, the mini's NZ time), in this order:
+  1. requests from the Backups panel;
+  2. each site whose last good snapshot is older than its setting (weekly: 6½ days; fortnightly: 13½), one at a time;
+  3. at most one restore check: the site whose last check is oldest, if that's more than 30 days ago;
+  4. `prune` on Sundays, `check` on the 1st;
+  5. the repository's size, for the panel.
+- **On demand:** "Back up site now" and "Check restore now" on the Backups panel queue a request, and the app kickstarts the agent, as it does the updater.
+- **Configure → Backups** gets "Whole-site backups: off / weekly / fortnightly", off by default, shown only on craftish sites, with the client-agreed tick on client sites. A site also has to be on craftish's `site-pull.sites`; until it is, a pull fails with "not on the allowlist".
+- **Alerts,** through the same issues and notifications as everything else (`sitebackups/alerts.ts`): a failed backup, a snapshot that didn't read back and a failed restore check go to Discord at once, like a site going down, and clear with the next one that works. A site 2 days past its week or fortnight goes in the morning digest; the app's cycle looks for those, so a backups process that never runs is noticed too.
 
 ## The restore check ("restore to a test copy")
 
-On the mini, in Docker, with nothing reachable from outside and nothing reaching out:
+On the mini:
 
-1. Restore the site's latest snapshot into a temporary Docker volume.
-2. Check every part against the manifest's SHA-256.
-3. Start a pinned MariaDB and a `wordpress` image matching the manifest's version, on an `--internal` Docker network with no internet, so the copy can't send email, call payment APIs or run cron against the world.
-4. Import `database.sql`, write a fresh wp-config (the manifest's table prefix, new salts, `WP_HOME` set to the test address, `DISABLE_WP_CRON`), and put back `wp-content`.
-5. Fetch the home page inside the network. It passes on a 200 that contains the expected text from the site's own baseline check.
+1. `restic restore` the site's latest snapshot into a temporary folder under `~/kamaji-restore`, mode 700: outside `~/kamaji-backups`, so Arq never copies a test copy's plain files.
+2. Unpack it and check `database.sql` against the manifest.
+3. In Docker Desktop, which the mini already runs, start a throwaway MariaDB and the `wordpress` image matching the manifest's version. Both go on an `--internal` network with no internet, so the copy can't send email, call payment APIs or run cron against the world.
+4. Import `database.sql`, and start WordPress with the restored `wp-content`, the manifest's table prefix, fresh salts, `WP_HOME` set to the test address and `DISABLE_WP_CRON`.
+5. Fetch the home page inside the network. It passes on a 200 containing the site's expected text, from its own home page check.
 6. Record pass or fail, the step that failed, and how long it took. explore: "restores are the product", and timed.
-7. Remove the containers, the network and the volume, pass or fail.
+7. Remove the containers, the network and the folder, pass or fail.
+
+Steps 1 and 2 need only restic. If Docker isn't answering, the check records "restored and checked; the test copy couldn't start" and counts as failed.
 
 ## What Kamaji records and shows
 
-- **New tables:**
-  - `site_snapshots`: site, restic snapshot id, time, the tar's bytes, the database's bytes, the data restic added, and ok or the reason it failed.
-  - `restore_checks`: site, snapshot id, time, result, the step that failed, seconds taken.
-  - The site's backup schedule goes on `sites`.
+- **Migration 14:**
+  - on `sites`: `own` (Tyler's own: seeded for the four), `site_backup_schedule` (off, weekly, fortnightly), and `site_backup_consent_at` / `site_backup_consent_by`;
+  - `site_snapshots`: site, restic snapshot id, time, the tar's bytes, the data restic added, the database's bytes and SHA-256, and ok or the reason it failed;
+  - `restore_checks`: site, snapshot id, time, result, the step that failed, seconds taken;
+  - `site_backup_requests`: the panel's requests, until the process takes them.
+  - Consent given and withdrawn are also events, so the record outlives a later change.
 - **The Backups panel adds:**
   - "Download latest export";
-  - Whole-site backups: the schedule, the last and next run, and the snapshot list (time, size, what was new);
+  - Whole-site backups: the schedule and consent, the last good snapshot and when the next is due, the snapshot list (time, size, what was new);
   - the repository's total size;
-  - the last restore check and its time;
+  - the last restore check and how long it took;
   - "Back up site now" and "Check restore now".
-- Discord gets labels and a link only, as now: "whole-site backup failed for 1 site".
 
 ## Tyler's steps
 
-Full commands go in `ops/README.md` with the code. These are the steps, in order.
+Full commands, with checks between them, are in `ops/README.md`, "Whole-site backups" (34 numbered steps). These are the steps in short, in order, each marked mini, craftish, Doppler, Arq or Kamaji.
 
-1. [mini] Prove the route: a test LaunchAgent runs `docker run --rm -v /Volumes/Respaldo/kamaji:/repo alpine touch /repo/ok`. Check the file appears, then delete it.
-2. [mini] Make the folder: `/Volumes/Respaldo/kamaji`, mode 700.
+1. [mini] Install restic: `brew install restic`, then check `restic version` is 0.17 or newer.
+2. [mini] Make the folders: `/Users/tylercraft/kamaji-backups` and `/Users/tylercraft/kamaji-restore`, mode 700.
 3. [Doppler] Add a config `backup` to project `kamaji`, beside `updater`.
-4. [Doppler] Create `RESTIC_PASSWORD` in `backup` from `openssl rand`, piped straight in, never printed (laptop).
+4. [Doppler] Create `RESTIC_PASSWORD` in `backup` from `openssl rand`, piped straight in, never printed (on the laptop).
 5. [Doppler] Copy the password from the dashboard into your password manager.
 6. [Doppler] Make a read-only service token for `kamaji` → `backup`.
 7. [mini] Scope that token to `/Users/tylercraft/.kamaji-backups`, pasted at a silent prompt.
-8. [mini] Initialise the repository with the pinned restic image (`restic init --repository-version 2`).
-9. [mini] Make the pull key, `~/.ssh/kamaji-pull` (no passphrase).
-10. [mini] Make the download key, `~/.ssh/kamaji-fetch` (no passphrase).
-11. [mini] Show both public keys, to paste on craftish.
-12. [craftish] Add the `kamaji-pull` system user, with no password and no shell.
-13. [craftish] Install `kamaji-fetch-export`, `kamaji-site-pull` and their two helpers, owned by root (scp'd up from the laptop).
-14. [craftish] Add the two sudo rules (`kamaji-pull` → the two helpers as `www-data`, nothing else), checked with `visudo -c`.
-15. [craftish] Put the two `authorized_keys` lines for `kamaji-pull` in place (restrict, forced command, `from` molcajete).
-16. [craftish] Create `/etc/kamaji/site-pull.sites` with `aleyahoerlein.com`.
-17. [mini] Check each key is refused anything else (expect "not a site name", not `uid=`).
-18. [mini] Deploy Kamaji (`ops/deploy.sh`).
-19. [mini] Install and load the `dev.craftish.kamaji-backups` LaunchAgent.
-20. [Kamaji] Configure → aleyahoerlein.com → Whole-site backups: weekly, then "Back up site now".
-21. [Kamaji] "Check restore now" on aleyahoerlein.com, and note the time it took.
-22. [Arq] Exclude `/Volumes/Respaldo/kamaji`, or don't (see "Three things to settle first").
+8. [mini] Initialise the repository, under Doppler's `backup` scope.
+9. [Arq] Check the backup plan covers `/Users/tylercraft/kamaji-backups`, and add it if not; `kamaji-restore` stays out.
+10. [mini] Make the pull key, `~/.ssh/kamaji-pull` (no passphrase).
+11. [mini] Make the download key, `~/.ssh/kamaji-fetch` (no passphrase).
+12. [mini] Show both public keys, to paste on craftish.
+13. [craftish] Add the `kamaji-pull` system user, with no password (`/bin/sh` only for the forced commands).
+14. [craftish] Install the four `server-pull/` scripts, owned by root (scp'd up from the laptop).
+15. [craftish] Add the sudo rule (`kamaji-pull` → the two helpers as `www-data`, nothing else), checked with `visudo -c`.
+16. [craftish] Put the two `authorized_keys` lines for `kamaji-pull` in place.
+17. [craftish] Create `/etc/kamaji/site-pull.sites` with `aleyahoerlein.com`.
+18. [mini] Check each key is refused anything else (expect "not a site name", not `uid=`).
+19. [mini] Deploy Kamaji (`ops/deploy.sh`): migration 14 runs.
+20. [mini] Install and load the `dev.craftish.kamaji-backups` LaunchAgent.
+21. [Kamaji] Configure → aleyahoerlein.com → Whole-site backups: weekly, the client-agreed tick, then "Back up site now".
+22. [mini] Capture `restic snapshots --json` and `restic stats --json --mode raw-data` for the fixtures, and send them over.
+23. [Kamaji] "Check restore now" on aleyahoerlein.com, and note how long it took.
 
 ## Not in this
 

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Kamaji's whole-site backups on molcajete (ops/backups-plan.md): nightly at 03:15, and when
+     the app kickstarts it for a request from a site's Backups panel. It runs what's due, then
+     exits. Doppler's scope for ~/.kamaji-backups holds the backup config's service token, so this
+     process, and only this one, gets the restic password. Runbook: ops/README.md, "Whole-site
+     backups". -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.craftish.kamaji-backups</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/doppler</string>
+    <string>run</string>
+    <string>--scope</string>
+    <string>/Users/tylercraft/.kamaji-backups</string>
+    <string>--</string>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>packages/server/dist/sitebackups/main.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/tylercraft/kamaji</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- Not a secret: where the repository is. Its password comes from Doppler. -->
+    <key>RESTIC_REPOSITORY</key>
+    <string>/Users/tylercraft/kamaji-backups/restic</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-backups.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-backups.log</string>
+</dict>
+</plist>

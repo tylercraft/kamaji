@@ -1,0 +1,14 @@
+#!/bin/bash
+# kamaji-site-pull: the forced command of Kamaji's whole-site backup key on craftish (README.md).
+# Takes one site name, from the SSH command Kamaji sends, never a path; anything that isn't a
+# plain domain name is refused here, before sudo. Then runs the pull as www-data through one sudo
+# rule, where the site is checked against the pull allowlist again.
+set -u
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+site=${SSH_ORIGINAL_COMMAND:-}
+if ! [[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+  printf '{"format":1,"ok":false,"problem":"not a site name"}\n' >&2
+  exit 2
+fi
+exec sudo -n -u www-data /usr/local/lib/kamaji/site-pull "$site"

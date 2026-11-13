@@ -323,11 +323,20 @@ export type NewSiteRequest = z.infer<typeof NewSiteRequest>;
 export const BackupExpectation = z.enum(['kamaji', 'host', 'client', 'tyler']);
 export type BackupExpectation = z.infer<typeof BackupExpectation>;
 
-/** Add site, step 3. */
+/** Whole-site backups (TY-166): restic snapshots of a craftish site, off by default. */
+export const SiteBackupSchedule = z.enum(['off', 'weekly', 'fortnightly']);
+export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
+
+/** Add site, step 3. The whole-site backup fields are left as they were when absent. */
 export const ConfigureSiteRequest = z.object({
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
+  /** Tyler's own site: whole-site backups ask no client. */
+  own: z.boolean().optional(),
+  siteBackups: SiteBackupSchedule.optional(),
+  /** Ticked: the client agreed to whole-site backups. Needed to turn them on for a client's site. */
+  clientAgreed: z.boolean().optional(),
 });
 export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
 
@@ -344,6 +353,13 @@ export const SiteDetailResponse = z.object({
   notifications: z.enum(['normal', 'digest']),
   /** Whether this Kamaji has craftish-care keys, so connecting is possible at all. */
   canConnect: z.boolean(),
+  own: z.boolean(),
+  siteBackups: z.object({
+    schedule: SiteBackupSchedule,
+    /** When the client's agreement was ticked, and by whom; null on Tyler's own sites or off. */
+    consentAt: Timestamp.nullable(),
+    consentBy: z.string().nullable(),
+  }),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 
@@ -739,8 +755,61 @@ export const BackupEntry = z.object({
 });
 export type BackupEntry = z.infer<typeof BackupEntry>;
 
+/** One whole-site backup attempt (sitebackups/ on the server). */
+export const SiteSnapshot = z.object({
+  startedAt: Timestamp,
+  finishedAt: Timestamp,
+  ok: z.boolean(),
+  /** The tar's size, and what restic had to store that it didn't have already. */
+  bytes: z.number().int().nullable(),
+  addedBytes: z.number().int().nullable(),
+  databaseBytes: z.number().int().nullable(),
+  wordpress: z.string().nullable(),
+  problem: z.string().nullable(),
+  /** Let go by retention (4 weekly, 6 monthly): no longer restorable. */
+  forgotten: z.boolean(),
+});
+export type SiteSnapshot = z.infer<typeof SiteSnapshot>;
+
+export const RestoreCheck = z.object({
+  startedAt: Timestamp,
+  seconds: z.number().int(),
+  ok: z.boolean(),
+  failedStep: z.string().nullable(),
+  problem: z.string().nullable(),
+});
+export type RestoreCheck = z.infer<typeof RestoreCheck>;
+
+export const WholeSiteBackups = z.object({
+  schedule: SiteBackupSchedule,
+  own: z.boolean(),
+  consentAt: Timestamp.nullable(),
+  consentBy: z.string().nullable(),
+  /** Switched on, with the agreement it needs: what the process will back up. */
+  active: z.boolean(),
+  lastGoodAt: Timestamp.nullable(),
+  /** When the nightly run next takes it; null while switched off. */
+  nextDueAt: Timestamp.nullable(),
+  /** Newest first. */
+  snapshots: z.array(SiteSnapshot),
+  /** Newest first. */
+  restoreChecks: z.array(RestoreCheck),
+  /** A request from this panel not yet answered: when it was asked. */
+  pending: z.object({ backup: Timestamp.nullable(), restore: Timestamp.nullable() }),
+  /** The whole repository's size on disk, all sites, as the process last measured it. */
+  repository: z.object({ bytes: z.number().int(), at: Timestamp }).nullable(),
+});
+export type WholeSiteBackups = z.infer<typeof WholeSiteBackups>;
+
+export const WholeSiteRequest = z.object({ kind: z.enum(['backup', 'restore']) });
+export type WholeSiteRequest = z.infer<typeof WholeSiteRequest>;
+
 export const SiteBackupsResponse = z.object({
   backupExpectation: BackupExpectation.nullable(),
+  /** The newest export's time, for "Download latest export"; null when there's none. */
+  download: z.object({ exportedAt: Timestamp }).nullable(),
+  /** Only for sites on craftish. */
+  wholeSite: WholeSiteBackups.nullable(),
   /** Whether "Back up now" applies: a site hosted on craftish. */
   canExport: z.boolean(),
   /** When this Kamaji started a "Back up now" still going, or null. */

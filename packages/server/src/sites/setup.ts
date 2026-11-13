@@ -8,6 +8,7 @@ import {
   type Handshake,
   type NewSiteRequest,
   type RemoveSiteResponse,
+  type SiteBackupSchedule,
   type SiteDetailResponse,
 } from '@kamaji/shared';
 import type { CareResult } from '../care/client.js';
@@ -135,28 +136,70 @@ export async function handshake(
 
 /**
  * Step 3. Finishing grants no update permission: every update is still approved. Kamaji's own
- * backup is the database export on craftish, so only a site hosted there can have it.
+ * backup is the database export on craftish, and whole-site backups pull from craftish too, so
+ * only a site hosted there can have either. Turning whole-site backups on for a client's site
+ * needs the client's agreement, ticked here and recorded with who ticked it and when (calcifer
+ * explore/kamaji.md, "Backups (TY-166)"); turning them off clears it, so it's asked again.
  */
 export function configureSite(
   db: Db,
   id: string,
   request: ConfigureSiteRequest,
   now: number,
-): 'saved' | 'not-found' | 'not-craftish' {
+  login: string,
+): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' {
   const row = siteRow(db, id);
   if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return 'not-found';
-  if (request.backupExpectation === 'kamaji' && row.host_kind !== 'craftish') return 'not-craftish';
+  const craftish = row.host_kind === 'craftish';
+  if (request.backupExpectation === 'kamaji' && !craftish) return 'not-craftish';
+  const own = request.own ?? Number(row.own) === 1;
+  const before = String(row.site_backup_schedule) as SiteBackupSchedule;
+  const schedule = request.siteBackups ?? before;
+  const hadConsent = row.site_backup_consent_at !== null;
+  if (schedule !== 'off') {
+    if (!craftish) return 'not-craftish';
+    if (!own && !hadConsent && !request.clientAgreed) return 'no-consent';
+  }
+  const consent =
+    schedule === 'off' || own
+      ? null
+      : hadConsent
+        ? { at: Number(row.site_backup_consent_at), by: String(row.site_backup_consent_by) }
+        : { at: now, by: login };
   db.prepare(
-    `UPDATE sites SET expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done'
+    `UPDATE sites SET expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
+       own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?
      WHERE id = ?`,
-  ).run(request.expectedText || null, request.backupExpectation, request.notifications, id);
-  if (row.setup !== 'done') {
-    recordEvent(db, now, {
-      kind: 'site.added',
-      summary: `Added ${String(row.name)}: first checks pending`,
-      resourceType: 'site',
-      resourceId: id,
-    });
+  ).run(
+    request.expectedText || null,
+    request.backupExpectation,
+    request.notifications,
+    own ? 1 : 0,
+    schedule,
+    consent?.at ?? null,
+    consent?.by ?? null,
+    id,
+  );
+  const name = String(row.name);
+  const event = (kind: string, summary: string) =>
+    recordEvent(db, now, { kind, summary, resourceType: 'site', resourceId: id });
+  if (row.setup !== 'done') event('site.added', `Added ${name}: first checks pending`);
+  if (consent && !hadConsent) {
+    event(
+      'site.backup-consent',
+      `${name}’s client agreed to whole-site backups (ticked by ${login})`,
+    );
+  }
+  if (!consent && hadConsent) {
+    event(
+      'site.backup-consent-cleared',
+      own
+        ? `${name} marked as Tyler’s own: no client’s agreement needed for its backups`
+        : `Whole-site backups of ${name} turned off; the client’s agreement is asked again next time`,
+    );
+  }
+  if (schedule !== before) {
+    event('site.backup-schedule', `Whole-site backups of ${name}: ${schedule}`);
   }
   return 'saved';
 }
@@ -179,6 +222,15 @@ export function siteDetail(
         : (String(row.backup_expectation) as SiteDetailResponse['backupExpectation']),
     notifications: String(row.notifications) as SiteDetailResponse['notifications'],
     canConnect: options.canConnect,
+    own: Number(row.own) === 1,
+    siteBackups: {
+      schedule: String(row.site_backup_schedule) as SiteBackupSchedule,
+      consentAt:
+        row.site_backup_consent_at === null
+          ? null
+          : new Date(Number(row.site_backup_consent_at)).toISOString(),
+      consentBy: row.site_backup_consent_by === null ? null : String(row.site_backup_consent_by),
+    },
   };
 }
 

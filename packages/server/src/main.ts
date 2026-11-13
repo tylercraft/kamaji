@@ -12,7 +12,7 @@ import { checkDirectory } from './inventory/directory.js';
 import { checkReports } from './inventory/report.js';
 import { checkWordfence } from './wordfence/feed.js';
 import { checkEndOfLife } from './endOfLife/check.js';
-import { updaterLauncher } from './updates/launcher.js';
+import { backupsLauncher, updaterLauncher } from './updates/launcher.js';
 import { pendingWork } from './updates/batches.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
@@ -24,6 +24,8 @@ import { Runner } from './jobs/runner.js';
 import { enqueue } from './jobs/store.js';
 import { notifyNow, sendDigest, type NotifyOptions } from './notify.js';
 import { backupConfig, craftishBackup } from './updater/backup.js';
+import { craftishFetch } from './backups/download.js';
+import { checkBackupsOverdue } from './sitebackups/alerts.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 
@@ -81,6 +83,7 @@ const runChecks = async (signal: AbortSignal) => {
     log,
   });
   checkEndOfLife(db, Date.now());
+  checkBackupsOverdue(db, Date.now());
   // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
   if (pendingWork(db)) startUpdater();
   const servers = await checkServers(db, {
@@ -137,6 +140,8 @@ const app = createApp({
   startUpdater,
   // Settings read each time, so craftish added as a server later needs no restart.
   backup: (site) => craftishBackup(backupConfig(db, process.env))(site),
+  fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
+  startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
   log,
   statusInput: () => ({
     version,

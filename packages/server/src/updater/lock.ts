@@ -1,5 +1,5 @@
-// The updater's one-at-a-time lock, in the state table: the pid of the run holding it, or 0 once
-// that run has released it.
+// A process's one-at-a-time lock, in the state table: the pid of the run holding it, or 0 once
+// that run has released it. The updater's is LOCK; the backups process has its own.
 import type { Db } from '../db.js';
 import { readState, writeState } from '../state.js';
 
@@ -21,13 +21,13 @@ export function alive(pid: number): boolean {
 }
 
 /** Takes the lock for `pid`, unless another live run holds it: then returns that run's pid. */
-export function takeLock(db: Db, pid: number, now: number): number | undefined {
-  const held = readState<{ pid: number; at: number }>(db, LOCK);
+export function takeLock(db: Db, pid: number, now: number, name = LOCK): number | undefined {
+  const held = readState<{ pid: number; at: number }>(db, name);
   if (held && held.pid > 0 && held.pid !== pid && alive(held.pid)) return held.pid;
-  writeState(db, LOCK, { pid, at: now }, now);
+  writeState(db, name, { pid, at: now }, now);
   return undefined;
 }
 
-export function releaseLock(db: Db, now: number): void {
-  writeState(db, LOCK, { pid: 0, at: now }, now);
+export function releaseLock(db: Db, now: number, name = LOCK): void {
+  writeState(db, name, { pid: 0, at: now }, now);
 }

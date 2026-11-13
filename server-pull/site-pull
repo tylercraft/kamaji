@@ -1,0 +1,58 @@
+#!/bin/bash
+# site-pull: one site's files and a fresh database dump, as one tar on stdout, for Kamaji's
+# whole-site backup (restic on molcajete). Installed at /usr/local/lib/kamaji/site-pull, owned by
+# root, and run only as www-data through the one sudo rule kamaji-site-pull uses (README.md). The
+# site must be a line of /etc/kamaji/site-pull.sites; its WordPress is /var/www/<site>/public.
+#
+# The tar holds wp-content (without caches, other backup plugins' archives and logs), .htaccess if
+# there is one, database.sql and, last, manifest.json. Never wp-config.php: its names are in the
+# manifest, never its values. Problems go to stderr, since stdout is the backup; any non-zero exit
+# means restic keeps no snapshot.
+set -u -o pipefail
+export LC_ALL=C PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+
+fail() {
+  printf '{"format":1,"ok":false,"problem":"%s"}\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+site=${1:-}
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail 'not a site name' 2
+grep -qxF -- "$site" /etc/kamaji/site-pull.sites 2>/dev/null || fail 'not on the allowlist' 2
+root=/var/www/$site/public
+[ -f "$root/wp-config.php" ] && [ -d "$root/wp-content" ] || fail 'no WordPress there' 2
+
+base=/var/backups/kamaji/.pull
+mkdir -p "$base" || fail 'the work folder could not be made'
+work=$(mktemp -d "$base/$site.XXXXXX") || fail 'the work folder could not be made'
+trap 'rm -rf -- "$work"' EXIT
+export WP_CLI_CACHE_DIR=/var/backups/kamaji/.wp-cli-cache
+wp=(wp --path="$root" --skip-plugins --skip-themes)
+
+# --single-transaction: consistent InnoDB tables without locking the site.
+"${wp[@]}" db export "$work/database.sql" --single-transaction --quick >/dev/null 2>&1 ||
+  fail 'the database export failed'
+version=$("${wp[@]}" core version 2>/dev/null) || fail 'wp core version failed'
+prefix=$("${wp[@]}" config get table_prefix 2>/dev/null) || fail 'wp config get table_prefix failed'
+[[ $version =~ ^[0-9][0-9.a-zA-Z-]*$ ]] || fail 'an unexpected WordPress version'
+[[ $prefix =~ ^[A-Za-z0-9_]+$ ]] || fail 'an unexpected table prefix'
+# Names only: every constant and variable wp-config defines, never a value.
+names=$("${wp[@]}" config list --fields=name --format=json 2>/dev/null) || fail 'wp config list failed'
+bytes=$(stat -c %s "$work/database.sql")
+sha=$(sha256sum "$work/database.sql" | cut -d' ' -f1)
+at=$(date -u +%Y%m%dT%H%M%SZ)
+printf '{"format":1,"site":"%s","at":"%s","wordpress":"%s","tablePrefix":"%s","config":%s,"database":{"bytes":%s,"sha256":"%s"}}\n' \
+  "$site" "$at" "$version" "$prefix" "$names" "$bytes" "$sha" >"$work/manifest.json"
+
+parts=(wp-content)
+[ -f "$root/.htaccess" ] && parts+=(.htaccess)
+# GNU tar exits 1 when a file changed while it was read (a live site's uploads can): a warning,
+# not a failure. 2 is fatal. manifest.json goes last, so a stream that stops early lacks it.
+tar --create --format=gnu --sort=name --warning=no-file-changed --no-wildcards-match-slash \
+  --exclude=wp-content/cache --exclude=wp-content/upgrade --exclude=wp-content/ai1wm-backups \
+  --exclude=wp-content/updraft --exclude='wp-content/backups*' --exclude='*.log' \
+  -C "$root" "${parts[@]}" -C "$work" database.sql manifest.json
+code=$?
+[ "$code" -le 1 ] || exit "$code"
+exit 0
