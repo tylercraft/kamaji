@@ -8,6 +8,7 @@ import {
   Handshake,
   RemoveSiteResponse,
   type HostKind,
+  type SiteBackupSchedule,
   type SiteDetailResponse,
 } from '@kamaji/shared';
 import { useState, type FormEvent, type ReactNode } from 'react';
@@ -317,8 +318,77 @@ export function InstallSteps({
 }
 
 const CONFIGURE_WORDS: Record<string, string> = {
-  not_craftish: 'Kamaji’s own backup is the export on craftish, and this site isn’t hosted there',
+  not_craftish: 'Kamaji’s own backups are on craftish, and this site isn’t hosted there',
+  no_consent: 'Tick that the client agreed before turning on whole-site backups of their site',
 };
+
+export const SCHEDULES: Record<SiteBackupSchedule, string> = {
+  off: 'Off',
+  weekly: 'Weekly',
+  fortnightly: 'Fortnightly',
+};
+
+/**
+ * Whole-site backups, on craftish sites only: the schedule, whether it's Tyler's own site, and
+ * on a client's site the tick that the client agreed (recorded once, with who ticked it and when).
+ */
+function WholeSiteChoices({
+  detail,
+  own,
+  setOwn,
+  schedule,
+  setSchedule,
+}: {
+  detail: SiteDetailResponse;
+  own: boolean;
+  setOwn: (own: boolean) => void;
+  schedule: SiteBackupSchedule;
+  setSchedule: (schedule: SiteBackupSchedule) => void;
+}) {
+  const { consentAt, consentBy } = detail.siteBackups;
+  return (
+    <Choices>
+      <legend>Whole-site backups</legend>
+      <Muted>
+        Files and a fresh database from craftish, kept encrypted on molcajete and off-site through
+        Arq: 4 weekly and 6 monthly. Never wp-config.php.
+      </Muted>
+      {(Object.entries(SCHEDULES) as [SiteBackupSchedule, string][]).map(([value, label]) => (
+        <label key={value}>
+          <input
+            type="radio"
+            name="siteBackups"
+            value={value}
+            checked={schedule === value}
+            onChange={() => setSchedule(value)}
+          />
+          {label}
+        </label>
+      ))}
+      <label>
+        <input
+          type="checkbox"
+          name="own"
+          checked={own}
+          onChange={(event) => setOwn(event.currentTarget.checked)}
+        />
+        My own site: there’s no client to ask
+      </label>
+      {schedule !== 'off' &&
+        !own &&
+        (consentAt ? (
+          <Muted>
+            The client agreed: ticked by {consentBy} <Time iso={consentAt} />.
+          </Muted>
+        ) : (
+          <label>
+            <input type="checkbox" name="clientAgreed" required />
+            The client agreed to whole-site backups of their site
+          </label>
+        ))}
+    </Choices>
+  );
+}
 
 /** Step 3: what to check on the home page, the backup expectation, and notifications. */
 export function ConfigureStep({
@@ -329,6 +399,8 @@ export function ConfigureStep({
   reload: () => void;
 }) {
   const { site } = detail;
+  const [own, setOwn] = useState(detail.own);
+  const [schedule, setSchedule] = useState(detail.siteBackups.schedule);
   const { busy, error, run } = useAction({
     saved: `Saved ${site.name}’s settings`,
     failed: 'Not saved',
@@ -341,6 +413,9 @@ export function ConfigureStep({
       expectedText: String(form.get('expected') ?? '').trim() || null,
       backupExpectation: backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
+      ...(site.hostKind === 'craftish'
+        ? { own, siteBackups: schedule, clientAgreed: form.get('clientAgreed') === 'on' }
+        : {}),
     });
     if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK), CONFIGURE_WORDS))
       reload();
@@ -388,6 +463,15 @@ export function ConfigureStep({
             Not decided yet: shown as unknown
           </label>
         </Choices>
+        {site.hostKind === 'craftish' && (
+          <WholeSiteChoices
+            detail={detail}
+            own={own}
+            setOwn={setOwn}
+            schedule={schedule}
+            setSchedule={setSchedule}
+          />
+        )}
         <Choices>
           <legend>Notifications</legend>
           <label>
