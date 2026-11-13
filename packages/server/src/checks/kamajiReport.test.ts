@@ -1,53 +1,8 @@
 // Runs kamaji-report's own apt parsing (between its BEGIN/END upgradable markers) with bash, on
 // craftish's real `apt list --upgradable` from 2026-11-13, so the script and Kamaji's parser are
 // tested against the same output.
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-
-const script = readFileSync(
-  new URL('../../../../server-report/kamaji-report', import.meta.url),
-  'utf8',
-);
-const fixture = readFileSync(
-  new URL('fixtures/apt-upgradable.craftish.txt', import.meta.url),
-  'utf8',
-);
-
-function functions(): string {
-  const fn = (name: string) =>
-    new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}\\n`, 'm').exec(script)![0];
-  const block = script.slice(
-    script.indexOf('# BEGIN upgradable'),
-    script.indexOf('# END upgradable'),
-  );
-  return fn('js') + fn('lines') + block;
-}
-
-interface Upgradable {
-  upgradable: {
-    name: string;
-    from: string;
-    to: string;
-    suites: string[];
-    security: boolean;
-    esm: boolean;
-  }[];
-  upgradableTotal: number;
-  truncated: boolean;
-}
-
-function run(input: string, max?: number): Upgradable {
-  const out = execFileSync(
-    '/bin/bash',
-    [
-      '-c',
-      `${functions()}\n${max ? `UPGRADABLE_MAX=${max}\n` : ''}printf '{%s}' "$(upgradable_json)"`,
-    ],
-    { input, encoding: 'utf8' },
-  );
-  return JSON.parse(out) as Upgradable;
-}
+import { fixture, run } from './aptFixture.js';
 
 describe('kamaji-report’s upgradable packages', () => {
   it('reads craftish’s real list: every package, versions and origin, security first', () => {

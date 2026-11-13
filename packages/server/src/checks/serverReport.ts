@@ -2,10 +2,12 @@
 // command /usr/local/bin/kamaji-report (server-report/), parses the JSON it prints, keeps it as an
 // observation and raises issues from it. Kamaji recommends; patching and restarts stay Tyler's.
 //
-// Issues (all for the morning digest, except a nearly full disk):
-// - security updates still waiting after a day (unattended-upgrades usually installs them sooner)
-// - a restart needed; failed services; a disk at 85% (urgent at 95%); the OS within 180 days of
-//   its end of standard support; the report unreadable three times running.
+// Issues (for the morning digest unless said otherwise):
+// - package updates, rated in serverUpdates.ts: a security update to an internet-facing package
+//   or a restart pending over 7 days is urgent; other security updates after a day, a restart,
+//   and 20+ ordinary updates with the oldest over 30 days are for the digest
+// - failed services; a disk at 85% (urgent at 95%); the OS within 180 days of its end of
+//   standard support; the report unreadable three times running.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
@@ -13,9 +15,21 @@ import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import { clearIssue, raiseIssue } from '../issues.js';
 import { latestObservations, recordObservation } from '../observations.js';
+import { readState, writeState } from '../state.js';
+import { rateUpdates, syncUpdates, type Finding, type Upgradable } from './serverUpdates.js';
 
+const UpgradableEntry = z.object({
+  name: z.string(),
+  from: z.string(),
+  to: z.string(),
+  suites: z.array(z.string()),
+  security: z.boolean(),
+  esm: z.boolean(),
+});
+
+/** Format 2 adds the upgradable list and rebootRequiredSince; format 1 is still read. */
 export const ServerReport = z.object({
-  format: z.literal(1),
+  format: z.union([z.literal(1), z.literal(2)]),
   host: z.string(),
   generatedAt: z.string(),
   os: z.object({ id: z.string(), version: z.string(), codename: z.string(), name: z.string() }),
@@ -26,8 +40,12 @@ export const ServerReport = z.object({
     other: z.array(z.string()),
     esm: z.array(z.string()),
   }),
+  upgradable: z.array(UpgradableEntry).optional(),
+  upgradableTotal: z.number().int().optional(),
+  truncated: z.boolean().optional(),
   rebootRequired: z.boolean(),
   rebootPackages: z.array(z.string()),
+  rebootRequiredSince: z.string().nullable().optional(),
   failedUnits: z.array(z.string()),
   services: z.record(z.string(), z.string()),
   disks: z.array(
@@ -137,6 +155,45 @@ function describeSshFailure(stderr: string, error: Error & { killed?: boolean })
 const usedShare = (d: ServerReport['disks'][number]) =>
   d.sizeBytes > 0 ? d.usedBytes / d.sizeBytes : 0;
 
+/** A report's upgradable packages; format 1 has only their names, without versions. */
+export function upgradableOf(r: ServerReport): Upgradable[] {
+  if (r.upgradable) return r.upgradable;
+  const esm = new Set(r.packages.esm);
+  const entry = (name: string, security: boolean): Upgradable => ({
+    name,
+    from: '',
+    to: '',
+    suites: [],
+    security: security && !esm.has(name),
+    esm: esm.has(name),
+  });
+  return [
+    ...r.packages.security.map((n) => entry(n, true)),
+    ...r.packages.other.map((n) => entry(n, false)),
+  ];
+}
+
+const REBOOT_STATE = (serverId: string) => `server.reboot-since.${serverId}`;
+
+/**
+ * Since when a restart has been pending: the report's own time for it (format 2), else when
+ * Kamaji first saw it pending. Null when no restart is needed.
+ */
+export function rebootSince(db: Db, serverId: string, r: ServerReport): number | null {
+  if (!r.rebootRequired) return null;
+  const reported = r.rebootRequiredSince ? Date.parse(r.rebootRequiredSince) : NaN;
+  if (!Number.isNaN(reported)) return reported;
+  return readState<{ at: number }>(db, REBOOT_STATE(serverId))?.at ?? null;
+}
+
+/** The report as kept in observations: the upgradable list lives in server_updates instead. */
+export function slim(reading: ReportReading): ReportReading {
+  if (!reading.ok || !reading.report.upgradable) return reading;
+  const report: ServerReport = { ...reading.report };
+  delete report.upgradable;
+  return { ok: true, report };
+}
+
 /** The issues one server's reading implies, from it and the readings before. */
 export function judgeServer(
   db: Db,
@@ -145,7 +202,7 @@ export function judgeServer(
   reading: ReportReading,
 ): void {
   const key = (kind: string) => ({ resourceType: 'server', resourceId: server.id, kind }) as const;
-  const history = latestObservations<ReportReading>(db, 'server', server.id, 'report', 'ssh', 600);
+  const history = latestObservations<ReportReading>(db, 'server', server.id, 'report', 'ssh', 2);
 
   if (!reading.ok) {
     const before = history.slice(0, 2);
@@ -161,34 +218,35 @@ export function judgeServer(
   clearIssue(db, at, key('unreadable'), `Kamaji can read ${server.name}’s report again`);
   const r = reading.report;
 
-  // Security updates: since when has every report shown some waiting?
-  const security = r.packages.security.length;
-  let since = at;
-  for (const o of history) {
-    if (!o.ok) continue;
-    const v = o.value as Extract<ReportReading, { ok: true }>;
-    if (v.report.packages.security.length === 0) break;
-    since = o.at;
-  }
-  if (security > 0 && at - since >= DAY) {
-    raiseIssue(db, at, {
-      ...key('security-updates'),
-      severity: 'normal',
-      summary: `${server.name}: ${security} security ${security === 1 ? 'update' : 'updates'} waiting for over a day`,
-    });
-  } else if (security === 0) {
-    clearIssue(db, at, key('security-updates'), `${server.name}’s security updates are installed`);
-  }
-
+  // Package updates and a pending restart, rated in serverUpdates.ts.
   if (r.rebootRequired) {
-    raiseIssue(db, at, {
-      ...key('reboot'),
-      severity: 'normal',
-      summary: `${server.name} needs a restart to finish updates`,
-    });
+    if (!readState(db, REBOOT_STATE(server.id)))
+      writeState(db, REBOOT_STATE(server.id), { at }, at);
   } else {
-    clearIssue(db, at, key('reboot'), `${server.name} has restarted`);
+    writeState(db, REBOOT_STATE(server.id), null, at);
   }
+  const rows = syncUpdates(db, server.id, at, upgradableOf(r), r.truncated ?? false);
+  const rating = rateUpdates({
+    server: server.name,
+    now: at,
+    rows,
+    services: r.services,
+    reboot: {
+      required: r.rebootRequired,
+      since: rebootSince(db, server.id, r),
+      packages: r.rebootPackages,
+    },
+  });
+  const apply = (kind: string, finding: Finding) => {
+    if (finding.action === 'raise') {
+      raiseIssue(db, at, { ...key(kind), severity: finding.severity, summary: finding.summary });
+    } else if (finding.action === 'clear') {
+      clearIssue(db, at, key(kind), finding.summary);
+    }
+  };
+  apply('security-updates', rating.security);
+  apply('reboot', rating.reboot);
+  apply('stale-updates', rating.stale);
 
   const down = [
     ...r.failedUnits,
@@ -275,7 +333,7 @@ export async function checkServers(
         source: 'ssh',
         at,
         ok: reading.ok,
-        value: reading,
+        value: slim(reading),
       });
     });
   }
