@@ -205,6 +205,74 @@ describe('Add site', () => {
     expect((await detail('kamaji-wp-alias.ddev.site')).backupExpectation).toBe('kamaji');
   });
 
+  it('turns whole-site backups on for a client’s site only with the client’s agreement', async () => {
+    const { db, post, detail } = setup(reportOnly, () => ok(HELLO));
+    await post('/api/sites', { ...NEW, hostKind: 'craftish' });
+    await post('/api/sites/kamaji-wp.ddev.site/mode', { mode: 'monitoring' });
+    const base = { expectedText: null, backupExpectation: 'kamaji', notifications: 'normal' };
+    const configure = (extra: object) =>
+      post('/api/sites/kamaji-wp.ddev.site/configure', { ...base, ...extra });
+
+    const refused = await configure({ siteBackups: 'weekly' });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: 'no_consent' });
+    expect((await detail('kamaji-wp.ddev.site')).siteBackups.schedule).toBe('off');
+
+    expect((await configure({ siteBackups: 'weekly', clientAgreed: true })).status).toBe(200);
+    expect((await detail('kamaji-wp.ddev.site')).siteBackups).toEqual({
+      schedule: 'weekly',
+      consentAt: new Date(T).toISOString(),
+      consentBy: LOGIN,
+    });
+    // Saved again without the tick (or the field), the agreement stands.
+    expect((await configure({ siteBackups: 'fortnightly' })).status).toBe(200);
+    expect((await configure({})).status).toBe(200);
+    expect((await detail('kamaji-wp.ddev.site')).siteBackups.schedule).toBe('fortnightly');
+
+    // Off clears it, so turning them on again asks again.
+    await configure({ siteBackups: 'off' });
+    expect((await detail('kamaji-wp.ddev.site')).siteBackups.consentAt).toBeNull();
+    expect((await configure({ siteBackups: 'weekly' })).status).toBe(400);
+    expect(
+      db
+        .prepare("SELECT kind FROM events WHERE kind LIKE 'site.backup%' ORDER BY id")
+        .all()
+        .map((r) => r.kind),
+    ).toEqual([
+      'site.backup-consent',
+      'site.backup-schedule',
+      'site.backup-schedule',
+      'site.backup-consent-cleared',
+      'site.backup-schedule',
+    ]);
+  });
+
+  it('asks no agreement on Tyler’s own site, and none off craftish at all', async () => {
+    const { post, detail } = setup(reportOnly, () => ok(HELLO));
+    const base = { expectedText: null, backupExpectation: null, notifications: 'normal' };
+    await post('/api/sites', { ...NEW, hostKind: 'craftish' });
+    await post('/api/sites/kamaji-wp.ddev.site/mode', { mode: 'monitoring' });
+    const own = await post('/api/sites/kamaji-wp.ddev.site/configure', {
+      ...base,
+      own: true,
+      siteBackups: 'weekly',
+    });
+    expect(own.status).toBe(200);
+    expect(await detail('kamaji-wp.ddev.site')).toMatchObject({
+      own: true,
+      siteBackups: { schedule: 'weekly', consentAt: null },
+    });
+
+    await post('/api/sites', { ...NEW, url: 'https://elsewhere.test' });
+    await post('/api/sites/elsewhere.test/mode', { mode: 'monitoring' });
+    const elsewhere = await post('/api/sites/elsewhere.test/configure', {
+      ...base,
+      own: true,
+      siteBackups: 'weekly',
+    });
+    expect(await elsewhere.json()).toEqual({ error: 'not_craftish' });
+  });
+
   it('connects a site already set up as monitoring only, keeping its settings', async () => {
     let answer: CareResult = { ok: false, status: 404, code: null, problem: 'Not installed' };
     const { post, get, detail, sent } = setup(reportOnly, () => answer);

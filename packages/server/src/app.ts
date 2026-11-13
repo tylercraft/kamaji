@@ -238,9 +238,10 @@ export function createApp({
   app.post('/api/sites/:id/configure', async (c) => {
     const body = await readJson(c, ConfigureSiteRequest);
     if (!body) return c.json({ error: 'bad_request' }, 400);
-    const result = configureSite(db, c.req.param('id'), body, now());
+    const result = configureSite(db, c.req.param('id'), body, now(), login);
     if (result === 'not-found') return c.json({ error: 'not_found' }, 404);
     if (result === 'not-craftish') return c.json({ error: 'not_craftish' }, 400);
+    if (result === 'no-consent') return c.json({ error: 'no_consent' }, 400);
     return c.json({ ok: true });
   });
   app.post('/api/sites/:id/remove', async (c) => {

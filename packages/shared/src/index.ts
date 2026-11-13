@@ -323,11 +323,20 @@ export type NewSiteRequest = z.infer<typeof NewSiteRequest>;
 export const BackupExpectation = z.enum(['kamaji', 'host', 'client', 'tyler']);
 export type BackupExpectation = z.infer<typeof BackupExpectation>;
 
-/** Add site, step 3. */
+/** Whole-site backups (TY-166): restic snapshots of a craftish site, off by default. */
+export const SiteBackupSchedule = z.enum(['off', 'weekly', 'fortnightly']);
+export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
+
+/** Add site, step 3. The whole-site backup fields are left as they were when absent. */
 export const ConfigureSiteRequest = z.object({
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
+  /** Tyler's own site: whole-site backups ask no client. */
+  own: z.boolean().optional(),
+  siteBackups: SiteBackupSchedule.optional(),
+  /** Ticked: the client agreed to whole-site backups. Needed to turn them on for a client's site. */
+  clientAgreed: z.boolean().optional(),
 });
 export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
 
@@ -344,6 +353,13 @@ export const SiteDetailResponse = z.object({
   notifications: z.enum(['normal', 'digest']),
   /** Whether this Kamaji has craftish-care keys, so connecting is possible at all. */
   canConnect: z.boolean(),
+  own: z.boolean(),
+  siteBackups: z.object({
+    schedule: SiteBackupSchedule,
+    /** When the client's agreement was ticked, and by whom; null on Tyler's own sites or off. */
+    consentAt: Timestamp.nullable(),
+    consentBy: z.string().nullable(),
+  }),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 
