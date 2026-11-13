@@ -87,6 +87,18 @@ export const SiteSummary = Site.extend({
   /** Components WordPress offers an update for, from the last good report. */
   updates: known(z.number().int()),
   /**
+   * Those offers split by where they stand: still to approve (what the Updates queue lists), or
+   * already in a run that's held or still going. Every offered component is in one of the three
+   * unless a run has an item WordPress no longer offers.
+   */
+  updateWork: z.object({
+    toApprove: z.number().int(),
+    held: z.number().int(),
+    running: z.number().int(),
+    /** Offered without a download (often a licence missing): can't be approved. */
+    noDownload: z.number().int(),
+  }),
+  /**
    * Open issues other than reachability and the certificate, which have their own columns: a
    * site can be up and still need attention (vulnerabilities, end of life, backups, a held run).
    */

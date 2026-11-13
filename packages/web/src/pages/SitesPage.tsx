@@ -14,7 +14,15 @@ import {
   type Tone,
 } from '../components/ui';
 import { useLink } from '../router';
-import { certificate, CURRENT_FOR, fromOutside, isOutOfDate, updates } from '../siteStatus';
+import {
+  certificate,
+  CURRENT_FOR,
+  fromOutside,
+  isOutOfDate,
+  updates,
+  workTone,
+  workWords,
+} from '../siteStatus';
 import { filterSites, NO_FILTERS, present, type SiteFilters } from '../sitesView';
 import { useResource } from '../useResource';
 
@@ -101,11 +109,13 @@ function CertificateCell({ site }: { site: SiteSummary }) {
 function UpdatesCell({ site }: { site: SiteSummary }) {
   if (site.mode !== 'connected') return <Muted>Not monitored</Muted>;
   if (!site.updates.known) return <Muted>Unknown: {lower(site.updates.reason)}</Muted>;
-  return site.updates.value === 0 ? (
+  // The same words as the site's page and the Updates queue: to approve, held, running.
+  const words = workWords(site.updateWork);
+  return words === '' ? (
     <Muted>None offered</Muted>
   ) : (
-    <Pill tone="amber">
-      <Dot /> {site.updates.value} offered
+    <Pill tone={workTone(site.updateWork)}>
+      <Dot /> {words}
     </Pill>
   );
 }

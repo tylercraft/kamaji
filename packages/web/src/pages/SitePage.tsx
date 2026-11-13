@@ -356,7 +356,14 @@ export function SitePage({ id }: { id: string }) {
                 <Cards>
                   {connected && (
                     <div className="updates">
-                      <SiteUpdatesPanel siteId={site.id} />
+                      <SiteUpdatesPanel
+                        siteId={site.id}
+                        work={
+                          site.updates.known
+                            ? { known: true, value: site.updateWork }
+                            : { known: false, reason: site.updates.reason }
+                        }
+                      />
                     </div>
                   )}
                   <div className="backups">

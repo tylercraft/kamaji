@@ -57,6 +57,7 @@ function detail(over: { siteHealth?: string[]; loopback?: boolean; vulns?: numbe
       outside: { known: true, value: { ok: true, checkedAt: ago(2), problem: null } },
       certificate: { known: false, reason: 'No answer within 20 seconds' },
       updates: { known: true, value: 0 },
+      updateWork: { toApprove: 0, held: 0, running: 0, noDownload: 0 },
     },
     handshake: {
       at: ago(60),

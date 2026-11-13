@@ -396,6 +396,23 @@ export function OverviewPage() {
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
   const servers = useResource('/api/servers', ServersResponse, { pollMs: 60_000 });
   const status = useResource('/api/status', StatusResponse, { pollMs: 30_000 });
+  // Offers already in a run aren't waiting for an approval; they're counted beside it.
+  const runs =
+    sites.state === 'ready'
+      ? sites.data.sites.reduce(
+          (n, s) => ({
+            held: n.held + s.updateWork.held,
+            running: n.running + s.updateWork.running,
+          }),
+          { held: 0, running: 0 },
+        )
+      : { held: 0, running: 0 };
+  const inRunsNote =
+    runs.held + runs.running > 0
+      ? [runs.held > 0 && `${runs.held} held`, runs.running > 0 && `${runs.running} running`]
+          .filter(Boolean)
+          .join(' · ')
+      : null;
   const trouble = kamajiTrouble(status);
   const names = new Map<string, string>([
     ...(sites.state === 'ready'
@@ -423,9 +440,9 @@ export function OverviewPage() {
               note="open findings"
             />
             <Metric
-              label="Updates waiting"
+              label="Updates to approve"
               value={o.updatesWaiting}
-              note="on sites Kamaji can update"
+              note={inRunsNote ?? 'on sites Kamaji can update'}
             />
           </Metrics>
         )}

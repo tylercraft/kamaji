@@ -175,7 +175,7 @@ function Queue({
   const routine = data.items.filter((i) => !i.major);
   return (
     <Panel aria-labelledby="queue">
-      <PanelTitle id="queue">Waiting</PanelTitle>
+      <PanelTitle id="queue">To approve</PanelTitle>
       {data.items.length === 0 ? (
         <Muted>
           {data.unknown > 0
@@ -197,7 +197,10 @@ function Queue({
             >
               Clear
             </Button>
-            <Muted>Major versions are never routine. Security fixes come first.</Muted>
+            <Muted>
+              Kamaji never updates a site on its own: each update runs only after you review and
+              approve it here. Major versions are never routine; security fixes come first.
+            </Muted>
           </div>
           <div role="group" aria-label="Group by" css={{ display: 'flex', gap: 6 }}>
             {(
@@ -490,10 +493,13 @@ export function RunSite({
   batch: b,
   site: s,
   reload,
+  showReason = true,
 }: {
   batch: BatchView;
   site: BatchSiteView;
   reload: () => void;
+  /** False where the summary above already says why it's held. */
+  showReason?: boolean;
 }) {
   return (
     <div css={{ display: 'grid', gap: 6 }}>
@@ -504,7 +510,7 @@ export function RunSite({
         </Pill>
       </strong>
       {s.backup && <Muted>Backup: {s.backup}</Muted>}
-      {s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
+      {showReason && s.heldReason && <p css={{ margin: 0, color: 'var(--red)' }}>{s.heldReason}</p>}
       <div css={{ overflowX: 'auto' }}>
         <Table>
           <tbody>

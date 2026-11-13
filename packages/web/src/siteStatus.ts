@@ -231,15 +231,40 @@ export function security(detail: SiteDetailResponse, now: number): StatusLine {
   );
 }
 
+/** Where a site's offered updates stand, in the same words on every page: "1 to approve · 1 held". */
+export function workWords(w: SiteSummary['updateWork']): string {
+  return [
+    w.toApprove > 0 && `${w.toApprove} to approve`,
+    w.held > 0 && `${w.held} held`,
+    w.running > 0 && `${w.running} running`,
+    w.noDownload > 0 && `${w.noDownload} without a download`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** A held update needs Tyler; one to approve is waiting on him; one running is in hand. */
+export function workTone(w: SiteSummary['updateWork']): Tone {
+  if (w.held > 0) return 'red';
+  if (w.toApprove > 0 || w.noDownload > 0) return 'amber';
+  return 'neutral';
+}
+
 export function updates(site: SiteSummary): StatusLine {
   const label = 'Updates';
   if (site.mode !== 'connected')
     return line(label, 'neutral', 'Not checked', 'Monitoring only: needs Craftish Care.');
   if (!site.updates.known) return line(label, 'neutral', 'Not known yet', site.updates.reason);
+  const words = workWords(site.updateWork);
+  if (words === '')
+    return line(label, 'green', 'None offered', 'WordPress offers no updates here.');
   const n = site.updates.value;
-  return n === 0
-    ? line(label, 'green', 'None waiting', 'WordPress offers no updates here.')
-    : line(label, 'amber', `${n} waiting`, 'Review and approve them under Updates.');
+  return line(
+    label,
+    workTone(site.updateWork),
+    words,
+    `WordPress offers ${n} ${n === 1 ? 'update' : 'updates'}; review them under Updates.`,
+  );
 }
 
 const VOUCHED: Record<'host' | 'client' | 'tyler', string> = {

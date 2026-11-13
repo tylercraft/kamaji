@@ -1,22 +1,38 @@
 // A site's own Updates panel: what's waiting on it, ticked and approved exactly as on the Updates
 // page (the same review and POST /api/batches), with the site's latest run under it: its outcome
 // in a line, the components and backup evidence one click down (open when the run is held).
-import { UpdatesResponse, type BatchView } from '@kamaji/shared';
+import { UpdatesResponse, type Known, type SiteSummary } from '@kamaji/shared';
 import { useState } from 'react';
 import { PrimaryButton } from '../components/forms';
 import { Button, Dot, Muted, Panel, PanelHead, Pill, ResourceView, Time } from '../components/ui';
 import { runOutcome } from '../runHistory';
+import { workTone, workWords } from '../siteStatus';
 import { itemKey as key } from '../updatesView';
 import { useResource } from '../useResource';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
 
-const RUN_STATE: Record<BatchView['state'], string> = {
-  approved: 'Starting',
-  running: 'Running',
-  finished: 'Finished',
-};
+/** Items of this site's unfinished runs, held or still going (the batches are this site's only). */
+function inRuns(batches: UpdatesResponse['batches']): { held: number; running: number } {
+  let held = 0;
+  let running = 0;
+  for (const b of batches)
+    for (const s of b.sites)
+      for (const i of s.items)
+        if (i.state !== 'done') {
+          if (s.state === 'held') held += 1;
+          else running += 1;
+        }
+  return { held, running };
+}
 
-export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
+export function SiteUpdatesPanel({
+  siteId,
+  work,
+}: {
+  siteId: string;
+  /** Where this site's offers stand, from its summary: the same words as Sites and Overview. */
+  work: Known<SiteSummary['updateWork']>;
+}) {
   const updates = useResource(`/api/updates?site=${encodeURIComponent(siteId)}`, UpdatesResponse, {
     pollMs: 5_000,
   });
@@ -28,14 +44,20 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
     else next.add(k);
     setTicked(next);
   };
+  // Counted from this card's own data, which refreshes every few seconds, so an approval shows at
+  // once; only offers without a download come from the site's summary.
+  const now =
+    updates.state === 'ready' && updates.data.sites[0] && work.known
+      ? {
+          toApprove: updates.data.items.length,
+          ...inRuns(updates.data.batches),
+          noDownload: work.value.noDownload,
+        }
+      : null;
   return (
     <Panel aria-labelledby="site-updates" id="updates">
       <PanelHead id="site-updates" title="Updates">
-        {updates.state === 'ready' && updates.data.sites[0] && (
-          <Pill tone={updates.data.items.length > 0 ? 'amber' : 'neutral'}>
-            {updates.data.items.length} pending
-          </Pill>
-        )}
+        {now && workWords(now) !== '' && <Pill tone={workTone(now)}>{workWords(now)}</Pill>}
       </PanelHead>
       <ResourceView resource={updates} label="this site’s updates">
         {(data) => {
@@ -61,7 +83,11 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                   nothing.
                 </Muted>
               ) : data.items.length === 0 ? (
-                <Muted>Nothing waiting: WordPress offers no updates here.</Muted>
+                <Muted>
+                  {work.known && (work.value.held > 0 || work.value.running > 0)
+                    ? 'Nothing else to approve: the rest is in the run below.'
+                    : 'Nothing to approve: WordPress offers no updates here.'}
+                </Muted>
               ) : (
                 <>
                   <div css={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -159,7 +185,16 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                     {run.items.map((i) => `${i.name} ${i.from} → ${i.to}`).join(', ')}
                   </p>
                   <Muted>
-                    Approved <Time iso={latest.approvedAt} /> · {RUN_STATE[latest.state]}
+                    Approved <Time iso={latest.approvedAt} /> ·{' '}
+                    {run.state === 'held'
+                      ? 'held, waiting for you'
+                      : run.state === 'done'
+                        ? latest.state === 'finished'
+                          ? 'finished'
+                          : 'done here; the run continues on other sites'
+                        : run.state === 'running'
+                          ? 'running now'
+                          : 'waiting its turn'}
                   </Muted>
                   {run.heldReason && (
                     <p css={{ margin: 0, color: 'var(--red)' }}>{run.heldReason}</p>
@@ -167,7 +202,7 @@ export function SiteUpdatesPanel({ siteId }: { siteId: string }) {
                   <details open={outcome.problem}>
                     <summary>Run details and backup evidence</summary>
                     <div css={{ marginTop: 6 }}>
-                      <RunSite batch={latest} site={run} reload={reload} />
+                      <RunSite batch={latest} site={run} reload={reload} showReason={false} />
                     </div>
                   </details>
                 </div>

@@ -180,11 +180,11 @@ export function siteLooks(
       .map(checkLook)
       .filter((l): l is Look => l !== null),
     ...softwareLooks(detail, now),
-    ...(waiting.tone === 'amber'
+    ...(waiting.tone === 'amber' || waiting.tone === 'red'
       ? [
           {
             text: `Updates: ${waiting.state}`,
-            tone: 'amber' as const,
+            tone: waiting.tone,
             target: 'updates',
             action: 'Review updates',
           },

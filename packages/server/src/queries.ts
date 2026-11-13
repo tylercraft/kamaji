@@ -142,8 +142,39 @@ export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
     outside: outside(db, site, workerOn),
     certificate: certificate(db, site),
     updates: updatesWaiting(db, site),
+    updateWork: updateWork(db, site.id),
     findings: siteFindings(db, site.id),
   }));
+}
+
+/**
+ * A site's offered updates by where they stand: to approve (offered with a download and in no
+ * unfinished run, as the queue counts them), items of unfinished runs, held or still going, and
+ * offers without a download.
+ */
+function updateWork(db: Db, siteId: string): SiteSummary['updateWork'] {
+  const free = (download: 0 | 1) =>
+    Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM components c WHERE c.site_id = ? AND c.gone_at IS NULL
+           AND c.offer_version IS NOT NULL AND c.offer_package = ?
+           AND c.type IN ('core', 'plugin', 'theme')
+           AND NOT EXISTS (SELECT 1 FROM batch_items i WHERE i.site_id = c.site_id
+             AND i.type = c.type AND i.item = c.item AND i.state != 'done')`,
+        )
+        .get(siteId, download)?.n ?? 0,
+    );
+  const inRuns = db
+    .prepare(
+      `SELECT s.state = 'held' AS held, COUNT(*) AS n FROM batch_items i
+       JOIN batch_sites s ON s.batch_id = i.batch_id AND s.site_id = i.site_id
+       WHERE i.site_id = ? AND i.state != 'done' GROUP BY s.state = 'held'`,
+    )
+    .all(siteId);
+  const count = (held: boolean) =>
+    Number(inRuns.find((r) => Number(r.held) === (held ? 1 : 0))?.n ?? 0);
+  return { toApprove: free(1), held: count(true), running: count(false), noDownload: free(0) };
 }
 
 /** A site's open issues that aren't its reachability or certificate, most urgent first. */
@@ -271,9 +302,11 @@ function totalUpdates(sites: SiteSummary[], connected: number): Known<number> {
       reason: `${unknown} of ${connected} connected ${connected === 1 ? 'site hasn’t' : 'sites haven’t'} reported yet`,
     };
   }
+  // To approve, as the Updates queue lists them: offers already in a held or running run aren't
+  // waiting for an approval.
   return {
     known: true,
-    value: sites.reduce((n, s) => n + (s.updates.known ? s.updates.value : 0), 0),
+    value: sites.reduce((n, s) => n + (s.updates.known ? s.updateWork.toApprove : 0), 0),
   };
 }
 
@@ -320,10 +353,14 @@ export function overview(db: Db): OverviewResponse {
 export function activity(db: Db, before: number | null, limit: number): ActivityResponse {
   const rows = db
     .prepare(
+      // Newest by when it happened, not by when it was written down (a backup's events are
+      // recorded when the process finishes); the id breaks ties. The cursor is the last event's
+      // id, and the next page starts after its (at, id).
       `SELECT id, at, kind, summary, resource_type, resource_id FROM events
-       WHERE id < ? ORDER BY id DESC LIMIT ?`,
+       WHERE ? IS NULL OR (at, id) < (SELECT at, id FROM events WHERE id = ?)
+       ORDER BY at DESC, id DESC LIMIT ?`,
     )
-    .all(before ?? Number.MAX_SAFE_INTEGER, limit + 1);
+    .all(before, before, limit + 1);
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   return {
