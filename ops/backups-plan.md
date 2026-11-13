@@ -10,7 +10,7 @@ How Kamaji backs up WordPress sites on craftish. Decided with Tyler on 2026-11-1
 
 ## craftish
 
-- **A new user, `kamaji-pull`,** not `kamaji-backup`. `kamaji-backup` can make an export but can't read one, and that's worth keeping. `kamaji-pull` can read, and only through its two forced commands. It's a system user with no password and no shell, like `kamaji-backup`.
+- **A new user, `kamaji-pull`,** not `kamaji-backup`. `kamaji-backup` can make an export but can't read one, and that's worth keeping. `kamaji-pull` can read, and only through its two forced commands. It's a system user with no password, like `kamaji-backup`, whose shell is there only for sshd to run the forced commands.
 - **Two keys, two forced commands,** each `restrict`ed and accepted only `from="100.106.213.63"` (molcajete). Scripts and their README are in `server-pull/`.
   - **The app's download key** → `kamaji-fetch-export`, with `<site> <time>`. It streams one existing export, `/var/backups/kamaji/<site>/<time>.sql.gz`, and nothing else. The site must be a plain domain on `/etc/kamaji/db-export.sites`, and the time must match db-export's `^[0-9]{8}T[0-9]{6}Z$`. It runs as `www-data` through one sudo rule. Paths are never accepted.
   - **The backup process's key** → `kamaji-site-pull`, with `<site>`. The site must be on a new list, `/etc/kamaji/site-pull.sites`. It's separate from the export list on purpose: a site can have exports before updates without whole-site pulls. As `www-data` (one sudo rule), it writes one tar to stdout:
@@ -67,7 +67,7 @@ The **Download** link on a site's Backups panel, for the latest export (Tyler's 
 
 On the mini:
 
-1. `restic restore` the site's latest snapshot into a temporary folder under `~/kamaji-backups/restore`, mode 700.
+1. `restic restore` the site's latest snapshot into a temporary folder under `~/kamaji-restore`, mode 700: outside `~/kamaji-backups`, so Arq never copies a test copy's plain files.
 2. Unpack it and check `database.sql` against the manifest.
 3. In Docker Desktop, which the mini already runs, start a throwaway MariaDB and the `wordpress` image matching the manifest's version. Both go on an `--internal` network with no internet, so the copy can't send email, call payment APIs or run cron against the world.
 4. Import `database.sql`, and start WordPress with the restored `wp-content`, the manifest's table prefix, fresh salts, `WP_HOME` set to the test address and `DISABLE_WP_CRON`.
@@ -94,17 +94,17 @@ Steps 1 and 2 need only restic. If Docker isn't answering, the check records "re
 
 ## Tyler's steps
 
-Full commands are in `ops/README.md`, "Whole-site backups". These are the steps, in order. Each is marked mini, craftish, Doppler, Arq or Kamaji.
+Full commands, with checks between them, are in `ops/README.md`, "Whole-site backups" (34 numbered steps). These are the steps in short, in order, each marked mini, craftish, Doppler, Arq or Kamaji.
 
 1. [mini] Install restic: `brew install restic`, then check `restic version` is 0.17 or newer.
-2. [mini] Make the folder: `/Users/tylercraft/kamaji-backups`, mode 700.
+2. [mini] Make the folders: `/Users/tylercraft/kamaji-backups` and `/Users/tylercraft/kamaji-restore`, mode 700.
 3. [Doppler] Add a config `backup` to project `kamaji`, beside `updater`.
 4. [Doppler] Create `RESTIC_PASSWORD` in `backup` from `openssl rand`, piped straight in, never printed (on the laptop).
 5. [Doppler] Copy the password from the dashboard into your password manager.
 6. [Doppler] Make a read-only service token for `kamaji` → `backup`.
 7. [mini] Scope that token to `/Users/tylercraft/.kamaji-backups`, pasted at a silent prompt.
 8. [mini] Initialise the repository, under Doppler's `backup` scope.
-9. [Arq] Check the backup plan covers `/Users/tylercraft/kamaji-backups`, and add it if not.
+9. [Arq] Check the backup plan covers `/Users/tylercraft/kamaji-backups`, and add it if not; `kamaji-restore` stays out.
 10. [mini] Make the pull key, `~/.ssh/kamaji-pull` (no passphrase).
 11. [mini] Make the download key, `~/.ssh/kamaji-fetch` (no passphrase).
 12. [mini] Show both public keys, to paste on craftish.

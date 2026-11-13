@@ -2,7 +2,7 @@
 
 What Kamaji on molcajete may read from craftish: one database export to download, and one site's files and database for a whole-site backup (`ops/backups-plan.md`, TY-166). It's the read side of `server-export/`, kept apart from it: `kamaji-backup` can make an export but never read one.
 
-- **Its own user,** `kamaji-pull`, a system user with no password and no shell, holding two of Kamaji's keys and nothing else.
+- **Its own user,** `kamaji-pull`, a system user with no password, holding two of Kamaji's keys and nothing else. Its shell is `/bin/sh` only because sshd runs a forced command through it; each key can run only its one command.
 - **Two keys, each forced to one command,** each `restrict`ed (no shell, terminal, forwarding or `~/.ssh/rc`) and accepted only from molcajete's tailnet address (`100.106.213.63`):
   - the app's **download key** runs `kamaji-fetch-export`, which takes `<site> <time>`;
   - the backup process's **pull key** runs `kamaji-site-pull`, which takes `<site>`.

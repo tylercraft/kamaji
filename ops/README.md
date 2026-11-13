@@ -13,6 +13,8 @@ One Node process under the LaunchAgent `dev.craftish.kamaji`: the app, the check
   - `KAMAJI_CARE_REPORT_KEY`: the base64 seed of craftish-care's report key (`docs/protocol.md`), with `KAMAJI_CARE_UPDATE_PUBLIC_KEY`, the update key's public half (not secret, but kept beside it), and optionally `KAMAJI_CARE_REPORT_KEY_ID` and `KAMAJI_CARE_UPDATE_KEY_ID` (defaults `r1`, `u1`). Made once, on the laptop, by `node scripts/care-keys-doppler.mjs`, which sends each half straight into Doppler and refuses to replace one; until they're set, Add site offers monitoring only. The update key's private half is never in `checker`: it's `KAMAJI_CARE_UPDATE_KEY` in the `updater` config, which only the updater reads ("The updater" below). That config also has `KAMAJI_CARE_REPORT_KEY` (the updater asks for status and reports with it), `KAMAJI_WORKER_URL` and `KAMAJI_WORKER_TOKEN` (it pauses a site's outside check during its run), each a Doppler reference to checker's (`${checker.NAME}`), not a copy, and optionally `KAMAJI_BACKUP_SSH_KEY` (default `~/.ssh/kamaji-backup`). `KAMAJI_CARE_RELEASE_PUBLIC_KEY` (and optionally `KAMAJI_CARE_RELEASE_KEY_ID`, default `p1`) is the release key's public half, built into each site's zip from Craftish Care 0.2.0; `node scripts/care-keys-doppler.mjs --release` makes it.
 - **Release secrets:** Doppler project `kamaji`, config `release`, read only on the laptop, never the mini. Names only:
   - `KAMAJI_CARE_RELEASE_KEY`: the base64 seed of the release key, which signs Craftish Care's packages for its self-update channel (`docs/protocol.md`, "Self-update"). Used by `scripts/care-release.mjs`.
+- **Backup secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read only by the backups process (`dev.craftish.kamaji-backups`), never the app. Names only:
+  - `RESTIC_PASSWORD`: the whole-site backup repository's password ("Whole-site backups" below). Also in Tyler's password manager.
 - **Deploy secrets:** Doppler project `kamaji`, config `deploy`, read only on the laptop, where `~/kamaji/worker` is linked to it. The mini never has it, and `checker` never holds Cloudflare credentials. Names only:
   - `CLOUDFLARE_API_TOKEN`: the account-owned token wrangler deploys the Worker with (`worker/README.md`).
   - `CLOUDFLARE_ACCOUNT_ID`: the Craftish account.
@@ -359,6 +361,215 @@ On the mini (craftish's host key is already in `kamaji_known_hosts`, from "craft
 ```
 /usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-backup -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-backup@100.77.122.31 id
 ```
+
+## Whole-site backups
+
+Restic snapshots of a craftish site's files and a fresh database, pulled over SSH by a third process, `dev.craftish.kamaji-backups` (`packages/server/src/sitebackups/`), nightly at 03:15 and when a site's Backups panel asks. The plan and its reasons: `ops/backups-plan.md`; craftish's side: `server-pull/README.md`. The same SSH user also serves the Backups panel's "Download latest export" with the app's own key.
+
+- **Repository:** `/Users/tylercraft/kamaji-backups/restic`, mode 700, encrypted. Arq takes it off-site as ciphertext. Restore checks unpack into `/Users/tylercraft/kamaji-restore` (mode 700, emptied after each check), outside what Arq copies.
+- **Secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read by this process only. Names only: `RESTIC_PASSWORD`. Tyler keeps a copy in his password manager: without it the backups can't be read.
+- **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
+- **Log:** `~/Library/Logs/kamaji-backups.log`: one line per site, never restic's own output. Results go to Activity and the site's Backups panel.
+
+Tyler runs these one at a time, in order.
+
+On the mini:
+
+1. Install restic:
+
+```
+/opt/homebrew/bin/brew install restic
+```
+
+2. Check its version is 0.17 or newer (`--stdin-from-command` needs it):
+
+```
+/opt/homebrew/bin/restic version
+```
+
+3. Make the repository's folder and the restore checks' folder:
+
+```
+/bin/mkdir -m 700 /Users/tylercraft/kamaji-backups /Users/tylercraft/kamaji-restore
+```
+
+In Doppler (the laptop):
+
+4. In Doppler's dashboard, add a config `backup` to the `kamaji` project, beside `updater`.
+
+5. Make the repository's password straight into it, never printed:
+
+```
+/usr/bin/openssl rand -base64 48 | /usr/bin/tr -d '\n' | /opt/homebrew/bin/doppler secrets set RESTIC_PASSWORD --project kamaji --config backup --silent > /dev/null
+```
+
+6. Check it's there, by name (expect `RESTIC_PASSWORD`, plus Doppler's own):
+
+```
+/opt/homebrew/bin/doppler secrets --only-names --project kamaji --config backup
+```
+
+7. In Doppler's dashboard, copy `RESTIC_PASSWORD` into your password manager.
+
+8. In Doppler's dashboard, make a service token for `kamaji` → `backup` (read only), to paste in step 10.
+
+On the mini:
+
+9. Make the scope folder:
+
+```
+/bin/mkdir -p -m 700 /Users/tylercraft/.kamaji-backups
+```
+
+10. Give it the backup token, pasted at the silent prompt:
+
+```
+read -rs T && /opt/homebrew/bin/doppler configure set token "$T" --scope /Users/tylercraft/.kamaji-backups && unset T
+```
+
+11. Make the repository (expect `created restic repository`):
+
+```
+/opt/homebrew/bin/doppler run --scope /Users/tylercraft/.kamaji-backups -- /usr/bin/env RESTIC_REPOSITORY=/Users/tylercraft/kamaji-backups/restic /opt/homebrew/bin/restic init --repository-version 2
+```
+
+In Arq:
+
+12. Open the backup plan's folders and check `/Users/tylercraft/kamaji-backups` is covered; add it if not. `/Users/tylercraft/kamaji-restore` should not be.
+
+On the mini:
+
+13. Make the pull key (no passphrase: the process can't type one):
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-pull@molcajete -f /Users/tylercraft/.ssh/kamaji-pull
+```
+
+14. Make the download key, the app's:
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-fetch@molcajete -f /Users/tylercraft/.ssh/kamaji-fetch
+```
+
+15. Show both public keys, to paste in step 22:
+
+```
+/bin/cat /Users/tylercraft/.ssh/kamaji-fetch.pub /Users/tylercraft/.ssh/kamaji-pull.pub
+```
+
+On the laptop:
+
+16. Copy the four scripts up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/server-pull/kamaji-fetch-export /Users/tyler/kamaji/server-pull/fetch-export /Users/tyler/kamaji/server-pull/kamaji-site-pull /Users/tyler/kamaji/server-pull/site-pull craftish:/tmp/
+```
+
+On craftish (`ssh craftish`):
+
+17. Install them, owned by root:
+
+```
+sudo install -m 755 -o root -g root /tmp/kamaji-fetch-export /tmp/kamaji-site-pull /usr/local/bin/ && sudo install -m 755 -o root -g root /tmp/fetch-export /tmp/site-pull /usr/local/lib/kamaji/ && rm /tmp/kamaji-fetch-export /tmp/fetch-export /tmp/kamaji-site-pull /tmp/site-pull
+```
+
+18. Make its user (a shell only so sshd can run the forced commands; it has no password):
+
+```
+sudo adduser --system --group --home /var/lib/kamaji-pull --shell /bin/sh kamaji-pull
+```
+
+19. The one sudo rule, written to a file:
+
+```
+echo 'kamaji-pull ALL=(www-data) NOPASSWD: /usr/local/lib/kamaji/fetch-export, /usr/local/lib/kamaji/site-pull' | sudo tee /etc/sudoers.d/kamaji-pull && sudo chmod 440 /etc/sudoers.d/kamaji-pull
+```
+
+20. Check sudo accepts it (expect `parsed OK`; if not, delete the file before anything else):
+
+```
+sudo visudo -cf /etc/sudoers.d/kamaji-pull
+```
+
+21. The pull's allowlist, with the one site to start:
+
+```
+echo aleyahoerlein.com | sudo tee /etc/kamaji/site-pull.sites && sudo chmod 644 /etc/kamaji/site-pull.sites
+```
+
+22. Give the user both keys, with the two lines from `server-pull/README.md` (each whole line between its quotes, step 15's keys at the ends, the fetch key first):
+
+```
+sudo install -d -m 700 -o kamaji-pull -g kamaji-pull /var/lib/kamaji-pull/.ssh && printf '%s\n' 'PASTE-THE-FETCH-LINE' 'PASTE-THE-PULL-LINE' | sudo tee /var/lib/kamaji-pull/.ssh/authorized_keys && sudo chown kamaji-pull: /var/lib/kamaji-pull/.ssh/authorized_keys && sudo chmod 600 /var/lib/kamaji-pull/.ssh/authorized_keys
+```
+
+23. Check sshd will let that user in (if this prints an `allowusers` or `allowgroups` line, add `kamaji-pull` to it and reload sshd):
+
+```
+sudo sshd -T | grep -i -E '^(allowusers|allowgroups|denyusers)'
+```
+
+24. Run a pull as that user and list it (expect `wp-content/…` lines, then `database.sql`, with `manifest.json` last):
+
+```
+sudo -u kamaji-pull env SSH_ORIGINAL_COMMAND=aleyahoerlein.com /usr/local/bin/kamaji-site-pull | tar -tf - | tail -n 3
+```
+
+25. Check it refuses a site off the list (expect `"problem":"not on the allowlist"`):
+
+```
+sudo -u kamaji-pull env SSH_ORIGINAL_COMMAND=example.com /usr/local/bin/kamaji-site-pull > /dev/null
+```
+
+26. Check the pull left nothing behind (expect nothing listed):
+
+```
+sudo ls -A /var/backups/kamaji/.pull
+```
+
+On the mini:
+
+27. Check each key can't do anything else (expect `"problem":"not a site name"` twice, never `uid=…`):
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-pull -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-pull@100.77.122.31 id; /usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-fetch -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-pull@100.77.122.31 id
+```
+
+28. Deploy Kamaji (migration 14 adds the tables; 15 marks your own four sites):
+
+```
+/Users/tylercraft/kamaji/ops/deploy.sh
+```
+
+29. Install the backups LaunchAgent (loaded; it first runs tonight at 03:15):
+
+```
+/bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-backups.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-backups.plist
+```
+
+In Kamaji:
+
+30. aleyahoerlein.com → Configure → Whole-site backups: Weekly, tick that the client agreed, Save. Then Backups → "Back up site now".
+
+On the mini:
+
+31. Watch it (expect `backups: aleyahoerlein.com backed up`, then `done; exiting`):
+
+```
+/usr/bin/tail -f /Users/tylercraft/Library/Logs/kamaji-backups.log
+```
+
+32. Capture restic's real answers for the tests' fixtures (ids, sizes and times, no secrets), and hand both files to a laptop session for `packages/server/src/sitebackups/fixtures/`:
+
+```
+cd /Users/tylercraft && /opt/homebrew/bin/doppler run --scope /Users/tylercraft/.kamaji-backups -- /bin/sh -c '/usr/bin/env RESTIC_REPOSITORY=/Users/tylercraft/kamaji-backups/restic /opt/homebrew/bin/restic snapshots --json > restic-snapshots.json && /usr/bin/env RESTIC_REPOSITORY=/Users/tylercraft/kamaji-backups/restic /opt/homebrew/bin/restic stats --json --mode raw-data > restic-stats.json'
+```
+
+In Kamaji:
+
+33. aleyahoerlein.com → Backups → "Check restore now". It shows the result in a few minutes, with how long it took. The first one also pulls the `mariadb` and `wordpress` images.
+
+34. Backups → "Download latest export", once there's an export (Back up now makes one): the file should open with `gunzip -t`.
 
 ## Deploying a change
 
