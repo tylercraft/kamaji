@@ -140,7 +140,7 @@ describe('the report', () => {
     await reportSite(db, SITE, keys, send, () => T);
     expect(inventory()?.muPlugins).toEqual({
       known: false,
-      reason: 'Must-use; Kamaji reads these from Craftish Care 0.2.0',
+      reason: 'Not reported: Craftish Care lists them from 0.2.0, and this site’s copy is older',
     });
 
     await reportSite(db, SITE, keys, send, () => T + HOUR);

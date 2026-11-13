@@ -25,7 +25,8 @@ export const REFRESH_EVERY_MS = 24 * 60 * 60 * 1000;
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export const REPORT_CHECK = 'report';
-export const MU_PLUGINS_UNREAD = 'Must-use; Kamaji reads these from Craftish Care 0.2.0';
+export const MU_PLUGINS_UNREAD =
+  'Not reported: Craftish Care lists them from 0.2.0, and this site’s copy is older';
 
 export type ReportValue =
   | {
