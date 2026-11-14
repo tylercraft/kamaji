@@ -3,6 +3,7 @@ import { Shell } from './components/Shell';
 import { ActivityPage } from './pages/ActivityPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { OverviewPage } from './pages/OverviewPage';
+import { PasskeysPage } from './pages/PasskeysPage';
 import { AddSitePage } from './pages/AddSitePage';
 import { RulesPage } from './pages/RulesPage';
 import { SitePage } from './pages/SitePage';
@@ -19,6 +20,7 @@ const pages: Record<string, ComponentType> = {
   '/servers': ServersPage,
   '/activity': ActivityPage,
   '/rules': RulesPage,
+  '/passkeys': PasskeysPage,
 };
 
 function Page() {

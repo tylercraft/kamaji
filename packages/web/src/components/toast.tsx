@@ -9,6 +9,10 @@ const REASONS: Record<string, string> = {
   bad_request: 'Kamaji didn’t accept what was sent',
   unreadable: 'Kamaji’s answer didn’t make sense to this page',
   not_set_up: 'This Kamaji has no Craftish Care keys',
+  passkey_cancelled: 'No passkey: nothing was done',
+  passkey_refused: 'Kamaji didn’t accept that passkey: nothing was done',
+  passkey_unsupported: 'This browser can’t use passkeys: nothing was done',
+  passkeys_unavailable: 'Kamaji has no passkeys set up yet: see Passkeys',
 };
 
 export const reason = (error: string) => REASONS[error] ?? `Kamaji answered ${error}`;

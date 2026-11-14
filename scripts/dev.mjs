@@ -26,6 +26,10 @@ const env = {
   ...process.env,
   ...care,
   KAMAJI_LOGIN: login,
+  // Passkeys from a file of your own here (Passkeys page, then paste the line into it), since
+  // a passkey belongs to its address: one made for localhost only works on localhost.
+  KAMAJI_URL: 'http://localhost:5173',
+  KAMAJI_PASSKEYS_DEV: new URL('../dev/passkeys', import.meta.url).pathname,
   KAMAJI_CYCLE_SECONDS: process.env.KAMAJI_CYCLE_SECONDS ?? '60',
 };
 

@@ -12,3 +12,4 @@ scratch/
 dev/wordpress/*
 !dev/wordpress/.ddev/
 dev/care-keys.env
+dev/passkeys

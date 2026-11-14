@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
-import { saved } from '../components/toast';
+import { reason, saved } from '../components/toast';
 import {
   Button,
   Dot,
@@ -431,7 +431,11 @@ export function ReviewBody({
     );
     setBusy(false);
     if (!result.ok) {
-      setError('Kamaji couldn’t store the approval. Nothing was started.');
+      setError(
+        result.error.startsWith('passkey')
+          ? `${reason(result.error)}. Nothing was started.`
+          : 'Kamaji couldn’t store the approval. Nothing was started.',
+      );
       return;
     }
     if (!result.data.ok) {
