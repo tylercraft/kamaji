@@ -3,6 +3,7 @@
 // Face ID signs it, and the proof goes with the write in the Kamaji-Passkey header. Creating a
 // passkey only makes the line Tyler installs on the mini with sudo; Kamaji never stores one itself.
 import { PasskeyChallenge } from '@kamaji/shared';
+import { passkeyLine } from './passkeyCommands';
 
 const toB64url = (bytes: ArrayBuffer | Uint8Array) => {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -106,6 +107,6 @@ export async function createPasskey(
   return {
     ok: true,
     id,
-    line: JSON.stringify({ id, alg, publicKey: toB64url(publicKey), label }),
+    line: passkeyLine({ id, alg, publicKey: toB64url(publicKey), label }),
   };
 }

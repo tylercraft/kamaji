@@ -803,7 +803,7 @@ for (const view of VIEWS) {
   const tee = await evaluate(
     `[...document.querySelectorAll('pre code')].map((c) => c.textContent).find((t) => t.includes('tee -a'))`,
   );
-  const line = /^echo '(.+)' \| /.exec(tee ?? '')?.[1];
+  const line = /^printf '%s\\n' '(.+)' \| /.exec(tee ?? '')?.[1];
   if (!line) problems.push('the Passkeys page didn’t give a line to install');
   else {
     writeFileSync(passkeyFile, `${line}\n`);

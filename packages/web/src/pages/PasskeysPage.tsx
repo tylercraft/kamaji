@@ -7,9 +7,8 @@ import { CommandBlock } from '../components/CommandBlock';
 import { Field, FormError, PrimaryButton } from '../components/forms';
 import { Muted, PageHeading, Panel, PanelTitle, ResourceView, Table } from '../components/ui';
 import { createPasskey } from '../passkey';
+import { addCommand, PASSKEY_FILE as FILE, removeCommand } from '../passkeyCommands';
 import { useResource } from '../useResource';
-
-const FILE = '/etc/kamaji/passkeys';
 
 const Step = ({ n, command }: { n: number; command: string }) => (
   <li css={{ display: 'grid', gap: 4 }}>
@@ -17,8 +16,6 @@ const Step = ({ n, command }: { n: number; command: string }) => (
     <CommandBlock command={command} />
   </li>
 );
-
-const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 function Create({ rpId, here }: { rpId: string; here: boolean }) {
   const [label, setLabel] = useState('');
@@ -93,10 +90,7 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
             n={1}
             command="/usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji"
           />
-          <Step
-            n={2}
-            command={`echo ${shellQuote(line)} | /usr/bin/sudo /usr/bin/tee -a ${FILE} > /dev/null`}
-          />
+          <Step n={2} command={addCommand(line)} />
           <li>Reload this page: the passkey shows above once Kamaji reads it.</li>
         </ol>
       )}
@@ -142,9 +136,7 @@ export function PasskeysPage() {
                             </Muted>
                           </td>
                           <td>
-                            <CommandBlock
-                              command={`/usr/bin/sudo /usr/bin/sed -i '' '/"id":"${p.id}"/d' ${FILE}`}
-                            />
+                            <CommandBlock command={removeCommand(p.id)} />
                           </td>
                         </tr>
                       ))}
