@@ -3,6 +3,7 @@
 // a file only root can change on the mini, so nothing else running there can add its own.
 import { PasskeysResponse } from '@kamaji/shared';
 import { useState } from 'react';
+import { CommandBlock } from '../components/CommandBlock';
 import { Field, FormError, PrimaryButton } from '../components/forms';
 import { Muted, PageHeading, Panel, PanelTitle, ResourceView, Table } from '../components/ui';
 import { createPasskey } from '../passkey';
@@ -10,22 +11,10 @@ import { useResource } from '../useResource';
 
 const FILE = '/etc/kamaji/passkeys';
 
-const Command = ({ n, children }: { n: number; children: string }) => (
+const Step = ({ n, command }: { n: number; command: string }) => (
   <li css={{ display: 'grid', gap: 4 }}>
     <span>Step {n}, on the mini:</span>
-    <pre
-      css={{
-        margin: 0,
-        padding: '8px 10px',
-        background: 'var(--sunken, var(--panel))',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius)',
-        overflowX: 'auto',
-        fontSize: 12,
-      }}
-    >
-      <code>{children}</code>
-    </pre>
+    <CommandBlock command={command} />
   </li>
 );
 
@@ -100,12 +89,14 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
       )}
       {line && (
         <ol css={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 10 }} aria-label="Install it">
-          <Command n={1}>
-            /usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji
-          </Command>
-          <Command n={2}>
-            {`echo ${shellQuote(line)} | /usr/bin/sudo /usr/bin/tee -a ${FILE} > /dev/null`}
-          </Command>
+          <Step
+            n={1}
+            command="/usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji"
+          />
+          <Step
+            n={2}
+            command={`echo ${shellQuote(line)} | /usr/bin/sudo /usr/bin/tee -a ${FILE} > /dev/null`}
+          />
           <li>Reload this page: the passkey shows above once Kamaji reads it.</li>
         </ol>
       )}
@@ -151,9 +142,9 @@ export function PasskeysPage() {
                             </Muted>
                           </td>
                           <td>
-                            <code css={{ fontSize: 12, wordBreak: 'break-all' }}>
-                              {`/usr/bin/sudo /usr/bin/sed -i '' '/"id":"${p.id}"/d' ${FILE}`}
-                            </code>
+                            <CommandBlock
+                              command={`/usr/bin/sudo /usr/bin/sed -i '' '/"id":"${p.id}"/d' ${FILE}`}
+                            />
                           </td>
                         </tr>
                       ))}
