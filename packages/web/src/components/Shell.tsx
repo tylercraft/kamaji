@@ -3,9 +3,12 @@ import { StatusResponse } from '@kamaji/shared';
 import {
   Globe,
   History,
+  KeyRound,
   LayoutDashboard,
+  Menu as MenuIcon,
   PackageCheck,
   Server,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -26,7 +29,11 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
 ];
 
 // One iron header at laptop widths: the brand, the five tabs, then Kamaji's own health. Under
-// 980px the tabs wrap onto their own row below the brand.
+// 980px the tabs wrap onto their own row below the brand. On a phone (640px and under) it's the
+// brand and a menu button, as on the Calcifer dashboard: a checkbox holds the menu open, with no
+// script, and the menu covers the page with the tabs, Passkeys, Kamaji's health and Appearance.
+const PHONE = '@media (max-width: 640px)';
+
 const Top = styled.header`
   display: flex;
   align-items: stretch;
@@ -41,6 +48,87 @@ const Top = styled.header`
     flex-wrap: wrap;
     gap: 0 8px;
     padding: 0 14px;
+  }
+  .menu-toggle,
+  .menu-button {
+    display: none;
+  }
+  .menu {
+    display: contents;
+  }
+  .menu-only {
+    display: none;
+  }
+  ${PHONE} {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-wrap: nowrap;
+    align-items: center;
+    .menu-toggle {
+      display: block;
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
+    .menu-button {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: auto;
+      margin-right: -8px;
+      width: 44px;
+      height: 44px;
+      border-radius: 3px;
+      color: var(--chrome-ink);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .menu-button .menu-close {
+      display: none;
+    }
+    .menu-toggle:checked ~ .menu-button .menu-open {
+      display: none;
+    }
+    .menu-toggle:checked ~ .menu-button .menu-close {
+      display: block;
+    }
+    .menu-toggle:focus-visible ~ .menu-button {
+      outline: 2px solid var(--chrome-ink);
+      outline-offset: 2px;
+    }
+    .menu-flag {
+      position: absolute;
+      top: 8px;
+      right: 6px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 1.5px solid var(--chrome);
+    }
+    .menu-toggle:checked ~ .menu-button .menu-flag {
+      display: none;
+    }
+    .menu {
+      display: none;
+      position: fixed;
+      inset: 57px 0 0;
+      z-index: 9;
+      overflow-y: auto;
+      flex-direction: column;
+      gap: 18px;
+      padding: 12px 16px calc(24px + env(safe-area-inset-bottom));
+      background: var(--chrome);
+    }
+    .menu-toggle:checked ~ .menu {
+      display: flex;
+    }
+    .menu-only {
+      display: contents;
+    }
   }
 `;
 
@@ -174,14 +262,27 @@ const Nav = styled.nav`
       padding: 0 12px;
     }
   }
-  @media (max-width: 560px) {
+  ${PHONE} {
+    order: 0;
+    flex: none;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 2px;
     a {
-      flex: 1 1 calc(33.333% - 4px);
-      justify-content: center;
-      padding: 0 6px;
+      min-height: 52px;
+      padding: 0 12px;
+      gap: 12px;
+      font-size: 16px;
+      border-bottom: 0;
+      border-left: 2px solid transparent;
+      border-radius: 3px;
+    }
+    a[aria-current='page'] {
+      border-left-color: var(--seam-copper);
     }
     a svg {
-      display: none;
+      width: 20px;
+      height: 20px;
     }
   }
 `;
@@ -195,6 +296,19 @@ const Health = styled.div`
   flex-wrap: wrap;
   justify-content: flex-end;
   padding: 8px 0;
+  ${PHONE} {
+    margin-left: 0;
+    align-self: stretch;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 14px;
+    padding: 14px 12px 0;
+    border-top: 1px solid var(--seam);
+    .passkeys-link {
+      display: none;
+    }
+  }
 `;
 
 const Main = styled.main`
@@ -238,9 +352,32 @@ function Tab({ path, label, icon: Icon }: (typeof tabs)[number]) {
   );
 }
 
+type Status = ReturnType<typeof useStatus>;
+const useStatus = () => useResource('/api/status', StatusResponse, { pollMs: 30_000 });
+
+/** On the phone's menu button: a dot when Kamaji's own health needs a look. */
+function MenuFlag({ status }: { status: Status }) {
+  let tone: string | null = null;
+  if (status.state === 'error' || (status.state === 'ready' && status.refreshError)) tone = 'red';
+  else if (status.state === 'ready') {
+    const lines = [
+      cycleHealth(status.data),
+      heartbeatHealth(status.data),
+      alertsHealth(status.data),
+    ];
+    tone = lines.some((l) => l.tone === 'red')
+      ? 'red'
+      : lines.some((l) => l.tone === 'amber')
+        ? 'amber'
+        : null;
+  }
+  return tone ? (
+    <span className="menu-flag" css={{ background: `var(--${tone})` }} aria-hidden="true" />
+  ) : null;
+}
+
 /** Kamaji's own health in a word or two; the detail is on Overview. */
-function StatusSummary() {
-  const status = useResource('/api/status', StatusResponse, { pollMs: 30_000 });
+function StatusSummary({ status }: { status: Status }) {
   if (status.state === 'loading') return <Pill>Checking Kamaji…</Pill>;
   if (status.state === 'error')
     return (
@@ -269,7 +406,7 @@ function StatusSummary() {
 function PasskeysLink() {
   const link = useLink('/passkeys');
   return (
-    <a {...link} css={{ fontSize: 12, color: 'var(--muted)' }}>
+    <a {...link} className="passkeys-link" css={{ fontSize: 12, color: 'var(--muted)' }}>
       Passkeys
     </a>
   );
@@ -291,21 +428,35 @@ function Home() {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  const status = useStatus();
+  const { path } = useRoute();
   return (
     <>
       <SkipLink href="#main">Skip to content</SkipLink>
       <Top>
         <Home />
-        <Nav aria-label="Main">
-          {tabs.map((tab) => (
-            <Tab key={tab.path} {...tab} />
-          ))}
-        </Nav>
-        <Health>
-          <StatusSummary />
-          <PasskeysLink />
-          <ThemeToggle />
-        </Health>
+        {/* Keyed on the page, so moving to another page closes the menu. */}
+        <input key={path} type="checkbox" id="menu" className="menu-toggle" aria-label="Menu" />
+        <label htmlFor="menu" className="menu-button" title="Menu">
+          <MenuIcon className="menu-open" size={26} aria-hidden="true" />
+          <X className="menu-close" size={26} aria-hidden="true" />
+          <MenuFlag status={status} />
+        </label>
+        <div className="menu">
+          <Nav aria-label="Main">
+            {tabs.map((tab) => (
+              <Tab key={tab.path} {...tab} />
+            ))}
+            <span className="menu-only">
+              <Tab path="/passkeys" label="Passkeys" icon={KeyRound} />
+            </span>
+          </Nav>
+          <Health>
+            <StatusSummary status={status} />
+            <PasskeysLink />
+            <ThemeToggle />
+          </Health>
+        </div>
       </Top>
       <Main id="main">{children}</Main>
       <Toasts />
