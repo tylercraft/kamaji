@@ -9,6 +9,8 @@ import { realCheckers } from '../checks/sites.js';
 import { openDb } from '../db.js';
 import { backupConfig, craftishBackup } from './backup.js';
 import { releaseLock, takeLock } from './lock.js';
+import { passkeyConfig } from '../config.js';
+import { approvalProblem } from '../passkeys/guard.js';
 import { runUpdater, type Send } from './run.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
@@ -74,6 +76,7 @@ try {
     sleep: (ms, signal) => delay(ms, undefined, { signal }),
     signal: controller.signal,
     log,
+    approvalProblem: (batchId) => approvalProblem(db, passkeyConfig(env), batchId),
   });
   log('updater: nothing left to run; exiting');
 } catch (error) {

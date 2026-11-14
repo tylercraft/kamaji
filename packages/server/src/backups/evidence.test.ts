@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { testAuthenticator } from '../passkeys/testing.js';
 import type { Db } from '../db.js';
 import { testDb } from '../testing.js';
 import type { BackupResult } from '../updater/run.js';
@@ -94,6 +95,7 @@ describe('a site’s backup history', () => {
 
 function app(backup?: (site: { id: string }) => Promise<BackupResult>) {
   const db = testDb();
+  const passkey = testAuthenticator();
   const webDist = mkdtempSync(join(tmpdir(), 'kamaji-web-'));
   writeFileSync(join(webDist, 'index.html'), '<!doctype html>');
   const a = createApp({
@@ -110,6 +112,7 @@ function app(backup?: (site: { id: string }) => Promise<BackupResult>) {
       alertsConfigured: false,
     }),
     ...(backup ? { backup } : {}),
+    passkeys: passkey.config,
     now: () => T,
   });
   const headers = { 'Tailscale-User-Login': LOGIN, Host: 'kamaji.test' };
@@ -118,10 +121,10 @@ function app(backup?: (site: { id: string }) => Promise<BackupResult>) {
       await (await a.request(`/api/sites/${id}/backups`, { headers })).json(),
     );
   const post = (id: string) =>
-    a.request(`/api/sites/${id}/backups`, {
-      method: 'POST',
-      headers: { ...headers, Origin: 'https://kamaji.test', 'Content-Type': 'application/json' },
-      body: '{}',
+    passkey.post(a, `/api/sites/${id}/backups`, '{}', {
+      ...headers,
+      Origin: 'https://kamaji.test',
+      'Content-Type': 'application/json',
     });
   return { db, get, post };
 }

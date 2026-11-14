@@ -29,6 +29,8 @@ export async function approveBatch(
   login: string,
   now: () => number,
   refresh: (siteId: string) => Promise<boolean>,
+  /** The signed request and its passkey proof (passkeys/guard.ts), checked again by the updater. */
+  approval: string | null = null,
 ): Promise<ApproveResponse> {
   const sites = new Map(updatableSites(db).map((s) => [s.id, s]));
   const siteIds = [...new Set(request.items.map((i) => i.siteId))];
@@ -73,9 +75,9 @@ export async function approveBatch(
   const at = now();
   transaction(db, () => {
     db.prepare(
-      `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state)
-       VALUES (?, ?, ?, ?, 'approved')`,
-    ).run(id, at, login, request.oneSiteFirst ? 1 : 0);
+      `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state, approval)
+       VALUES (?, ?, ?, ?, 'approved', ?)`,
+    ).run(id, at, login, request.oneSiteFirst ? 1 : 0, approval);
     siteIds.forEach((siteId, position) => {
       const kind: BackupKind = sites.get(siteId)!.backupKind;
       db.prepare(

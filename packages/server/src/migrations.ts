@@ -500,4 +500,24 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 18,
+    name: 'passkeys',
+    // TY-170: writes that start or change work on a site need a passkey (passkeys/). Nonces are
+    // single use; counters catch a cloned authenticator. The passkeys themselves are never here:
+    // they're in a root-owned file. batches.approval keeps the signed request and its proof, which
+    // the updater checks again before running.
+    sql: `
+      CREATE TABLE passkey_nonces (
+        nonce TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        used_at INTEGER
+      );
+      CREATE TABLE passkey_counters (
+        id TEXT PRIMARY KEY,
+        sign_count INTEGER NOT NULL
+      );
+      ALTER TABLE batches ADD COLUMN approval TEXT;
+    `,
+  },
 ];

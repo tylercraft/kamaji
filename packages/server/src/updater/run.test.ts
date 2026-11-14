@@ -209,6 +209,7 @@ function setup(backup: 'host' | 'tyler' | 'kamaji' = 'host') {
     signal,
     log: () => {},
     timing: { jobTimeoutMs: 60_000 },
+    approvalProblem: () => null,
   });
   return { db, site, deps, worker, pausedDuring };
 }
@@ -313,6 +314,18 @@ describe('one site’s updates', () => {
 });
 
 describe('the updater', () => {
+  it('runs nothing in a batch whose approval doesn’t hold, and holds it with the reason', async () => {
+    const { db, site, deps } = setup();
+    await approve(db);
+    await runUpdater({ ...deps(), approvalProblem: () => 'no passkey approval' });
+    expect(site.sent.filter((s) => s.endpoint === 'update')).toEqual([]);
+    expect(batchViews(db)[0]!.sites[0]).toMatchObject({
+      state: 'held',
+      heldReason: expect.stringContaining('the approval doesn’t hold (no passkey approval)'),
+    });
+    expect(openIssues(db).map((i) => i.kind)).toEqual(['update-held']);
+  });
+
   it('runs core first, then each component, with checks after each, inside a pause on both paths', async () => {
     const { db, site, deps, worker, pausedDuring } = setup();
     await approve(db);

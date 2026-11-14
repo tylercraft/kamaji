@@ -124,6 +124,8 @@ function deps(
 ): UpdaterDeps {
   return {
     db,
+    // The approvals here come from approveBatch directly; passkeys are tested in the server.
+    approvalProblem: () => null,
     keys: { report: keys.report, update },
     send: (home, key, endpoint, body, options = {}) =>
       careRequest(home, key, endpoint, body, {
