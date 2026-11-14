@@ -542,7 +542,8 @@ const send = (method, params = {}) =>
     ws.send(JSON.stringify({ id: seq, method, params }));
   });
 const evaluate = async (expression) =>
-  (await send('Runtime.evaluate', { expression, returnByValue: true })).result.result?.value;
+  (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result
+    .result?.value;
 await send('Runtime.enable');
 
 const PAGES = [
@@ -658,7 +659,7 @@ for (const view of VIEWS) {
   const review = `[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('Review selected updates'))`;
   if (!(await evaluate(`${review}?.disabled`)))
     problems.push('Review selected updates isn’t disabled before a selection');
-  await evaluate(`document.querySelector('input[type=checkbox]').focus()`);
+  await evaluate(`document.querySelector('main input[type=checkbox]').focus()`);
   await key(' ', 'Space');
   await new Promise((r) => setTimeout(r, 200));
   if (await evaluate(`${review}?.disabled`))
@@ -720,7 +721,9 @@ for (const view of VIEWS) {
   if (!proposed.ok) problems.push(`the proposal was refused: ${proposed.problems.join('; ')}`);
   await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/updates` });
   await new Promise((r) => setTimeout(r, 1500));
-  const ticked = await evaluate(`document.querySelectorAll('input[type=checkbox]:checked').length`);
+  const ticked = await evaluate(
+    `document.querySelectorAll('main input[type=checkbox]:checked').length`,
+  );
   if (SHOTS) {
     const shot = await send('Page.captureScreenshot', {
       format: 'png',
@@ -778,6 +781,17 @@ for (const view of VIEWS) {
 
   await send('Page.navigate', { url: `${at}/passkeys` });
   await wait(1500);
+  if (
+    (await evaluate(
+      `document.querySelector('nav[aria-label=Main] a[href="/passkeys"]')?.getAttribute('aria-current')`,
+    )) !== 'page'
+  )
+    problems.push('Passkeys isn’t a tab marked as the current page');
+  // With no name, Create says so rather than doing nothing.
+  await click('Create a passkey on this device');
+  await wait(300);
+  if (!(await evaluate('document.body.innerText')).includes('Name it first'))
+    problems.push('Create with no name didn’t ask for one');
   await evaluate(`(() => {
     const input = document.getElementById('passkey-label');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Smoke');
@@ -797,6 +811,21 @@ for (const view of VIEWS) {
     await wait(1500);
     if (!(await evaluate('document.body.innerText')).includes('Smoke'))
       problems.push('the installed passkey isn’t listed');
+    // Its removal command copies exactly, with nothing added.
+    await send('Browser.grantPermissions', {
+      origin: at,
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+    });
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const sed = await evaluate(
+      `[...document.querySelectorAll('pre code')].map((c) => c.textContent).find((t) => t.includes('sed -i'))`,
+    );
+    await click('Copy');
+    await wait(300);
+    if (!(await evaluate('document.body.innerText')).includes('Copied'))
+      problems.push('Copy didn’t say Copied');
+    const pasted = await evaluate('navigator.clipboard.readText()');
+    if (!sed || pasted !== sed) problems.push('Copy didn’t copy the command exactly');
     const before = spent();
     await send('Page.navigate', { url: `${at}/updates` });
     await wait(1500);
@@ -806,7 +835,69 @@ for (const view of VIEWS) {
     if (held() === 'held') problems.push('carry on didn’t go through with the passkey');
   }
   if (problems.length) failures.push(`passkeys: ${problems.join('; ')}`);
-  else console.log('ok   passkeys: made on the page, refused before install, signed after');
+  else
+    console.log(
+      'ok   passkeys: a tab; made on the page, refused before install, signed after; copies',
+    );
+}
+
+// The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and
+// closing again on the way to another page. Plus the home screen icon iOS asks for.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  });
+  await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/` });
+  await wait(1500);
+  const shown = (selector) =>
+    evaluate(
+      `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && e.getClientRects().length > 0; })()`,
+    );
+  if (await shown('nav[aria-label=Main] a'))
+    problems.push('the tabs show before the menu is opened');
+  if (!(await shown('label.menu-button'))) problems.push('no menu button');
+  await evaluate(`document.querySelector('label.menu-button').click()`);
+  await wait(300);
+  if (!(await shown('nav[aria-label=Main] a'))) problems.push('the menu didn’t open');
+  if (!(await shown('nav[aria-label=Main] a[href="/passkeys"]')))
+    problems.push('no Passkeys in the menu');
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'phone-menu.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  await evaluate(`document.querySelector('nav[aria-label=Main] a[href="/updates"]').click()`);
+  await wait(800);
+  if (await shown('nav[aria-label=Main] a')) problems.push('the menu stayed open on the next page');
+  if ((await evaluate('location.pathname')) !== '/updates')
+    problems.push('the menu’s link didn’t go');
+  const icon = await evaluate(
+    `fetch('/apple-touch-icon.png').then(async (r) => r.status + ' ' + r.headers.get('content-type') + ' ' + (await r.arrayBuffer()).byteLength)`,
+  );
+  if (!/^200 image\/png [1-9]/.test(String(icon))) problems.push(`apple-touch-icon: ${icon}`);
+  const title = await evaluate(
+    `document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content`,
+  );
+  if (title !== 'Kamaji') problems.push('no home screen title');
+  await send('Page.navigate', { url: `http://localhost:${appPort}/passkeys` });
+  await wait(1500);
+  const copyHeight = await evaluate(
+    `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Copy')?.getBoundingClientRect().height`,
+  );
+  if (!(copyHeight >= 44)) problems.push(`Copy is ${copyHeight}px tall on a phone`);
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'phone-copy.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`phone header: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   phone header: menu opens with Passkeys, closes on navigation; icon served; Copy 44px',
+    );
 }
 
 ws.close();

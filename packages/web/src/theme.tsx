@@ -105,6 +105,12 @@ const globalStyles = css`
     font: 13px/1.45 var(--sans);
     font-variant-numeric: tabular-nums;
   }
+  /* The phone menu (Shell) covers the page; the page behind it stays put. */
+  @media (max-width: 640px) {
+    body:has(#menu:checked) {
+      overflow: hidden;
+    }
+  }
   h1,
   h2,
   h3,

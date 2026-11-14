@@ -3,6 +3,7 @@
 // a file only root can change on the mini, so nothing else running there can add its own.
 import { PasskeysResponse } from '@kamaji/shared';
 import { useState } from 'react';
+import { CommandBlock } from '../components/CommandBlock';
 import { Field, FormError, PrimaryButton } from '../components/forms';
 import { Muted, PageHeading, Panel, PanelTitle, ResourceView, Table } from '../components/ui';
 import { createPasskey } from '../passkey';
@@ -10,22 +11,10 @@ import { useResource } from '../useResource';
 
 const FILE = '/etc/kamaji/passkeys';
 
-const Command = ({ n, children }: { n: number; children: string }) => (
+const Step = ({ n, command }: { n: number; command: string }) => (
   <li css={{ display: 'grid', gap: 4 }}>
     <span>Step {n}, on the mini:</span>
-    <pre
-      css={{
-        margin: 0,
-        padding: '8px 10px',
-        background: 'var(--sunken, var(--panel))',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius)',
-        overflowX: 'auto',
-        fontSize: 12,
-      }}
-    >
-      <code>{children}</code>
-    </pre>
+    <CommandBlock command={command} />
   </li>
 );
 
@@ -36,7 +25,14 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [line, setLine] = useState<string | null>(null);
+  // The button stays live with no name: a disabled one looks live on iOS, and a tap that does
+  // nothing says nothing. Asking for the name, and moving to it, does.
   async function create() {
+    if (label.trim() === '') {
+      setError('Name it first.');
+      document.getElementById('passkey-label')?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     const made = await createPasskey(rpId, label.trim());
@@ -68,29 +64,39 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
               id="passkey-label"
               value={label}
               maxLength={60}
-              onChange={(e) => setLabel(e.target.value)}
+              onChange={(e) => {
+                setLabel(e.target.value);
+                if (error === 'Name it first.') setError(null);
+              }}
+              aria-describedby={error ? 'passkey-error' : 'passkey-label-hint'}
               placeholder="Tyler’s iPhone"
             />
           </Field>
           <PrimaryButton
             type="button"
-            disabled={busy || label.trim() === ''}
+            disabled={busy}
             onClick={create}
             css={{ justifySelf: 'start' }}
           >
             Create a passkey on this device
           </PrimaryButton>
-          {error && <FormError>{error}</FormError>}
+          {error && (
+            <span id="passkey-error">
+              <FormError>{error}</FormError>
+            </span>
+          )}
         </>
       )}
       {line && (
         <ol css={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 10 }} aria-label="Install it">
-          <Command n={1}>
-            /usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji
-          </Command>
-          <Command n={2}>
-            {`echo ${shellQuote(line)} | /usr/bin/sudo /usr/bin/tee -a ${FILE} > /dev/null`}
-          </Command>
+          <Step
+            n={1}
+            command="/usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji"
+          />
+          <Step
+            n={2}
+            command={`echo ${shellQuote(line)} | /usr/bin/sudo /usr/bin/tee -a ${FILE} > /dev/null`}
+          />
           <li>Reload this page: the passkey shows above once Kamaji reads it.</li>
         </ol>
       )}
@@ -136,9 +142,9 @@ export function PasskeysPage() {
                             </Muted>
                           </td>
                           <td>
-                            <code css={{ fontSize: 12, wordBreak: 'break-all' }}>
-                              {`/usr/bin/sudo /usr/bin/sed -i '' '/"id":"${p.id}"/d' ${FILE}`}
-                            </code>
+                            <CommandBlock
+                              command={`/usr/bin/sudo /usr/bin/sed -i '' '/"id":"${p.id}"/d' ${FILE}`}
+                            />
                           </td>
                         </tr>
                       ))}
