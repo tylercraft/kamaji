@@ -13,6 +13,7 @@ import {
   ProposeRequest,
   RemoveSiteRequest,
   type PasskeysResponse,
+  type RecheckAllResponse,
   type BackupExpectation,
   type UpdatesResponse,
 } from '@kamaji/shared';
@@ -23,7 +24,7 @@ import { latestExport, recordEvidence, siteBackups } from './backups/evidence.js
 import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
-import { reportSite } from './inventory/report.js';
+import { reportAll, reportSite } from './inventory/report.js';
 import { checkSites } from './checks/sites.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
@@ -113,6 +114,8 @@ const PASSKEY_FREE = new Set([
   'POST /api/proposals',
   'POST /api/passkeys/challenge',
   'POST /api/sites',
+  // Recheck all: a report from each connected site, which changes nothing on any of them.
+  'POST /api/sites/report',
 ]);
 const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report)$/;
 
@@ -371,6 +374,13 @@ export function createApp({
     }
     const ok = await reportSite(db, site, care.keys, care.send, now, { refresh: true });
     return c.json({ ok });
+  });
+  // Recheck all: the same, for every connected site that isn't paused, three at a time.
+  app.post('/api/sites/report', async (c) => {
+    if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
+    const sites = await reportAll(db, { keys: care.keys, send: care.send, now });
+    const body: RecheckAllResponse = { sites };
+    return c.json(body);
   });
   app.post('/api/sites/:id/configure', async (c) => {
     const body = await readJson(c, ConfigureSiteRequest);

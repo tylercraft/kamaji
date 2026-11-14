@@ -668,6 +668,20 @@ export type OverviewResponse = z.infer<typeof OverviewResponse>;
 export const SitesResponse = z.object({ sites: z.array(SiteSummary) });
 export type SitesResponse = z.infer<typeof SitesResponse>;
 
+/** Recheck all: each connected site that was asked, and whether it reported. */
+export const RecheckAllResponse = z.object({
+  sites: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      ok: z.boolean(),
+      /** Why it didn't report, in plain words; null when it did. */
+      problem: z.string().nullable(),
+    }),
+  ),
+});
+export type RecheckAllResponse = z.infer<typeof RecheckAllResponse>;
+
 export const ServersResponse = z.object({ servers: z.array(ServerSummary) });
 export type ServersResponse = z.infer<typeof ServersResponse>;
 
