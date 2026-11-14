@@ -763,12 +763,35 @@ export const BatchView = z.object({
 });
 export type BatchView = z.infer<typeof BatchView>;
 
+/** A proposed batch as Updates shows it (ProposeRequest, below). */
+export const ProposalView = z.object({
+  id: z.number().int(),
+  createdAt: Timestamp,
+  by: z.string(),
+  firstSite: z.string().nullable(),
+  /** Stale once the queue has changed since it was proposed: shown, never ticked. */
+  stale: z.boolean(),
+  items: z.array(
+    z.object({
+      siteId: z.string(),
+      type: ComponentType,
+      item: z.string(),
+      from: z.string(),
+      to: z.string(),
+      note: z.string(),
+    }),
+  ),
+});
+export type ProposalView = z.infer<typeof ProposalView>;
+
 export const UpdatesResponse = z.object({
   items: z.array(QueueItem),
   sites: z.array(QueueSite),
   /** Connected sites whose offers aren't known yet. */
   unknown: z.number().int(),
   batches: z.array(BatchView),
+  /** The latest proposed batch, until a batch is approved after it; whole queue only. */
+  proposal: ProposalView.nullable(),
 });
 export type UpdatesResponse = z.infer<typeof UpdatesResponse>;
 
@@ -801,6 +824,42 @@ export const ApproveResponse = z.discriminatedUnion('ok', [
   }),
 ]);
 export type ApproveResponse = z.infer<typeof ApproveResponse>;
+
+/**
+ * A proposed batch (Calcifer's prepare_batch): items from the current queue, each with a short
+ * note, and optionally the site to run first. It approves nothing: Updates shows it ticked, and
+ * Tyler reviews and approves it like any other selection.
+ */
+export const ProposeRequest = z.object({
+  items: z
+    .array(
+      z.object({
+        siteId: z.string(),
+        type: ComponentType,
+        item: z.string(),
+        from: z.string(),
+        to: z.string(),
+        note: z.string().trim().max(200).default(''),
+      }),
+    )
+    .min(1)
+    .max(200),
+  /** The site to run first, the rest only if it passes. One of the items' sites. */
+  firstSite: z.string().nullable().default(null),
+  /** Who proposed it, shown with it. */
+  by: z.string().trim().min(1).max(40).default('Calcifer'),
+});
+export type ProposeRequest = z.infer<typeof ProposeRequest>;
+
+export const ProposeResponse = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), id: z.number().int() }),
+  z.object({
+    ok: z.literal(false),
+    /** What's wrong, in plain words: items not in the current queue, a repeated item, a first site with nothing in it. */
+    problems: z.array(z.string()),
+  }),
+]);
+export type ProposeResponse = z.infer<typeof ProposeResponse>;
 
 /**
  * One piece of a site's backup evidence: an export Kamaji asked for (before a run, or "Back up

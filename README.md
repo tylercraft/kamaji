@@ -35,5 +35,6 @@ Node 22.13 or later.
 - **Unknown is never zero.** Anything Kamaji hasn't observed is `Known<T>` with `known: false` and a reason, and the UI says so. Never default a missing value to 0, "up" or "none".
 - **Every response has a schema** in `packages/shared`. The server's return types come from it and the web app parses with it.
 - **Jobs are rows.** Work goes through `jobs/store.ts` with a lease. A job whose process died is marked interrupted, never silently retried: its kind decides recovery.
+- **Writes come from Kamaji's own page**: the login header, a JSON body, and an Origin matching the host (`app.ts`). The one exception is `POST /api/proposals`, which takes a request with no Origin at all, so Calcifer's `prepare_batch` can propose a batch from the mini. A proposal only ticks boxes in Updates; it never approves or starts anything. Don't add a route to `ORIGINLESS_WRITES` without the same property.
 - **No secrets in logs, errors, events or the database.** Secrets arrive as environment variables from `doppler run`.
 - Times are integer milliseconds (UTC) in SQLite and ISO strings on the wire. Records are kept: mark removed or resolved, don't delete.

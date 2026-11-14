@@ -46,6 +46,8 @@ const { checkWordfence } = await imp('wordfence/feed.js');
 const { checkServers, parseReport } = await imp('checks/serverReport.js');
 const { checkMolcajete } = await imp('molcajete/check.js');
 const { TOOLS } = await imp('molcajete/read.js');
+const { queue } = await imp('updates/queue.js');
+const { proposeBatch } = await imp('updates/proposals.js');
 const { CareReport } = await import('@kamaji/shared');
 
 const fixture = (path) => readFileSync(join(SRC, path), 'utf8');
@@ -682,6 +684,45 @@ for (const view of VIEWS) {
     problems.push('Remove site started open');
   if (problems.length) failures.push(`keyboard: ${problems.join('; ')}`);
   else console.log('ok   keyboard: disclosures, review without approving, remembered sections');
+}
+// A proposed batch (prepare_batch) arrives ticked with its notes, and starts nothing.
+{
+  problems = [];
+  const runsBefore = Number(db.prepare('SELECT COUNT(*) AS n FROM batches').get().n);
+  const items = queue(db)
+    .items.slice(0, 2)
+    .map(({ siteId, type, item, from, to }) => ({
+      siteId,
+      type,
+      item,
+      from,
+      to,
+      note: 'Smoke note',
+    }));
+  const proposed = proposeBatch(
+    db,
+    { items, firstSite: items[0].siteId, by: 'Calcifer' },
+    Date.now(),
+  );
+  if (!proposed.ok) problems.push(`the proposal was refused: ${proposed.problems.join('; ')}`);
+  await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/updates` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const ticked = await evaluate(`document.querySelectorAll('input[type=checkbox]:checked').length`);
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+    });
+    writeFileSync(join(SHOTS, 'proposal.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (ticked !== items.length) problems.push(`${ticked} boxes ticked, not ${items.length}`);
+  const text = await evaluate('document.body.innerText');
+  if (!text.includes('Calcifer proposed 2 updates')) problems.push('no line about the proposal');
+  if (!text.includes('Calcifer: Smoke note')) problems.push('the notes don’t show');
+  if (Number(db.prepare('SELECT COUNT(*) AS n FROM batches').get().n) !== runsBefore)
+    problems.push('a proposal started a run');
+  if (problems.length) failures.push(`proposal: ${problems.join('; ')}`);
+  else console.log('ok   proposal: ticked with its notes, nothing started');
 }
 
 ws.close();

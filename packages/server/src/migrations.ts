@@ -483,4 +483,21 @@ export const migrations: Migration[] = [
       ALTER TABLE issues ADD COLUMN digested_at INTEGER;
     `,
   },
+  {
+    version: 17,
+    name: 'proposals',
+    // TY-151: a batch Calcifer proposes (updates/proposals.ts). Never an approval: Updates shows
+    // the latest one ticked, with its notes. queue is the fingerprint of the queue it was made
+    // from, so a newer queue makes it stale. items is JSON: siteId, type, item, from, to, note.
+    sql: `
+      CREATE TABLE proposals (
+        id INTEGER PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        proposed_by TEXT NOT NULL,
+        queue TEXT NOT NULL,
+        first_site TEXT,
+        items TEXT NOT NULL
+      );
+    `,
+  },
 ];

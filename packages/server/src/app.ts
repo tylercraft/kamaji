@@ -9,6 +9,7 @@ import {
   ConfigureSiteRequest,
   WholeSiteRequest,
   NewSiteRequest,
+  ProposeRequest,
   RemoveSiteRequest,
   type BackupExpectation,
   type UpdatesResponse,
@@ -26,6 +27,7 @@ import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
 import type { Backup } from './updater/backup.js';
 import type { UpdaterStart } from './updates/launcher.js';
+import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
@@ -86,6 +88,22 @@ function sameOrigin(c: Context): boolean {
   }
 }
 
+/**
+ * The one write a caller without the page's Origin may make: proposing a batch (Calcifer's
+ * prepare_batch, from the mini). Browsers send an Origin with every POST, so a request without
+ * one isn't a page Tyler has open; one with a foreign Origin is still refused. A proposal can't
+ * approve, start or change anything else (updates/proposals.ts), so this is the whole of what a
+ * local caller gets beyond reading.
+ */
+const ORIGINLESS_WRITES = new Set(['POST /api/proposals']);
+
+function allowedWrite(c: Context): boolean {
+  if (sameOrigin(c)) return true;
+  return (
+    c.req.header('Origin') === undefined && ORIGINLESS_WRITES.has(`${c.req.method} ${c.req.path}`)
+  );
+}
+
 async function readJson<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T> | null> {
   if (!(c.req.header('Content-Type') ?? '').startsWith('application/json')) return null;
   const parsed = schema.safeParse(await c.req.json().catch(() => undefined));
@@ -129,7 +147,7 @@ export function createApp({
     );
     const who = (c.req.header('Tailscale-User-Login') ?? '').trim().toLowerCase();
     if (!login || who !== login) return c.json({ error: 'forbidden' }, 403);
-    if (!['GET', 'HEAD'].includes(c.req.method) && !sameOrigin(c)) {
+    if (!['GET', 'HEAD'].includes(c.req.method) && !allowedWrite(c)) {
       return c.json({ error: 'forbidden' }, 403);
     }
     await next();
@@ -309,11 +327,22 @@ export function createApp({
   // With ?site=, one site's page: what's waiting there and its latest run.
   app.get('/api/updates', (c) => {
     const site = c.req.query('site');
-    const body: UpdatesResponse =
-      site === undefined
-        ? { ...queue(db), batches: batchViews(db, 50) }
-        : { ...queue(db, site), batches: batchViews(db, 1, site) };
+    let body: UpdatesResponse;
+    if (site === undefined) {
+      const q = queue(db);
+      body = { ...q, batches: batchViews(db, 50), proposal: latestProposal(db, q.items) };
+    } else {
+      body = { ...queue(db, site), batches: batchViews(db, 1, site), proposal: null };
+    }
     return c.json(body);
+  });
+  // A proposed batch: ticked in Updates with its notes, for Tyler to review and approve. Never an
+  // approval; the only write open to a caller without the page's Origin (allowedWrite, above).
+  app.post('/api/proposals', async (c) => {
+    const body = await readJson(c, ProposeRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = proposeBatch(db, body, now());
+    return c.json(result, result.ok ? 201 : 409);
   });
   app.post('/api/batches', async (c) => {
     const body = await readJson(c, ApproveRequest);
