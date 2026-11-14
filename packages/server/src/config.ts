@@ -61,6 +61,8 @@ export interface Config {
   wordfenceFeedPath: string;
   /** Laptop testing only: a saved feed to load instead of downloading. */
   wordfenceFeedFile: string | undefined;
+  /** Sites' icons, beside the database (checks/icons.ts). */
+  iconsDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -96,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       'wordfence-production.json',
     ),
     wordfenceFeedFile: env.KAMAJI_WORDFENCE_FEED_FILE || undefined,
+    iconsDir: join(dirname(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`), 'icons'),
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',

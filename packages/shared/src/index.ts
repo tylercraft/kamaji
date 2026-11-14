@@ -668,6 +668,10 @@ export type OverviewResponse = z.infer<typeof OverviewResponse>;
 export const SitesResponse = z.object({ sites: z.array(SiteSummary) });
 export type SitesResponse = z.infer<typeof SitesResponse>;
 
+/** Sites with an icon (fetched by Kamaji), each by the SHA-256 of its bytes. */
+export const SiteIconsResponse = z.object({ icons: z.record(z.string(), z.string()) });
+export type SiteIconsResponse = z.infer<typeof SiteIconsResponse>;
+
 /** Recheck all: each connected site that was asked, and whether it reported. */
 export const RecheckAllResponse = z.object({
   sites: z.array(

@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { careRequest } from './care/client.js';
 import { loadConfig, passkeyConfig } from './config.js';
+import { iconRefresher, refreshIcons } from './checks/icons.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
@@ -70,11 +71,17 @@ const localMac = () =>
 const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
+// Sites' icons, once a day each: started by the cycle, never waited on (checks/icons.ts).
+const startIcons = iconRefresher(
+  () => refreshIcons(db, { dir: config.iconsDir, now: Date.now }),
+  log,
+);
 const runChecks = async (signal: AbortSignal) => {
   // Each step timed; one that's slow or holds the event loop says so in the log (TY-169).
   const steps = cycleSteps(log);
   try {
     const checked = await steps.step('home pages', () => checkSites(db, { now: Date.now, signal }));
+    startIcons();
     if (config.worker) {
       const worker = config.worker;
       await steps.step('outside checks', () =>
@@ -165,6 +172,7 @@ const app = createApp({
   fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
   startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
   passkeys: passkeyConfig(process.env),
+  iconsDir: config.iconsDir,
   log,
   statusInput: () => ({
     version,
