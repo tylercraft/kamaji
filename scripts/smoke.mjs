@@ -49,6 +49,7 @@ const { TOOLS } = await imp('molcajete/read.js');
 const { queue } = await imp('updates/queue.js');
 const { proposeBatch } = await imp('updates/proposals.js');
 const { loadPasskeys } = await imp('passkeys/store.js');
+const { storeIcon } = await imp('checks/icons.js');
 const { CareReport } = await import('@kamaji/shared');
 
 const fixture = (path) => readFileSync(join(SRC, path), 'utf8');
@@ -68,6 +69,25 @@ db.exec(`UPDATE sites SET mode = 'connected', backup_expectation = 'kamaji',
   site_backup_schedule = 'weekly' WHERE id = '${BAD}';
   UPDATE sites SET backup_expectation = 'host' WHERE id = 'photogravure.com';
   UPDATE sites SET paused_at = ${now - DAY} WHERE id = 'sweetleisure.com';`);
+
+// Icons for two sites, as the cycle would have fetched them (Kamaji's own, as stand-ins): a PNG
+// and an SVG. The rest show their letter.
+const iconsDir = mkdtempSync(join(tmpdir(), 'kamaji-smoke-icons-'));
+const PUBLIC = join(ROOT, 'packages/web/public');
+storeIcon(
+  db,
+  iconsDir,
+  OK,
+  { ok: true, bytes: readFileSync(join(PUBLIC, 'apple-touch-icon.png')), type: 'image/png' },
+  now,
+);
+storeIcon(
+  db,
+  iconsDir,
+  'photogravure.com',
+  { ok: true, bytes: readFileSync(join(PUBLIC, 'favicon.svg')), type: 'image/svg+xml' },
+  now,
+);
 const obs = (id, source, ago, ok, value, check = 'http') =>
   recordObservation(db, {
     resourceType: 'site',
@@ -470,6 +490,7 @@ const app = createApp({
   webDist: WEB,
   workerOn: true,
   passkeys,
+  iconsDir,
   statusInput: () => ({
     version: 'smoke',
     commit: null,
@@ -839,6 +860,40 @@ for (const view of VIEWS) {
     console.log(
       'ok   passkeys: a tab; made on the page, refused before install, signed after; copies',
     );
+}
+
+// Site icons on the Sites page: the two stored ones load from Kamaji as images, served so nothing
+// in them can run; a site without one shows its letter, the same size.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await wait(1500);
+  const icon = (id) =>
+    evaluate(`(() => {
+      // The tile sits just before the name's link, in SiteIcon's WithIcon.
+      // The page has a table and phone cards; one of them is hidden, so take the link that shows.
+      const link = [...document.querySelectorAll('a[href="/sites/${id}"]')].find((a) => a.getClientRects().length > 0);
+      const tile = link?.parentElement?.previousElementSibling;
+      const img = tile?.querySelector('img');
+      const box = tile?.getBoundingClientRect();
+      return JSON.stringify({ loaded: !!img && img.complete && img.naturalWidth > 0, letter: img ? '' : (tile?.textContent ?? ''), w: box?.width, h: box?.height });
+    })()`).then((j) => JSON.parse(j ?? '{}'));
+  for (const id of [OK, 'photogravure.com']) {
+    const got = await icon(id);
+    if (!got.loaded) problems.push(`${id}’s icon didn’t load`);
+    if (got.w !== 16 || got.h !== 16) problems.push(`${id}’s icon is ${got.w}×${got.h}`);
+  }
+  const none = await icon(BAD);
+  if (none.letter !== 'F' || none.w !== 16 || none.h !== 16)
+    problems.push(`no letter tile for a site without an icon: ${JSON.stringify(none)}`);
+  const headers = await evaluate(
+    `fetch('/api/sites/photogravure.com/icon').then((r) => [r.headers.get('content-type'), r.headers.get('content-security-policy'), r.headers.get('x-content-type-options')].join(' | '))`,
+  );
+  if (headers !== "image/svg+xml | default-src 'none'; style-src 'unsafe-inline' | nosniff")
+    problems.push(`icon headers: ${headers}`);
+  if (problems.length) failures.push(`site icons: ${problems.join('; ')}`);
+  else console.log('ok   site icons: PNG and SVG load as images, a letter where there’s none');
 }
 
 // Recheck all, on the Sites page: no passkey asked (a report changes nothing on a site), and a
