@@ -8,6 +8,7 @@ import {
   type BatchSiteView,
   type BatchView,
   type Outcome,
+  type ProposalView,
   type QueueItem,
 } from '@kamaji/shared';
 import { useEffect, useRef, useState } from 'react';
@@ -92,17 +93,67 @@ export function Flags({ item }: { item: QueueItem }) {
   );
 }
 
+/** A current proposal's notes, by item. */
+interface Notes {
+  by: string;
+  byItem: Map<string, string>;
+}
+
+function proposalNotes(proposal: ProposalView | null): Notes {
+  const byItem = new Map<string, string>();
+  if (proposal && !proposal.stale)
+    for (const i of proposal.items) if (i.note) byItem.set(key(i), i.note);
+  return { by: proposal?.by ?? '', byItem };
+}
+
+/** A proposal's note on one item, under it. */
+function Note({ notes, item }: { notes: Notes; item: QueueItem }) {
+  const note = notes.byItem.get(key(item));
+  if (!note) return null;
+  return (
+    <span css={{ display: 'block', color: 'var(--muted)', fontSize: 12 }}>
+      {notes.by}: {note}
+    </span>
+  );
+}
+
+/** The latest proposed batch: ticked below when it's current, a line when the queue has moved on. */
+function ProposalLine({ proposal, data }: { proposal: ProposalView; data: UpdatesResponse }) {
+  const n = proposal.items.length;
+  const sites = new Set(proposal.items.map((i) => i.siteId)).size;
+  if (proposal.stale)
+    return (
+      <Muted role="status">
+        {proposal.by}’s proposal of <Time iso={proposal.createdAt} /> is out of date: the queue has
+        changed since, so nothing of it is ticked. Ask for a new one.
+      </Muted>
+    );
+  const first = data.sites.find((s) => s.siteId === proposal.firstSite)?.siteName;
+  return (
+    <p role="status" css={{ margin: 0 }}>
+      <strong>
+        {proposal.by} proposed {n} {n === 1 ? 'update' : 'updates'} on {sites}{' '}
+        {sites === 1 ? 'site' : 'sites'}
+      </strong>{' '}
+      <Time iso={proposal.createdAt} />: ticked below with its notes
+      {first ? `, ${first} first` : ''}. Nothing runs until you review and approve it.
+    </p>
+  );
+}
+
 /** One row per site, with a box to tick all of that site's updates at once. */
 function SiteRows({
   items,
   ticked,
   toggle,
   tickAll,
+  notes,
 }: {
   items: QueueItem[];
   ticked: Set<string>;
   toggle: (k: string) => void;
   tickAll: (items: QueueItem[], on: boolean) => void;
+  notes: Notes;
 }) {
   return (
     <Table>
@@ -138,6 +189,7 @@ function SiteRows({
                       />
                       <span>
                         {i.name} {i.from} → {i.to} <Flags item={i} />
+                        <Note notes={notes} item={i} />
                       </span>
                     </label>
                   ))}
@@ -181,9 +233,11 @@ function Queue({
   };
   const [grouping, setGrouping] = useState<Grouping>('update');
   const routine = data.items.filter((i) => !i.major);
+  const notes = proposalNotes(data.proposal);
   return (
     <Panel aria-labelledby="queue">
       <PanelTitle id="queue">To approve</PanelTitle>
+      {data.proposal && <ProposalLine proposal={data.proposal} data={data} />}
       {data.items.length === 0 ? (
         <Muted>
           {data.unknown > 0
@@ -234,7 +288,13 @@ function Queue({
           </div>
           <div css={{ overflowX: 'auto' }}>
             {grouping === 'site' ? (
-              <SiteRows items={data.items} ticked={ticked} toggle={toggle} tickAll={tickAll} />
+              <SiteRows
+                items={data.items}
+                ticked={ticked}
+                toggle={toggle}
+                tickAll={tickAll}
+                notes={notes}
+              />
             ) : (
               <Table>
                 <thead>
@@ -264,7 +324,10 @@ function Queue({
                                   checked={ticked.has(key(i))}
                                   onChange={() => toggle(key(i))}
                                 />
-                                {i.siteName}
+                                <span>
+                                  {i.siteName}
+                                  <Note notes={notes} item={i} />
+                                </span>
                               </label>
                             ))}
                           </div>
@@ -331,19 +394,25 @@ export function ReviewBody({
   ticked,
   done,
   runsAt = 'under Runs',
+  firstSite = null,
 }: {
   data: UpdatesResponse;
   ticked: Set<string>;
   done: () => void;
   runsAt?: string;
+  /** A proposal's site to run first: its updates lead, and one site first starts on. */
+  firstSite?: string | null;
 }) {
-  const chosen = data.items.filter((i) => ticked.has(key(i)));
+  const lead = (i: QueueItem) => (i.siteId === firstSite ? 0 : 1);
+  // A stable sort: the queue's order otherwise. The first site in the list runs first.
+  const chosen = data.items.filter((i) => ticked.has(key(i))).sort((a, b) => lead(a) - lead(b));
   const siteIds = [...new Set(chosen.map((i) => i.siteId))];
   const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
   const [oneFirst, setOneFirst] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const oneSiteFirst = oneFirst ?? siteIds.length >= 3;
+  const proposedFirst = firstSite !== null && siteIds[0] === firstSite;
+  const oneSiteFirst = oneFirst ?? (proposedFirst || siteIds.length >= 3);
   if (chosen.length === 0) return null;
   const site = (id: string) => data.sites.find((s) => s.siteId === id)!;
   const waitingOn = needsBackup(siteIds, data.sites, confirmed);
@@ -423,7 +492,7 @@ export function ReviewBody({
             checked={oneSiteFirst}
             onChange={() => setOneFirst(!oneSiteFirst)}
           />
-          One site first: the rest run only if it passes
+          One site first, {site(siteIds[0]!).siteName}: the rest run only if it passes
         </label>
       )}
       <Muted>
@@ -925,6 +994,15 @@ export function UpdatesPage() {
   const updates = useResource('/api/updates', UpdatesResponse, { pollMs: updatesPollMs });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState(false);
+  // A current proposal arrives ticked, once: after that the ticks are Tyler's.
+  const [shown, setShown] = useState<number | null>(null);
+  const proposal = updates.state === 'ready' ? updates.data.proposal : null;
+  const current = proposal && !proposal.stale ? proposal : null;
+  if (current && current.id !== shown) {
+    setShown(current.id);
+    setTicked(new Set(current.items.map(key)));
+    setReviewing(false);
+  }
   return (
     <>
       <PageHeading
@@ -958,6 +1036,7 @@ export function UpdatesPage() {
                 data={data}
                 ticked={ticked}
                 reviewing={reviewing}
+                firstSite={current?.firstSite ?? null}
                 done={() => {
                   setTicked(new Set());
                   setReviewing(false);
