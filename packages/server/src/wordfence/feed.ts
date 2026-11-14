@@ -380,22 +380,71 @@ function toRow(r: Record<string, unknown>): VulnerabilityRow {
   };
 }
 
-/** Every installed component a stored vulnerability affects, on sites still in Kamaji. */
+/**
+ * What matching depends on, exactly: every component's site, item and version and whether it's
+ * gone, every site's name and whether it's removed, and the stored vulnerabilities (a feed load
+ * replaces their rows, so their count and highest rowid change). Read from the database each time,
+ * so a write by any process (the updater stores reports too) is noticed. A few hundred short rows:
+ * well under a millisecond.
+ */
+function matchInputs(db: Db): string {
+  const row = db
+    .prepare(
+      `SELECT
+         (SELECT group_concat(site_id || '|' || type || '|' || item || '|' || version || '|' ||
+            IFNULL(gone_at, ''), ';') FROM components) AS components,
+         (SELECT group_concat(id || '|' || name || '|' || IFNULL(removed_at, ''), ';')
+            FROM sites) AS sites,
+         (SELECT COUNT(*) || ':' || IFNULL(MAX(rowid), 0) FROM vulnerabilities) AS vulnerabilities`,
+    )
+    .get();
+  return `${String(row?.components)}\n${String(row?.sites)}\n${String(row?.vulnerabilities)}`;
+}
+
+/** The last matching per database, reused until its inputs change (TY-169). */
+const cache = new WeakMap<Db, { inputs: string; all: Match[] }>();
+
+/**
+ * Every installed component a stored vulnerability affects, on sites still in Kamaji. Matching
+ * compares versions for every component against every record for its slug (and every WordPress
+ * record for core), so it's done once per change of its inputs, not on every call: the cycle's
+ * judging, the Updates queue and each site's inventory all ask for it.
+ */
 export function matches(db: Db, siteId?: string): Match[] {
+  const inputs = matchInputs(db);
+  let cached = cache.get(db);
+  if (!cached || cached.inputs !== inputs) {
+    cached = { inputs, all: matchAll(db) };
+    cache.set(db, cached);
+  }
+  return siteId === undefined ? [...cached.all] : cached.all.filter((m) => m.siteId === siteId);
+}
+
+function matchAll(db: Db): Match[] {
+  // Two halves rather than one OR: with "core or the same slug", SQLite looks records up by type
+  // alone and reads every plugin record for every plugin (TY-169). Plugins and themes match on
+  // type and slug through the index; WordPress itself on every core record.
   const rows = db
     .prepare(
       `SELECT c.site_id, s.name AS site_name, c.type, c.item, c.slug, c.version, v.*
        FROM components c JOIN sites s ON s.id = c.site_id AND s.removed_at IS NULL
-       JOIN vulnerabilities v ON v.software_type = c.type
-         AND (c.type = 'core' OR v.slug = c.slug)
-       WHERE c.gone_at IS NULL ${siteId ? 'AND c.site_id = ?' : ''}`,
+       JOIN vulnerabilities v ON v.software_type = c.type AND v.slug = c.slug
+       WHERE c.gone_at IS NULL AND c.type IN ('plugin', 'theme')
+       UNION ALL
+       SELECT c.site_id, s.name AS site_name, c.type, c.item, c.slug, c.version, v.*
+       FROM components c JOIN sites s ON s.id = c.site_id AND s.removed_at IS NULL
+       JOIN vulnerabilities v ON v.software_type = 'core'
+       WHERE c.gone_at IS NULL AND c.type = 'core'`,
     )
-    .all(...(siteId ? [siteId] : []));
+    .all();
   const found: Match[] = [];
   for (const r of rows) {
-    const vulnerability = toRow(r);
     const version = String(r.version);
-    if (!vulnerability.affected.some((range) => inRange(version, range))) continue;
+    // The ranges first: most records don't affect the installed version, and the rest of the
+    // record is only read for those that do.
+    const affected = JSON.parse(String(r.affected)) as VersionRange[];
+    if (!affected.some((range) => inRange(version, range))) continue;
+    const vulnerability = toRow(r);
     const fixes = vulnerability.patchedVersions
       .filter((v) => compareVersions(v, version) > 0)
       .sort(compareVersions);
