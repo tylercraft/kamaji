@@ -239,6 +239,18 @@ export async function reportSite(
   now: () => number,
   options: { refresh?: boolean } = {},
 ): Promise<boolean> {
+  return (await askForReport(db, site, keys, send, now, options)).ok;
+}
+
+/** reportSite, with what came back: the report's summary, or why there wasn't one. */
+async function askForReport(
+  db: Db,
+  site: { id: string; name: string; url: string },
+  keys: CareKeys,
+  send: CareSend,
+  now: () => number,
+  options: { refresh?: boolean },
+): Promise<ReportValue> {
   const lastRefresh = lastRefreshAt(db, site.id);
   const refresh =
     options.refresh ?? (lastRefresh === null || now() - lastRefresh >= REFRESH_EVERY_MS);
@@ -284,7 +296,7 @@ export async function reportSite(
     value,
   });
   judgeReport(db, site, value, at);
-  return value.ok;
+  return value;
 }
 
 function judgeReport(
@@ -319,17 +331,61 @@ function judgeReport(
 
 /** Sites due a report: connected, set up, not paused, and not asked within the hour. */
 export function dueSites(db: Db, now: number): { id: string; name: string; url: string }[] {
+  return connectedSites(db).filter((site) => {
+    const [last] = latestObservations(db, 'site', site.id, REPORT_CHECK, 'plugin', 1);
+    return !last || now - last.at >= REPORT_EVERY_MS;
+  });
+}
+
+/** Sites Recheck all asks: connected, set up and not paused, however recently they reported. */
+export function connectedSites(db: Db): { id: string; name: string; url: string }[] {
   return db
     .prepare(
       `SELECT id, name, url FROM sites WHERE mode = 'connected' AND setup = 'done'
        AND removed_at IS NULL AND paused_at IS NULL ORDER BY id`,
     )
     .all()
-    .filter((r) => {
-      const [last] = latestObservations(db, 'site', String(r.id), REPORT_CHECK, 'plugin', 1);
-      return !last || now - last.at >= REPORT_EVERY_MS;
-    })
     .map((r) => ({ id: String(r.id), name: String(r.name), url: String(r.url) }));
+}
+
+export interface RecheckResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  /** Why it didn't report, in plain words; null when it did. */
+  problem: string | null;
+}
+
+/**
+ * Recheck all: a fresh report from every connected site, WordPress's update checks first, as
+ * each site's Refresh inventory does. A few at a time, so neither the mini nor a shared server
+ * gets every request at once, and one site failing never stops the others.
+ */
+export async function reportAll(
+  db: Db,
+  options: { keys: CareKeys; send: CareSend; now: () => number; atOnce?: number },
+): Promise<RecheckResult[]> {
+  const sites = connectedSites(db);
+  const results: RecheckResult[] = [];
+  let next = 0;
+  async function worker() {
+    while (next < sites.length) {
+      const site = sites[next++]!;
+      let problem: string | null;
+      try {
+        const value = await askForReport(db, site, options.keys, options.send, options.now, {
+          refresh: true,
+        });
+        problem = value.ok ? null : value.problem;
+      } catch {
+        // No exception text: it could hold a path or a key's name, and this goes to the page.
+        problem = 'Kamaji couldn’t ask it';
+      }
+      results.push({ id: site.id, name: site.name, ok: problem === null, problem });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(options.atOnce ?? 3, sites.length) }, worker));
+  return results.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** The cycle's part: every due site, one at a time. Returns how many reported. */
