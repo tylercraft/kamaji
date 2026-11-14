@@ -25,13 +25,14 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
   { path: '/updates', label: 'Updates', icon: PackageCheck },
   { path: '/servers', label: 'Servers', icon: Server },
   { path: '/activity', label: 'Activity', icon: History },
+  { path: '/passkeys', label: 'Passkeys', icon: KeyRound },
   // Rules (/rules) is left out until there are rules to set: every update is approved by hand.
 ];
 
-// One iron header at laptop widths: the brand, the five tabs, then Kamaji's own health. Under
-// 980px the tabs wrap onto their own row below the brand. On a phone (640px and under) it's the
-// brand and a menu button, as on the Calcifer dashboard: a checkbox holds the menu open, with no
-// script, and the menu covers the page with the tabs, Passkeys, Kamaji's health and Appearance.
+// One iron header at laptop widths: the brand, the tabs, then Kamaji's own health. Under 980px
+// the tabs wrap onto their own row below the brand. On a phone (640px and under) it's the brand
+// and a menu button, as on the Calcifer dashboard: a checkbox holds the menu open, with no script,
+// and the menu covers the page with the tabs, Kamaji's health and Appearance.
 const PHONE = '@media (max-width: 640px)';
 
 const Top = styled.header`
@@ -55,9 +56,6 @@ const Top = styled.header`
   }
   .menu {
     display: contents;
-  }
-  .menu-only {
-    display: none;
   }
   ${PHONE} {
     position: sticky;
@@ -108,6 +106,7 @@ const Top = styled.header`
       height: 9px;
       border-radius: 50%;
       border: 1.5px solid var(--chrome);
+      background: var(--red);
     }
     .menu-toggle:checked ~ .menu-button .menu-flag {
       display: none;
@@ -125,9 +124,6 @@ const Top = styled.header`
     }
     .menu-toggle:checked ~ .menu {
       display: flex;
-    }
-    .menu-only {
-      display: contents;
     }
   }
 `;
@@ -305,9 +301,6 @@ const Health = styled.div`
     gap: 14px;
     padding: 14px 12px 0;
     border-top: 1px solid var(--seam);
-    .passkeys-link {
-      display: none;
-    }
   }
 `;
 
@@ -355,25 +348,18 @@ function Tab({ path, label, icon: Icon }: (typeof tabs)[number]) {
 type Status = ReturnType<typeof useStatus>;
 const useStatus = () => useResource('/api/status', StatusResponse, { pollMs: 30_000 });
 
-/** On the phone's menu button: a dot when Kamaji's own health needs a look. */
+/** Whether any of the header's status pills is red: the same tests StatusSummary colours by. */
+export function anyPillRed(status: Status): boolean {
+  if (status.state === 'loading') return false;
+  if (status.state === 'error' || status.refreshError) return true;
+  return [cycleHealth(status.data), heartbeatHealth(status.data), alertsHealth(status.data)].some(
+    (line) => line.tone === 'red',
+  );
+}
+
+/** On the phone's menu button, so a red pill still shows with the menu closed. */
 function MenuFlag({ status }: { status: Status }) {
-  let tone: string | null = null;
-  if (status.state === 'error' || (status.state === 'ready' && status.refreshError)) tone = 'red';
-  else if (status.state === 'ready') {
-    const lines = [
-      cycleHealth(status.data),
-      heartbeatHealth(status.data),
-      alertsHealth(status.data),
-    ];
-    tone = lines.some((l) => l.tone === 'red')
-      ? 'red'
-      : lines.some((l) => l.tone === 'amber')
-        ? 'amber'
-        : null;
-  }
-  return tone ? (
-    <span className="menu-flag" css={{ background: `var(--${tone})` }} aria-hidden="true" />
-  ) : null;
+  return anyPillRed(status) ? <span className="menu-flag" aria-hidden="true" /> : null;
 }
 
 /** Kamaji's own health in a word or two; the detail is on Overview. */
@@ -400,15 +386,6 @@ function StatusSummary({ status }: { status: Status }) {
         </Pill>
       ))}
     </span>
-  );
-}
-
-function PasskeysLink() {
-  const link = useLink('/passkeys');
-  return (
-    <a {...link} className="passkeys-link" css={{ fontSize: 12, color: 'var(--muted)' }}>
-      Passkeys
-    </a>
   );
 }
 
@@ -447,13 +424,9 @@ export function Shell({ children }: { children: ReactNode }) {
             {tabs.map((tab) => (
               <Tab key={tab.path} {...tab} />
             ))}
-            <span className="menu-only">
-              <Tab path="/passkeys" label="Passkeys" icon={KeyRound} />
-            </span>
           </Nav>
           <Health>
             <StatusSummary status={status} />
-            <PasskeysLink />
             <ThemeToggle />
           </Health>
         </div>
