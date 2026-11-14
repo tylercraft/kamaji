@@ -36,7 +36,14 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [line, setLine] = useState<string | null>(null);
+  // The button stays live with no name: a disabled one looks live on iOS, and a tap that does
+  // nothing says nothing. Asking for the name, and moving to it, does.
   async function create() {
+    if (label.trim() === '') {
+      setError('Name it first.');
+      document.getElementById('passkey-label')?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     const made = await createPasskey(rpId, label.trim());
@@ -68,19 +75,27 @@ function Create({ rpId, here }: { rpId: string; here: boolean }) {
               id="passkey-label"
               value={label}
               maxLength={60}
-              onChange={(e) => setLabel(e.target.value)}
+              onChange={(e) => {
+                setLabel(e.target.value);
+                if (error === 'Name it first.') setError(null);
+              }}
+              aria-describedby={error ? 'passkey-error' : 'passkey-label-hint'}
               placeholder="Tyler’s iPhone"
             />
           </Field>
           <PrimaryButton
             type="button"
-            disabled={busy || label.trim() === ''}
+            disabled={busy}
             onClick={create}
             css={{ justifySelf: 'start' }}
           >
             Create a passkey on this device
           </PrimaryButton>
-          {error && <FormError>{error}</FormError>}
+          {error && (
+            <span id="passkey-error">
+              <FormError>{error}</FormError>
+            </span>
+          )}
         </>
       )}
       {line && (
