@@ -213,6 +213,36 @@ describe('the feed', () => {
     ]);
   });
 
+  it('reuses its matching only while nothing it depends on has changed', async () => {
+    const db = testDb();
+    site(db);
+    await load(db);
+    const slugs = () =>
+      matches(db)
+        .map((m) => `${m.siteName}:${m.slug}:${m.version}`)
+        .sort();
+    expect(slugs()).toEqual([
+      'Kamaji test:molie-instructure-canvas-linking-tool:0.5',
+      'Kamaji test:wpvivid-backuprestore:0.9.137',
+    ]);
+    // A report at the same moment with a fixed version: no stale match.
+    site(db, report({ wpvivid: '0.9.138' }));
+    expect(slugs()).toEqual(['Kamaji test:molie-instructure-canvas-linking-tool:0.5']);
+    // A rename shows in the matches (issue summaries use the name).
+    db.prepare('UPDATE sites SET name = ? WHERE id = ?').run('Renamed', SITE.id);
+    expect(slugs()).toEqual(['Renamed:molie-instructure-canvas-linking-tool:0.5']);
+    // The feed reloaded without the record: the match goes.
+    db.prepare(
+      "DELETE FROM vulnerabilities WHERE slug = 'molie-instructure-canvas-linking-tool'",
+    ).run();
+    expect(slugs()).toEqual([]);
+    await load(db, T + 2 * 86_400_000);
+    expect(slugs()).toEqual(['Renamed:molie-instructure-canvas-linking-tool:0.5']);
+    // A removed site has none.
+    db.prepare('UPDATE sites SET removed_at = ? WHERE id = ?').run(T, SITE.id);
+    expect(slugs()).toEqual([]);
+  });
+
   it('matches WordPress itself', async () => {
     const db = testDb();
     site(db, report({ core: '3.3' }));

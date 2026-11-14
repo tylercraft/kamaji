@@ -31,7 +31,15 @@ import {
 } from '../components/ui';
 import { reveal, RevealLink } from '../components/reveal';
 import { useLink } from '../router';
-import { byComponent, bySite, runAnchor, runOutcome, siteRuns, type SiteRun } from '../runHistory';
+import {
+  byComponent,
+  bySite,
+  runAnchor,
+  runOutcome,
+  siteRuns,
+  updatesPollMs,
+  type SiteRun,
+} from '../runHistory';
 import { useResource } from '../useResource';
 import {
   bySite as queueBySite,
@@ -914,7 +922,7 @@ function History({ batches, reload }: { batches: BatchView[]; reload: () => void
 }
 
 export function UpdatesPage() {
-  const updates = useResource('/api/updates', UpdatesResponse, { pollMs: 5_000 });
+  const updates = useResource('/api/updates', UpdatesResponse, { pollMs: updatesPollMs });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState(false);
   return (

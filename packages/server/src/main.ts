@@ -16,6 +16,7 @@ import { backupsLauncher, updaterLauncher } from './updates/launcher.js';
 import { pendingWork } from './updates/batches.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
+import { cycleSteps } from './cycleSteps.js';
 import { migrate, openDb } from './db.js';
 import { createDiscord } from './discord.js';
 import { recordEvent } from './events.js';
@@ -70,50 +71,71 @@ const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 const runChecks = async (signal: AbortSignal) => {
-  const checked = await checkSites(db, { now: Date.now, signal });
-  if (config.worker) await syncOutside(db, config.worker, { now: Date.now, signal, log });
-  await checkReports(db, { keys: config.care, send: careRequest, now: Date.now, signal });
-  await checkDirectory(db, { now: Date.now, signal });
-  await checkWordfence(db, {
-    apiKey: config.wordfenceApiKey,
-    feedPath: config.wordfenceFeedPath,
-    localFile: config.wordfenceFeedFile,
-    now: Date.now,
-    signal,
-    log,
-  });
-  checkEndOfLife(db, Date.now());
-  checkBackupsOverdue(db, Date.now());
-  // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
-  if (pendingWork(db)) startUpdater();
-  const servers = await checkServers(db, {
-    now: Date.now,
-    signal,
-    keyPath: config.sshKeyPath,
-    knownHostsPath: config.sshKnownHostsPath,
-  });
-  if (localMac()) {
-    try {
-      await checkMolcajete(db, {
+  // Each step timed; one that's slow or holds the event loop says so in the log (TY-169).
+  const steps = cycleSteps(log);
+  try {
+    const checked = await steps.step('home pages', () => checkSites(db, { now: Date.now, signal }));
+    if (config.worker) {
+      const worker = config.worker;
+      await steps.step('outside checks', () =>
+        syncOutside(db, worker, { now: Date.now, signal, log }),
+      );
+    }
+    await steps.step('reports', () =>
+      checkReports(db, { keys: config.care, send: careRequest, now: Date.now, signal }),
+    );
+    await steps.step('wordpress.org', () => checkDirectory(db, { now: Date.now, signal }));
+    await steps.step('wordfence', () =>
+      checkWordfence(db, {
+        apiKey: config.wordfenceApiKey,
+        feedPath: config.wordfenceFeedPath,
+        localFile: config.wordfenceFeedFile,
         now: Date.now,
         signal,
-        crashFiles: { path: config.crashLogPath },
-      });
-    } catch (error) {
-      if (signal.aborted) throw error;
-      // The readers don't throw; if one ever does, the rest of the cycle still runs.
-      log(`molcajete readers failed: ${error instanceof Error ? error.name : 'error'}`);
+        log,
+      }),
+    );
+    await steps.step('end of life', () => checkEndOfLife(db, Date.now()));
+    await steps.step('backups overdue', () => checkBackupsOverdue(db, Date.now()));
+    // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
+    if (pendingWork(db)) startUpdater();
+    const servers = await steps.step('servers', () =>
+      checkServers(db, {
+        now: Date.now,
+        signal,
+        keyPath: config.sshKeyPath,
+        knownHostsPath: config.sshKnownHostsPath,
+      }),
+    );
+    if (localMac()) {
+      try {
+        await steps.step('molcajete', () =>
+          checkMolcajete(db, {
+            now: Date.now,
+            signal,
+            crashFiles: { path: config.crashLogPath },
+          }),
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+        // The readers don't throw; if one ever does, the rest of the cycle still runs.
+        log(`molcajete readers failed: ${error instanceof Error ? error.name : 'error'}`);
+      }
     }
+    const notify: NotifyOptions = {
+      kamajiUrl: config.kamajiUrl,
+      workerAlerts: Boolean(config.worker) && workerFresh(readOutside(db), Date.now()),
+      digestAt: config.digestAt,
+      signal,
+    };
+    await steps.step('notifications', async () => {
+      await notifyNow(db, Date.now(), discord, notify);
+      await sendDigest(db, Date.now(), discord, notify);
+    });
+    return checked + servers;
+  } finally {
+    steps.stop();
   }
-  const notify: NotifyOptions = {
-    kamajiUrl: config.kamajiUrl,
-    workerAlerts: Boolean(config.worker) && workerFresh(readOutside(db), Date.now()),
-    digestAt: config.digestAt,
-    signal,
-  };
-  await notifyNow(db, Date.now(), discord, notify);
-  await sendDigest(db, Date.now(), discord, notify);
-  return checked + servers;
 };
 const runner = new Runner(db, { handlers: { [CYCLE]: cycleHandler(heartbeat, runChecks) }, log });
 

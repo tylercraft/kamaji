@@ -5,7 +5,7 @@ import { UpdatesResponse, type Known, type SiteSummary } from '@kamaji/shared';
 import { useState } from 'react';
 import { PrimaryButton } from '../components/forms';
 import { Button, Dot, Muted, Panel, PanelHead, Pill, ResourceView, Time } from '../components/ui';
-import { runOutcome } from '../runHistory';
+import { runOutcome, updatesPollMs } from '../runHistory';
 import { workTone, workWords } from '../siteStatus';
 import { itemKey as key } from '../updatesView';
 import { useResource } from '../useResource';
@@ -35,7 +35,7 @@ export function SiteUpdatesPanel({
   work: Known<SiteSummary['updateWork']>;
 }) {
   const updates = useResource(`/api/updates?site=${encodeURIComponent(siteId)}`, UpdatesResponse, {
-    pollMs: 5_000,
+    pollMs: updatesPollMs,
   });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState(false);
