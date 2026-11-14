@@ -148,10 +148,13 @@ const Heading = styled.header`
 export function PageHeading({
   title,
   purpose,
+  icon,
   children,
 }: {
   title: string;
   purpose: ReactNode;
+  /** Shown before the title: a site's icon, on its own page. */
+  icon?: ReactNode;
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLHeadingElement>(null);
@@ -162,7 +165,12 @@ export function PageHeading({
   return (
     <Heading>
       <div>
-        <h1 ref={ref} tabIndex={-1}>
+        <h1
+          ref={ref}
+          tabIndex={-1}
+          css={icon ? { display: 'flex', alignItems: 'center', gap: 10 } : undefined}
+        >
+          {icon}
           {title}
         </h1>
         <Muted css={{ marginTop: 4 }}>{purpose}</Muted>

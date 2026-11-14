@@ -12,6 +12,7 @@ import {
   Time,
 } from '../components/ui';
 import { useResource } from '../useResource';
+import { WithIcon } from '../components/SiteIcon';
 
 export function ActivityPage() {
   const latest = useResource('/api/activity?limit=50', ActivityResponse, { pollMs: 30_000 });
@@ -76,7 +77,13 @@ export function ActivityPage() {
                         <td>
                           <Time iso={event.at} />
                         </td>
-                        <td>{event.summary}</td>
+                        <td>
+                          {event.resourceType === 'site' && event.resourceId ? (
+                            <WithIcon id={event.resourceId}>{event.summary}</WithIcon>
+                          ) : (
+                            event.summary
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

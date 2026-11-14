@@ -42,6 +42,7 @@ import {
   type SiteRun,
 } from '../runHistory';
 import { useResource } from '../useResource';
+import { WithIcon } from '../components/SiteIcon';
 import {
   bySite as queueBySite,
   byUpdate,
@@ -325,7 +326,7 @@ function Queue({
                                   onChange={() => toggle(key(i))}
                                 />
                                 <span>
-                                  {i.siteName}
+                                  <WithIcon id={i.siteId}>{i.siteName}</WithIcon>
                                   <Note notes={notes} item={i} />
                                 </span>
                               </label>
@@ -464,7 +465,9 @@ export function ReviewBody({
         const items = chosen.filter((i) => i.siteId === id);
         return (
           <div key={id} css={{ display: 'grid', gap: 4 }}>
-            <strong>{s.siteName}</strong>
+            <strong>
+              <WithIcon id={id}>{s.siteName}</WithIcon>
+            </strong>
             {items.map((i) => (
               <span key={key(i)}>
                 {i.name} {i.from} → {i.to}
@@ -585,7 +588,7 @@ export function RunSite({
   return (
     <div css={{ display: 'grid', gap: 6 }}>
       <strong>
-        {s.siteName}{' '}
+        <WithIcon id={s.siteId}>{s.siteName}</WithIcon>{' '}
         <Pill tone={runOutcome(s).tone}>
           <Dot /> {runOutcome(s).label}
         </Pill>
@@ -801,9 +804,11 @@ function Active({ batches, reload }: { batches: BatchView[]; reload: () => void 
 function SiteName({ id, name }: { id: string; name: string }) {
   const link = useLink(`/sites/${id}`);
   return (
-    <a {...link} css={{ color: 'inherit', fontWeight: 600 }}>
-      {name}
-    </a>
+    <WithIcon id={id}>
+      <a {...link} css={{ color: 'inherit', fontWeight: 600 }}>
+        {name}
+      </a>
+    </WithIcon>
   );
 }
 
@@ -947,7 +952,9 @@ function History({ batches, reload }: { batches: BatchView[]; reload: () => void
                   <tbody>
                     {g.changes.map((c) => (
                       <tr key={`${c.batch.id}-${c.site.siteId}-${c.item.id}`}>
-                        <td>{c.site.siteName}</td>
+                        <td>
+                          <WithIcon id={c.site.siteId}>{c.site.siteName}</WithIcon>
+                        </td>
                         <td>
                           {c.item.from} → {c.item.to}
                         </td>

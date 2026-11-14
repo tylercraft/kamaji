@@ -15,6 +15,8 @@ export interface Outcome {
   /** What the time is: a run's finish, or when the event was recorded. */
   atWords: string;
   href: string;
+  /** The one site it's about, for its icon; null for a run across several. */
+  siteId: string | null;
 }
 
 const OUTCOME_KINDS: Record<string, [string, Tone]> = {
@@ -50,6 +52,7 @@ function runOutcomes(batches: BatchView[]): Outcome[] {
         at: b.finishedAt ?? b.approvedAt,
         atWords: b.finishedAt ? 'Finished' : 'Approved',
         href: `/updates#${runAnchor({ batchId: b.id, siteId: b.sites[0]!.siteId })}`,
+        siteId: n === 1 ? b.sites[0]!.siteId : null,
       };
     });
 }
@@ -68,6 +71,7 @@ function eventOutcomes(events: ActivityEvent[]): Outcome[] {
         at: e.at,
         atWords: 'Recorded',
         href: `/sites/${encodeURIComponent(e.resourceId!)}#backups`,
+        siteId: e.resourceId,
       };
     });
 }

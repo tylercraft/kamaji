@@ -34,6 +34,7 @@ import {
   type SiteFilters,
 } from '../sitesView';
 import { useResource } from '../useResource';
+import { WithIcon } from '../components/SiteIcon';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
   craftish: 'craftish',
@@ -155,9 +156,11 @@ function Findings({ site }: { site: SiteSummary }) {
 function SiteLink({ site }: { site: SiteSummary }) {
   const link = useLink(`/sites/${site.id}`);
   return (
-    <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
-      {site.name}
-    </a>
+    <WithIcon id={site.id}>
+      <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
+        {site.name}
+      </a>
+    </WithIcon>
   );
 }
 
