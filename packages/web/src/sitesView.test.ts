@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { filterSites, matchesSite, NO_FILTERS, present, type SiteFilters } from './sitesView';
+import {
+  filterSites,
+  matchesSite,
+  NO_FILTERS,
+  present,
+  recheckable,
+  recheckSummary,
+  type SiteFilters,
+} from './sitesView';
 
 const site = { name: 'Minton Homes', url: 'https://mintonhomesllc.com/', clientSlug: 'minton' };
 
@@ -53,6 +61,35 @@ describe('the Sites filters together', () => {
     expect(present([...sites])).toEqual({
       hosts: ['craftish', 'kinsta'],
       modes: ['connected', 'monitoring'],
+    });
+  });
+});
+
+describe('Recheck all', () => {
+  it('counts the sites the server will ask: connected, set up and not paused', () => {
+    const at = '2026-11-15T00:00:00.000Z';
+    expect(
+      recheckable([
+        { mode: 'connected', setup: 'done', pausedAt: null },
+        { mode: 'connected', setup: 'done', pausedAt: at },
+        { mode: 'connected', setup: 'connect', pausedAt: null },
+        { mode: 'monitoring', setup: 'done', pausedAt: null },
+      ]),
+    ).toBe(1);
+  });
+
+  it('says how many it rechecked, and names each that failed with why', () => {
+    const ok = (name: string) => ({ id: name, name, ok: true, problem: null });
+    expect(recheckSummary([ok('A'), ok('B')])).toEqual({ ok: true, message: 'Rechecked 2 sites' });
+    expect(recheckSummary([ok('A')]).message).toBe('Rechecked 1 site');
+    expect(
+      recheckSummary([
+        ok('A'),
+        { id: 'b', name: 'B', ok: false, problem: 'Couldn’t reach the site' },
+      ]),
+    ).toEqual({
+      ok: false,
+      message: 'Rechecked 2 sites. 1 site didn’t report: B (Couldn’t reach the site)',
     });
   });
 });

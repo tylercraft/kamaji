@@ -1,6 +1,6 @@
 // The Sites page's filter: a site matches when its name, domain or client contains what's typed,
 // ignoring case and the spaces around it. Nothing typed matches every site.
-import type { Site } from '@kamaji/shared';
+import type { RecheckAllResponse, Site } from '@kamaji/shared';
 
 export function matchesSite(
   site: Pick<Site, 'name' | 'url' | 'clientSlug'>,
@@ -41,4 +41,22 @@ export function present<S extends Pick<Site, 'hostKind' | 'mode'>>(sites: S[]) {
     hosts: [...new Set(sites.map((s) => s.hostKind))],
     modes: [...new Set(sites.map((s) => s.mode))],
   };
+}
+
+/** Sites Recheck all asks, by the server's rule: connected, set up and not paused. */
+export const recheckable = (sites: Pick<Site, 'mode' | 'setup' | 'pausedAt'>[]) =>
+  sites.filter((s) => s.mode === 'connected' && s.setup === 'done' && s.pausedAt === null).length;
+
+const plural = (n: number) => `${n} site${n === 1 ? '' : 's'}`;
+
+/** Recheck all's toast: how many were asked, and each that didn't report, with why. */
+export function recheckSummary(results: RecheckAllResponse['sites']): {
+  ok: boolean;
+  message: string;
+} {
+  const failed = results.filter((r) => !r.ok);
+  const done = `Rechecked ${plural(results.length)}`;
+  if (failed.length === 0) return { ok: true, message: done };
+  const named = failed.map((r) => `${r.name} (${r.problem ?? 'no report'})`).join(', ');
+  return { ok: false, message: `${done}. ${plural(failed.length)} didn’t report: ${named}` };
 }

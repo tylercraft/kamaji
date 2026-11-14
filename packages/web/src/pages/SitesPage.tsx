@@ -1,4 +1,6 @@
-import { SitesResponse, type SiteSummary } from '@kamaji/shared';
+import { RecheckAllResponse, SitesResponse, type SiteSummary } from '@kamaji/shared';
+import { postJson } from '../api';
+import { failed, reason, saved } from '../components/toast';
 import { useState } from 'react';
 import {
   Button,
@@ -23,7 +25,14 @@ import {
   workTone,
   workWords,
 } from '../siteStatus';
-import { filterSites, NO_FILTERS, present, type SiteFilters } from '../sitesView';
+import {
+  filterSites,
+  NO_FILTERS,
+  present,
+  recheckable,
+  recheckSummary,
+  type SiteFilters,
+} from '../sitesView';
 import { useResource } from '../useResource';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
@@ -149,6 +158,36 @@ function SiteLink({ site }: { site: SiteSummary }) {
     <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
       {site.name}
     </a>
+  );
+}
+
+/**
+ * Recheck all: a fresh report from every connected site, as each one's Refresh inventory does.
+ * Nothing changes on a site, so it needs no passkey. The table reloads after, with new times.
+ */
+function RecheckAll({ count, reload }: { count: number; reload: () => void }) {
+  const [asking, setAsking] = useState<number | null>(null);
+  if (count === 0 && asking === null) return null;
+  async function recheck() {
+    setAsking(count);
+    const result = await postJson('/api/sites/report', {}, RecheckAllResponse);
+    setAsking(null);
+    if (!result.ok) failed(`Recheck all didn’t run: ${reason(result.error)}`);
+    else {
+      const summary = recheckSummary(result.data.sites);
+      (summary.ok ? saved : failed)(summary.message);
+    }
+    reload();
+  }
+  return (
+    <Button
+      type="button"
+      disabled={asking !== null}
+      onClick={recheck}
+      title="Has WordPress check for updates first on each connected site, then reports"
+    >
+      {asking === null ? 'Recheck all' : `Asking ${asking} site${asking === 1 ? '' : 's'}…`}
+    </Button>
   );
 }
 
@@ -361,7 +400,12 @@ export function SitesPage() {
         title="Sites"
         purpose="Reachability, maintenance findings and monitoring coverage."
       >
-        <AddSiteLink />
+        <div css={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {sites.state === 'ready' && (
+            <RecheckAll count={recheckable(sites.data.sites)} reload={sites.reload} />
+          )}
+          <AddSiteLink />
+        </div>
       </PageHeading>
       <Panel>
         <ResourceView resource={sites} label="sites">
