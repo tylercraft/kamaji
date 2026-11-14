@@ -9,8 +9,10 @@ import {
   ConfigureSiteRequest,
   WholeSiteRequest,
   NewSiteRequest,
+  PasskeyChallengeRequest,
   ProposeRequest,
   RemoveSiteRequest,
+  type PasskeysResponse,
   type BackupExpectation,
   type UpdatesResponse,
 } from '@kamaji/shared';
@@ -27,6 +29,8 @@ import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
 import type { Backup } from './updater/backup.js';
 import type { UpdaterStart } from './updates/launcher.js';
+import { checkWrite, issueNonce, type PasskeyConfig } from './passkeys/guard.js';
+import { challengeFor } from './passkeys/webauthn.js';
 import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
@@ -68,6 +72,8 @@ export interface AppOptions {
   fetchExport?: FetchExport;
   /** Wakes the backups process for a request from a site's Backups panel. */
   startBackups?: () => void;
+  /** The passkeys writes need (TY-170). Without it, every guarded write is refused. */
+  passkeys?: PasskeyConfig;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -97,6 +103,28 @@ function sameOrigin(c: Context): boolean {
  */
 const ORIGINLESS_WRITES = new Set(['POST /api/proposals']);
 
+/**
+ * Writes that don't need a passkey (TY-170): a proposal (it starts nothing), asking for a
+ * passkey's nonce, adding a site (it starts unconfigured, with no permission), and setup steps
+ * that only ask the site read-only questions. Every other write, including any added later,
+ * needs one.
+ */
+const PASSKEY_FREE = new Set([
+  'POST /api/proposals',
+  'POST /api/passkeys/challenge',
+  'POST /api/sites',
+]);
+const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report)$/;
+
+const passkeyFree = (method: string, path: string) =>
+  PASSKEY_FREE.has(`${method} ${path}`) || (method === 'POST' && PASSKEY_FREE_SITE_STEP.test(path));
+
+const NO_PASSKEYS: PasskeyConfig = {
+  load: () => ({ ok: false, problem: 'passkeys aren’t set up' }),
+  rpId: '',
+  origin: '',
+};
+
 function allowedWrite(c: Context): boolean {
   if (sameOrigin(c)) return true;
   return (
@@ -124,10 +152,11 @@ export function createApp({
   backup,
   fetchExport,
   startBackups = () => {},
+  passkeys = NO_PASSKEYS,
   now = Date.now,
   log,
-}: AppOptions): Hono {
-  const app = new Hono();
+}: AppOptions): Hono<{ Variables: { approval: string } }> {
+  const app = new Hono<{ Variables: { approval: string } }>();
   /** "Back up now" exports still going, by site: one at a time each. */
   const exporting = new Map<string, number>();
 
@@ -150,10 +179,54 @@ export function createApp({
     if (!['GET', 'HEAD'].includes(c.req.method) && !allowedWrite(c)) {
       return c.json({ error: 'forbidden' }, 403);
     }
+    // A passkey, for every write that starts or changes work on a site.
+    const method = c.req.method;
+    if (!['GET', 'HEAD'].includes(method) && !passkeyFree(method, c.req.path)) {
+      const body = await c.req.text();
+      const check = checkWrite(
+        db,
+        passkeys,
+        { header: c.req.header('Kamaji-Passkey'), method, path: c.req.path, body },
+        now(),
+      );
+      if (!check.ok) {
+        if (check.error !== 'passkey_required')
+          log?.(`passkey: ${method} ${c.req.path} refused: ${check.problem}`);
+        const status = { passkey_required: 401, passkey_refused: 403, passkeys_unavailable: 503 }[
+          check.error
+        ] as 401 | 403 | 503;
+        return c.json({ error: check.error }, status);
+      }
+      c.set('approval', JSON.stringify({ body, proof: check.proof }));
+    }
     await next();
   });
 
   app.get('/api/status', (c) => c.json(status(db, statusInput())));
+  // Passkeys (TY-170): which ones Kamaji accepts, and a nonce for one write.
+  app.get('/api/passkeys', (c) => {
+    const loaded = passkeys.load();
+    const body: PasskeysResponse = {
+      rpId: passkeys.rpId,
+      origin: passkeys.origin,
+      installed: loaded.ok ? loaded.passkeys.map((p) => ({ id: p.id, label: p.label })) : [],
+      problem: loaded.ok ? null : loaded.problem,
+    };
+    return c.json(body);
+  });
+  app.post('/api/passkeys/challenge', async (c) => {
+    const body = await readJson(c, PasskeyChallengeRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const loaded = passkeys.load();
+    if (!loaded.ok) return c.json({ error: 'passkeys_unavailable' }, 503);
+    const nonce = issueNonce(db, now());
+    return c.json({
+      nonce,
+      challenge: challengeFor(nonce, body.method, body.path, body.bodySha256),
+      rpId: passkeys.rpId,
+      ids: loaded.passkeys.map((p) => p.id),
+    });
+  });
   app.get('/api/overview', (c) => c.json(overview(db)));
   app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
   // Add site and Remove (sites/setup.ts).
@@ -349,18 +422,25 @@ export function createApp({
     if (!body) return c.json({ error: 'bad_request' }, 400);
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
     const keys = care.keys;
-    const result = await approveBatch(db, body, login, now, async (siteId) => {
-      const site = db.prepare('SELECT id, name, url FROM sites WHERE id = ?').get(siteId);
-      if (!site) return false;
-      return reportSite(
-        db,
-        { id: String(site.id), name: String(site.name), url: String(site.url) },
-        keys,
-        care.send,
-        now,
-        { refresh: true },
-      );
-    });
+    const result = await approveBatch(
+      db,
+      body,
+      login,
+      now,
+      async (siteId) => {
+        const site = db.prepare('SELECT id, name, url FROM sites WHERE id = ?').get(siteId);
+        if (!site) return false;
+        return reportSite(
+          db,
+          { id: String(site.id), name: String(site.name), url: String(site.url) },
+          keys,
+          care.send,
+          now,
+          { refresh: true },
+        );
+      },
+      c.get('approval'),
+    );
     if (result.ok) startUpdater();
     // 200 either way: "changed" is an answer to show, with its list, not an error.
     return c.json(result, result.ok ? 201 : 200);

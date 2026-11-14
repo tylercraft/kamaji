@@ -48,6 +48,7 @@ const { checkMolcajete } = await imp('molcajete/check.js');
 const { TOOLS } = await imp('molcajete/read.js');
 const { queue } = await imp('updates/queue.js');
 const { proposeBatch } = await imp('updates/proposals.js');
+const { loadPasskeys } = await imp('passkeys/store.js');
 const { CareReport } = await import('@kamaji/shared');
 
 const fixture = (path) => readFileSync(join(SRC, path), 'utf8');
@@ -454,11 +455,21 @@ const freePort = () =>
     });
   });
 const LOGIN = 'smoke@localhost';
+// Passkeys: a file of the smoke's own, filled from the Passkeys page by Chrome's virtual
+// authenticator. A passkey can't belong to an IP address, so that part runs on localhost.
+const passkeyFile = join(mkdtempSync(join(tmpdir(), 'kamaji-smoke-passkeys-')), 'passkeys');
+writeFileSync(passkeyFile, '');
+const passkeys = {
+  load: () => loadPasskeys(passkeyFile, { trustOwner: true }),
+  rpId: 'localhost',
+  origin: '',
+};
 const app = createApp({
   db,
   login: LOGIN,
   webDist: WEB,
   workerOn: true,
+  passkeys,
   statusInput: () => ({
     version: 'smoke',
     commit: null,
@@ -470,6 +481,7 @@ const app = createApp({
   }),
 });
 const appPort = await freePort();
+passkeys.origin = `http://localhost:${appPort}`;
 const server = serve({
   fetch: (req) =>
     app.fetch(
@@ -544,6 +556,7 @@ const PAGES = [
   '/activity',
   '/rules',
   '/sites/new',
+  '/passkeys',
 ];
 const VIEWS = [
   { name: 'desktop', width: 1300, mobile: false, scheme: 'light' },
@@ -723,6 +736,77 @@ for (const view of VIEWS) {
     problems.push('a proposal started a run');
   if (problems.length) failures.push(`proposal: ${problems.join('; ')}`);
   else console.log('ok   proposal: ticked with its notes, nothing started');
+}
+
+// Passkeys, in Chrome's virtual authenticator (Touch ID that always says yes): make one on the
+// Passkeys page, install its line, then a write that needs one ("I've looked, carry on") asks for
+// it, signs, and goes through. Before the line is installed, the same write is refused.
+{
+  problems = [];
+  const at = `http://localhost:${appPort}`;
+  await send('WebAuthn.enable');
+  await send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const click = (text) =>
+    evaluate(
+      `[...document.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)}))?.click() ?? 'missing'`,
+    );
+  const held = () =>
+    String(db.prepare("SELECT state FROM batch_sites WHERE state = 'held' LIMIT 1").get()?.state);
+  const spent = () =>
+    Number(
+      db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces WHERE used_at IS NOT NULL').get().n,
+    );
+
+  // Before any passkey is installed: refused, with words, and nothing carried on.
+  await send('Page.navigate', { url: `${at}/updates` });
+  await wait(1500);
+  await click('I’ve looked, carry on');
+  await wait(1500);
+  if (held() !== 'held') problems.push('carried on without a passkey installed');
+  if (!(await evaluate('document.body.innerText')).includes('no passkeys set up'))
+    problems.push('no words for a write waiting on passkeys');
+
+  await send('Page.navigate', { url: `${at}/passkeys` });
+  await wait(1500);
+  await evaluate(`(() => {
+    const input = document.getElementById('passkey-label');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Smoke');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await wait(200);
+  await click('Create a passkey on this device');
+  await wait(1500);
+  const tee = await evaluate(
+    `[...document.querySelectorAll('pre code')].map((c) => c.textContent).find((t) => t.includes('tee -a'))`,
+  );
+  const line = /^echo '(.+)' \| /.exec(tee ?? '')?.[1];
+  if (!line) problems.push('the Passkeys page didn’t give a line to install');
+  else {
+    writeFileSync(passkeyFile, `${line}\n`);
+    await send('Page.reload');
+    await wait(1500);
+    if (!(await evaluate('document.body.innerText')).includes('Smoke'))
+      problems.push('the installed passkey isn’t listed');
+    const before = spent();
+    await send('Page.navigate', { url: `${at}/updates` });
+    await wait(1500);
+    await click('I’ve looked, carry on');
+    await wait(2000);
+    if (spent() !== before + 1) problems.push('the write wasn’t signed with the passkey');
+    if (held() === 'held') problems.push('carry on didn’t go through with the passkey');
+  }
+  if (problems.length) failures.push(`passkeys: ${problems.join('; ')}`);
+  else console.log('ok   passkeys: made on the page, refused before install, signed after');
 }
 
 ws.close();

@@ -70,6 +70,12 @@ export interface UpdaterDeps {
   signal: AbortSignal;
   log: (message: string) => void;
   timing?: Partial<Timing>;
+  /**
+   * Why a batch's approval doesn't hold, or null when it does (passkeys/guard.ts,
+   * approvalProblem): checked before every run, so a batch that didn't come through Approve with
+   * Tyler's passkey never runs.
+   */
+  approvalProblem: (batchId: string) => string | null;
 }
 
 export interface RunSite {
@@ -114,6 +120,11 @@ export async function runUpdater(deps: UpdaterDeps): Promise<void> {
     if (deps.signal.aborted) throw deps.signal.reason;
     const batch = nextBatch(deps.db);
     if (!batch) return;
+    const problem = deps.approvalProblem(batch.id);
+    if (problem !== null) {
+      refuse(deps, batch.id, problem);
+      continue;
+    }
     await runBatch(deps, batch.id, batch.oneSiteFirst);
   }
 }
@@ -360,6 +371,24 @@ function finishItem(db: Db, item: Item, outcome: Outcome, detail: string, at: nu
 }
 
 /** Holds the rest of a site's items, with the reason, and alerts. Discord gets labels only. */
+/** A batch without a good approval: every site still to run is held, and nothing is sent. */
+function refuse(deps: UpdaterDeps, batchId: string, problem: string): void {
+  deps.log(`updater: batch ${batchId} not run: ${problem}`);
+  const waiting = deps.db
+    .prepare(
+      "SELECT site_id FROM batch_sites WHERE batch_id = ? AND state IN ('waiting', 'running')",
+    )
+    .all(batchId);
+  for (const r of waiting)
+    hold(
+      deps.db,
+      batchId,
+      String(r.site_id),
+      `Not run: the approval doesn’t hold (${problem}). Nothing was sent to the site; approve the updates again.`,
+      deps.now(),
+    );
+}
+
 function hold(db: Db, batchId: string, siteId: string, reason: string, at: number): void {
   transaction(db, () => {
     db.prepare(

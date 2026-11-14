@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { careRequest } from './care/client.js';
-import { loadConfig } from './config.js';
+import { loadConfig, passkeyConfig } from './config.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
@@ -164,6 +164,7 @@ const app = createApp({
   backup: (site) => craftishBackup(backupConfig(db, process.env))(site),
   fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
   startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
+  passkeys: passkeyConfig(process.env),
   log,
   statusInput: () => ({
     version,

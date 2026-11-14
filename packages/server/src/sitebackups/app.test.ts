@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { SiteBackupsResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { testAuthenticator } from '../passkeys/testing.js';
 import type { FetchExport } from '../backups/download.js';
 import { recordEvidence } from '../backups/evidence.js';
 import type { Db } from '../db.js';
@@ -30,6 +31,7 @@ function app(fetchExport?: FetchExport) {
   writeFileSync(join(webDist, 'index.html'), '<!doctype html>');
   let started = 0;
   const logged: string[] = [];
+  const passkey = testAuthenticator();
   const a = createApp({
     db,
     login: LOGIN,
@@ -46,6 +48,7 @@ function app(fetchExport?: FetchExport) {
     ...(fetchExport ? { fetchExport } : {}),
     startBackups: () => void started++,
     log: (m) => logged.push(m),
+    passkeys: passkey.config,
     now: () => T,
   });
   const headers = { 'Tailscale-User-Login': LOGIN, Host: 'kamaji.test' };
@@ -53,10 +56,10 @@ function app(fetchExport?: FetchExport) {
   const backups = async (id: string) =>
     SiteBackupsResponse.parse(await (await get(`/api/sites/${id}/backups`)).json());
   const ask = (id: string, kind: string) =>
-    a.request(`/api/sites/${id}/backups/whole-site`, {
-      method: 'POST',
-      headers: { ...headers, Origin: 'https://kamaji.test', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind }),
+    passkey.post(a, `/api/sites/${id}/backups/whole-site`, JSON.stringify({ kind }), {
+      ...headers,
+      Origin: 'https://kamaji.test',
+      'Content-Type': 'application/json',
     });
   return { db, get, backups, ask, started: () => started, logged };
 }

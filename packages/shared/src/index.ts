@@ -945,3 +945,31 @@ export const SiteBackupsResponse = z.object({
   history: z.array(BackupEntry),
 });
 export type SiteBackupsResponse = z.infer<typeof SiteBackupsResponse>;
+
+/** Passkeys (TY-170): which ones Kamaji accepts, read from a root-owned file on the mini. */
+export const PasskeysResponse = z.object({
+  /** The host passkeys belong to, and the page's exact origin. */
+  rpId: z.string(),
+  origin: z.string(),
+  installed: z.array(z.object({ id: z.string(), label: z.string() })),
+  /** Why none are accepted, when none are. */
+  problem: z.string().nullable(),
+});
+export type PasskeysResponse = z.infer<typeof PasskeysResponse>;
+
+/** One write to sign: its method, path and the SHA-256 (hex) of its exact body. */
+export const PasskeyChallengeRequest = z.object({
+  method: z.literal('POST'),
+  path: z.string().startsWith('/api/').max(300),
+  bodySha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export type PasskeyChallengeRequest = z.infer<typeof PasskeyChallengeRequest>;
+
+export const PasskeyChallenge = z.object({
+  nonce: z.string(),
+  /** base64url: what the passkey signs. */
+  challenge: z.string(),
+  rpId: z.string(),
+  ids: z.array(z.string()),
+});
+export type PasskeyChallenge = z.infer<typeof PasskeyChallenge>;

@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 *.tsbuildinfo
 data/
@@ -12,3 +12,4 @@ scratch/
 dev/wordpress/*
 !dev/wordpress/.ddev/
 dev/care-keys.env
+dev/passkeys

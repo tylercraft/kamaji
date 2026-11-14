@@ -266,6 +266,15 @@ function StatusSummary() {
   );
 }
 
+function PasskeysLink() {
+  const link = useLink('/passkeys');
+  return (
+    <a {...link} css={{ fontSize: 12, color: 'var(--muted)' }}>
+      Passkeys
+    </a>
+  );
+}
+
 function Home() {
   const link = useLink('/');
   return (
@@ -294,6 +303,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </Nav>
         <Health>
           <StatusSummary />
+          <PasskeysLink />
           <ThemeToggle />
         </Health>
       </Top>

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SiteDetailResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { testAuthenticator } from '../passkeys/testing.js';
 import type { CareResult } from '../care/client.js';
 import { loadCareKeys, newKeyPair, type CareKeys, type SigningKey } from '../care/keys.js';
 import { testDb } from '../testing.js';
@@ -48,6 +49,7 @@ function setup(keys: CareKeys | undefined, answer: (endpoint: string) => CareRes
     sent.push({ endpoint, key, url: home.href });
     return answer(endpoint);
   };
+  const passkey = testAuthenticator();
   const app = createApp({
     db,
     login: LOGIN,
@@ -66,6 +68,7 @@ function setup(keys: CareKeys | undefined, answer: (endpoint: string) => CareRes
       pluginDir: new URL('../../../../plugin/craftish-care', import.meta.url).pathname,
       send,
     },
+    passkeys: passkey.config,
     now: () => T,
   });
   const headers = {
@@ -74,12 +77,9 @@ function setup(keys: CareKeys | undefined, answer: (endpoint: string) => CareRes
     Origin: ORIGIN,
     'Content-Type': 'application/json',
   };
+  // As the page does: a passkey for the writes that need one (passkeys/), none for the rest.
   const post = (path: string, body: unknown = {}, extra: Record<string, string> = {}) =>
-    app.request(path, {
-      method: 'POST',
-      headers: { ...headers, ...extra },
-      body: JSON.stringify(body),
-    });
+    passkey.post(app, path, JSON.stringify(body), { ...headers, ...extra });
   const get = (path: string) => app.request(path, { headers });
   const detail = async (id: string) =>
     SiteDetailResponse.parse(await (await get(`/api/sites/${id}`)).json());

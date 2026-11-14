@@ -4,8 +4,28 @@ import { fileURLToPath } from 'node:url';
 import { loadCareKeys, type CareKeys } from './care/keys.js';
 import { parseWebhookUrl } from './discord.js';
 import { parsePingUrl } from './heartbeat.js';
+import { relyingParty, type PasskeyConfig } from './passkeys/guard.js';
+import { loadPasskeys, PASSKEYS_FILE } from './passkeys/store.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+
+export const KAMAJI_URL = 'https://molcajete.tailb3044a.ts.net:10002';
+
+/**
+ * The passkeys writes need (TY-170), for the app and the updater alike: the root-owned
+ * /etc/kamaji/passkeys at Kamaji's address. KAMAJI_PASSKEYS_DEV names a file of the user's own
+ * instead, for `npm run dev`, and is ignored unless Kamaji's address is http://localhost.
+ */
+export function passkeyConfig(env: NodeJS.ProcessEnv = process.env): PasskeyConfig {
+  const url = env.KAMAJI_URL ?? KAMAJI_URL;
+  const dev = env.KAMAJI_PASSKEYS_DEV && /^http:\/\/localhost(:\d+)?$/.test(url);
+  return {
+    load: dev
+      ? () => loadPasskeys(String(env.KAMAJI_PASSKEYS_DEV), { trustOwner: true })
+      : () => loadPasskeys(PASSKEYS_FILE),
+    ...relyingParty(url),
+  };
+}
 
 export interface Config {
   host: string;
@@ -59,7 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pingUrlInvalid: Boolean(rawPing) && !pingUrl,
     discordUrl,
     discordUrlInvalid: Boolean(rawDiscord) && !discordUrl,
-    kamajiUrl: env.KAMAJI_URL ?? 'https://molcajete.tailb3044a.ts.net:10002',
+    kamajiUrl: env.KAMAJI_URL ?? KAMAJI_URL,
     worker:
       env.KAMAJI_WORKER_URL?.startsWith('https://') && env.KAMAJI_WORKER_TOKEN
         ? { url: env.KAMAJI_WORKER_URL, token: env.KAMAJI_WORKER_TOKEN }
