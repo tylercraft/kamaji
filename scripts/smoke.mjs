@@ -841,6 +841,31 @@ for (const view of VIEWS) {
     );
 }
 
+// Recheck all, on the Sites page: no passkey asked (a report changes nothing on a site), and a
+// toast either way. The smoke has no Care keys, so it's the toast that says why it didn't run.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nonces = () => Number(db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces').get().n);
+  const before = nonces();
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await wait(1500);
+  const clicked = await evaluate(
+    `(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Recheck all'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
+  );
+  if (clicked === 'missing') problems.push('no Recheck all button');
+  await wait(1000);
+  if (nonces() !== before) problems.push('Recheck all asked for a passkey');
+  if (
+    !(await evaluate('document.body.innerText')).includes(
+      'Recheck all didn’t run: This Kamaji has no Craftish Care keys',
+    )
+  )
+    problems.push('no toast saying why Recheck all didn’t run');
+  if (problems.length) failures.push(`recheck all: ${problems.join('; ')}`);
+  else console.log('ok   recheck all: no passkey, and a toast');
+}
+
 // The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and
 // closing again on the way to another page. Plus the home screen icon iOS asks for.
 {
