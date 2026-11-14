@@ -619,6 +619,46 @@ sudo install -m 755 -o root -g root /tmp/site-pull /usr/local/lib/kamaji/ && rm 
 
 Existing snapshots keep what they hold; restic's retention lets them go in time. No file on the site is touched.
 
+## Passkeys
+
+TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake and refreshing a report don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
+
+The passkeys Kamaji accepts are in `/etc/kamaji/passkeys`, one JSON line each, a file only root can change. Kamaji and every agent on the mini run as `tylercraft`, so a list kept anywhere `tylercraft` can write, Kamaji's database included, an agent could add its own key to. Kamaji refuses the file if it or `/etc/kamaji` isn't root's and writable by root only. It's read on every check, so a change takes effect at once, without a restart.
+
+An approval keeps the request as signed and its proof. The updater checks both again before it runs a batch, against the same file, and holds a batch whose approval doesn't hold, with an urgent issue: so a batch written straight into the database, changed after approval, or reusing an approval doesn't run.
+
+### First setup
+
+1. Before deploying: check Updates has nothing waiting, running or held. A batch approved before this change has no passkey approval, so the updater won't run it.
+2. Deploy (below). Until a passkey is installed, the writes above wait, saying so; everything else works.
+3. On the phone, open Kamaji, then Passkeys (top right), name it ("Tyler's iPhone") and create it. The page shows two commands.
+4. On the mini (or over SSH from the laptop), run the page's two commands. They take your password. The first is the same every time:
+
+```
+/usr/bin/sudo /usr/bin/install -d -m 755 -o root -g wheel /etc/kamaji
+```
+
+5. Reload Passkeys: the phone's passkey shows under Accepted.
+6. Do the same from the laptop, so there are two. With iCloud Keychain on, the phone's passkey may already be on the laptop; a second, separate one is still the spare if one device is lost.
+7. Check that nothing on the mini can sudo without a password. From a Calcifer session (or any shell there), expect `sudo: a password is required`:
+
+```
+/usr/bin/sudo -n /usr/bin/true
+```
+
+### When a passkey is lost
+
+Nothing to do in a hurry: a lost phone's passkey still needs its Face ID or passcode. From any device:
+
+1. Passkeys, then create a new one, and install it on the mini with the page's commands.
+2. Take the lost one out: Passkeys shows the command for each, `sudo sed` on its id.
+
+If every passkey is lost, it's the same two steps: adding one only ever needs sudo on the mini, never an existing passkey. The root of trust is the mini's admin password.
+
+### What it doesn't cover
+
+A process running as `tylercraft` can still change Kamaji's code or its LaunchAgent and restart it, or run the updater itself with the update key Doppler gives `tylercraft`. Passkeys close the easy paths (a POST with faked headers, a row in the database); closing those needs Kamaji and its keys under a user the agents aren't.
+
 ## Deploying a change
 
 On the mini, after the change is on `main`:
