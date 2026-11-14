@@ -1,6 +1,6 @@
 import type { BatchView } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { byComponent, bySite, runOutcome } from './runHistory';
+import { byComponent, bySite, runOutcome, updatesPollMs } from './runHistory';
 
 const item = (name: string, outcome: 'passed' | 'checks_failed' = 'passed') => ({
   id: name,
@@ -61,5 +61,18 @@ describe('run history', () => {
   it('says a partly failed run is partly failed', () => {
     const r = batch('b', [['x', [item('A'), item('B', 'checks_failed')]]]);
     expect(runOutcome(r.sites[0]!).label).toBe('Partly failed: 1 of 2');
+  });
+});
+
+describe('how often Updates asks again', () => {
+  it('is quick only while a run is moving, not while it waits on Tyler', () => {
+    const running = batch('r', [['x', [item('A')]]]);
+    running.state = 'running';
+    running.sites[0]!.state = 'running';
+    expect(updatesPollMs({ batches: [running] })).toBe(5_000);
+    running.sites[0]!.state = 'held';
+    expect(updatesPollMs({ batches: [running] })).toBe(30_000);
+    expect(updatesPollMs({ batches: batches })).toBe(30_000);
+    expect(updatesPollMs(null)).toBe(30_000);
   });
 });

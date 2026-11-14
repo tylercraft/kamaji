@@ -80,3 +80,17 @@ export function runOutcome(site: BatchSiteView): { label: string; tone: Tone; pr
     return { label: 'Couldn’t verify', tone: 'amber', problem: true };
   return { label: 'Updated, checks passed', tone: 'green', problem: false };
 }
+
+/**
+ * How often an Updates view asks again: every 5 seconds while a run is moving, so its progress
+ * shows, and every 30 otherwise. A held run waits on Tyler, not on the updater, so it doesn't count.
+ * The queue is the expensive part of the request (TY-169), and a page left open shouldn't keep
+ * the server busy for nothing.
+ */
+export function updatesPollMs(last: { batches: BatchView[] } | null): number {
+  const moving = last?.batches.some(
+    (b) =>
+      b.state !== 'finished' && b.sites.some((s) => s.state === 'running' || s.state === 'waiting'),
+  );
+  return moving ? 5_000 : 30_000;
+}

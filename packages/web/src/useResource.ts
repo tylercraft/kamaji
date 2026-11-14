@@ -16,18 +16,21 @@ export type Resource<T> =
 
 /**
  * Loads an API path and keeps it fresh: on an interval if `pollMs` is set, and whenever the window
- * regains focus. A failed refresh keeps the last good data and reports the failure beside it.
+ * regains focus. `pollMs` can depend on what was last loaded (quick only while a run is going, for
+ * instance). A failed refresh keeps the last good data and reports the failure beside it.
  */
 export function useResource<S extends z.ZodType>(
   path: string,
   schema: S,
-  options: { pollMs?: number } = {},
+  options: { pollMs?: number | ((last: z.infer<S> | null) => number) } = {},
 ): Resource<z.infer<S>> {
   type T = z.infer<S>;
   const [data, setData] = useState<{ value: T; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const schemaRef = useRef(schema);
+  const pollMs =
+    typeof options.pollMs === 'function' ? options.pollMs(data?.value ?? null) : options.pollMs;
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
@@ -48,12 +51,12 @@ export function useResource<S extends z.ZodType>(
   useEffect(() => {
     const onFocus = () => reload();
     window.addEventListener('focus', onFocus);
-    const timer = options.pollMs ? window.setInterval(reload, options.pollMs) : undefined;
+    const timer = pollMs ? window.setInterval(reload, pollMs) : undefined;
     return () => {
       window.removeEventListener('focus', onFocus);
       if (timer) window.clearInterval(timer);
     };
-  }, [reload, options.pollMs]);
+  }, [reload, pollMs]);
 
   if (data)
     return { state: 'ready', data: data.value, loadedAt: data.at, refreshError: error, reload };
