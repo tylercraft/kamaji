@@ -781,6 +781,12 @@ for (const view of VIEWS) {
 
   await send('Page.navigate', { url: `${at}/passkeys` });
   await wait(1500);
+  if (
+    (await evaluate(
+      `document.querySelector('nav[aria-label=Main] a[href="/passkeys"]')?.getAttribute('aria-current')`,
+    )) !== 'page'
+  )
+    problems.push('Passkeys isn’t a tab marked as the current page');
   // With no name, Create says so rather than doing nothing.
   await click('Create a passkey on this device');
   await wait(300);
@@ -805,6 +811,21 @@ for (const view of VIEWS) {
     await wait(1500);
     if (!(await evaluate('document.body.innerText')).includes('Smoke'))
       problems.push('the installed passkey isn’t listed');
+    // Its removal command copies exactly, with nothing added.
+    await send('Browser.grantPermissions', {
+      origin: at,
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+    });
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const sed = await evaluate(
+      `[...document.querySelectorAll('pre code')].map((c) => c.textContent).find((t) => t.includes('sed -i'))`,
+    );
+    await click('Copy');
+    await wait(300);
+    if (!(await evaluate('document.body.innerText')).includes('Copied'))
+      problems.push('Copy didn’t say Copied');
+    const pasted = await evaluate('navigator.clipboard.readText()');
+    if (!sed || pasted !== sed) problems.push('Copy didn’t copy the command exactly');
     const before = spent();
     await send('Page.navigate', { url: `${at}/updates` });
     await wait(1500);
@@ -814,7 +835,10 @@ for (const view of VIEWS) {
     if (held() === 'held') problems.push('carry on didn’t go through with the passkey');
   }
   if (problems.length) failures.push(`passkeys: ${problems.join('; ')}`);
-  else console.log('ok   passkeys: made on the page, refused before install, signed after');
+  else
+    console.log(
+      'ok   passkeys: a tab; made on the page, refused before install, signed after; copies',
+    );
 }
 
 // The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and
@@ -859,9 +883,21 @@ for (const view of VIEWS) {
     `document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content`,
   );
   if (title !== 'Kamaji') problems.push('no home screen title');
+  await send('Page.navigate', { url: `http://localhost:${appPort}/passkeys` });
+  await wait(1500);
+  const copyHeight = await evaluate(
+    `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Copy')?.getBoundingClientRect().height`,
+  );
+  if (!(copyHeight >= 44)) problems.push(`Copy is ${copyHeight}px tall on a phone`);
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'phone-copy.png'), Buffer.from(shot.result.data, 'base64'));
+  }
   if (problems.length) failures.push(`phone header: ${problems.join('; ')}`);
   else
-    console.log('ok   phone header: menu opens with Passkeys, closes on navigation; icon served');
+    console.log(
+      'ok   phone header: menu opens with Passkeys, closes on navigation; icon served; Copy 44px',
+    );
 }
 
 ws.close();
