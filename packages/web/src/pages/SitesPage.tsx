@@ -243,34 +243,18 @@ const MODES: Record<SiteSummary['mode'], string> = {
   monitoring: 'Monitoring only',
 };
 
-const TONE_COLOUR: Record<Tone, string> = {
-  green: 'var(--green)',
-  amber: 'var(--amber)',
-  red: 'var(--red)',
-  copper: 'var(--copper)',
-  neutral: 'var(--muted)',
-};
-
 /**
- * How a site is watched, in its meta line. A connected site says whether Craftish Care is working:
- * its last report came through and is current, or what's wrong (the reason on hover, and on the
- * site's page).
+ * Craftish Care: whether a connected site's reports are coming through, at a glance. Why a report
+ * failed is on hover, and on the site's page.
  */
-function Watched({ site, now }: { site: SiteSummary; now: number }) {
+function CareCell({ site, now }: { site: SiteSummary; now: number }) {
+  if (site.platform !== 'wordpress') return <Muted>Not applicable</Muted>;
   const care = careState(site, now);
-  if (!care) return <>{watched(site)}</>;
+  if (!care) return <Muted>Monitoring only</Muted>;
   return (
-    <span
-      title={care.detail || undefined}
-      css={{
-        color:
-          care.tone === 'green' || care.tone === 'neutral' ? 'inherit' : TONE_COLOUR[care.tone],
-        whiteSpace: 'nowrap',
-      }}
-    >
-      <Dot css={{ color: TONE_COLOUR[care.tone], verticalAlign: 'middle', marginBottom: 1 }} />{' '}
-      {care.text}
-    </span>
+    <Pill tone={care.tone} title={care.detail || undefined}>
+      <Dot /> {care.state}
+    </Pill>
   );
 }
 
@@ -333,6 +317,7 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
           domain(site, now),
           ...(site.mode === 'connected' ? [updates(site)] : []),
         ].filter((l) => l.tone === 'red' || l.tone === 'amber' || l.outOfDate);
+  const care = site.setup === 'done' ? careState(site, now) : null;
   return (
     <li
       css={{
@@ -350,7 +335,7 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
         <a href={site.url} target="_blank" rel="noreferrer" css={{ color: 'inherit' }}>
           {new URL(site.url).host} ↗
         </a>{' '}
-        · {hostNames[site.hostKind]} · <Watched site={site} now={now} />
+        · {hostNames[site.hostKind]} · {watched(site)}
         {site.tailnetOnly ? ' · private' : ''}
       </Muted>
       <div css={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -361,6 +346,11 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
             {l.outOfDate && l.tone !== 'red' && l.tone !== 'amber' ? 'out of date' : l.state}
           </Pill>
         ))}
+        {care && (care.tone === 'red' || care.tone === 'amber') && (
+          <Pill tone={care.tone} title={care.detail || undefined}>
+            <Dot /> Craftish Care: {care.state.charAt(0).toLowerCase() + care.state.slice(1)}
+          </Pill>
+        )}
         {site.findings.length > 0 && (
           <Pill tone={site.findings.some((f) => f.severity === 'urgent') ? 'red' : 'amber'}>
             <Dot /> {site.findings.length} {site.findings.length === 1 ? 'finding' : 'findings'}
@@ -391,6 +381,10 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
           <dt>Domain</dt>
           <dd>
             <RenewalCell site={site} now={now} />
+          </dd>
+          <dt>Craftish Care</dt>
+          <dd>
+            <CareCell site={site} now={now} />
           </dd>
           <dt>Updates</dt>
           <dd>
@@ -582,6 +576,7 @@ export function SitesPage() {
                             <th scope="col">From outside</th>
                             <th scope="col">Certificate</th>
                             <th scope="col">Domain</th>
+                            <th scope="col">Craftish Care</th>
                             <th scope="col">Updates</th>
                           </tr>
                         </thead>
@@ -589,7 +584,7 @@ export function SitesPage() {
                           <tbody key={g.key}>
                             {g.label && (
                               <tr>
-                                <th scope="colgroup" colSpan={6} css={{ paddingTop: 14 }}>
+                                <th scope="colgroup" colSpan={7} css={{ paddingTop: 14 }}>
                                   <GroupHeading label={g.label} count={g.sites.length} />
                                 </th>
                               </tr>
@@ -620,8 +615,7 @@ export function SitesPage() {
                                         </a>
                                       </Muted>
                                       <Muted>
-                                        {hostNames[site.hostKind]} ·{' '}
-                                        <Watched site={site} now={now} />
+                                        {hostNames[site.hostKind]} · {watched(site)}
                                         {site.tailnetOnly ? ' · private' : ''}
                                       </Muted>
                                       <Findings site={site} reload={reloadSites} />
@@ -639,6 +633,9 @@ export function SitesPage() {
                                 </td>
                                 <td>
                                   <RenewalCell site={site} now={now} />
+                                </td>
+                                <td>
+                                  <CareCell site={site} now={now} />
                                 </td>
                                 <td>
                                   <UpdatesCell site={site} />
