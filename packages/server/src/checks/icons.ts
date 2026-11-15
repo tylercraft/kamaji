@@ -22,7 +22,7 @@ export type IconType = (typeof ICON_TYPES)[number];
 
 export const MAX_ICON_BYTES = 100 * 1024;
 /** Enough of the home page for its <head>; the rest is never read. */
-const MAX_PAGE_BYTES = 512 * 1024;
+export const MAX_PAGE_BYTES = 512 * 1024;
 const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
 export const ICON_EVERY_MS = 24 * 60 * 60 * 1000;
@@ -174,17 +174,20 @@ export function mayFetch(url: URL, site: URL): boolean {
   return url.protocol === 'https:' && !local;
 }
 
-type Got = { ok: true; bytes: Uint8Array; type: string | null; url: URL } | Failed;
+export type Got = { ok: true; bytes: Uint8Array; type: string | null; url: URL } | Failed;
 type Failed = { ok: false; problem: string };
 
-interface FetchOptions {
+export interface FetchOptions {
   fetch?: typeof fetch;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
 
-/** One GET, following up to three redirects to places mayFetch allows, read to `cap` bytes. */
-async function get(
+/**
+ * One GET, following up to three redirects to places mayFetch allows, read to `cap` bytes. Also
+ * the domain checks' RDAP reads and Add site's look at a home page (checks/domains.ts).
+ */
+export async function get(
   url: URL,
   site: URL,
   accept: string,
@@ -220,7 +223,7 @@ async function get(
       const said = Number(res.headers.get('content-length') ?? NaN);
       if (over === 'fail' && said > cap) {
         await res.body?.cancel();
-        return { ok: false, problem: 'Bigger than 100 KB' };
+        return { ok: false, problem: `Bigger than ${Math.round(cap / 1024)} KB` };
       }
       const chunks: Uint8Array[] = [];
       let total = 0;
@@ -233,7 +236,8 @@ async function get(
           chunks.push(value);
           if (total > cap) {
             await reader.cancel();
-            if (over === 'fail') return { ok: false, problem: 'Bigger than 100 KB' };
+            if (over === 'fail')
+              return { ok: false, problem: `Bigger than ${Math.round(cap / 1024)} KB` };
             break;
           }
         }
@@ -473,13 +477,17 @@ export async function refreshIcons(
  * cycle up, and does nothing while one is still going. A refresh that throws (a bug: refreshIcons
  * doesn't) logs that it happened, nothing more.
  */
-export function iconRefresher(run: () => Promise<unknown>, log: (message: string) => void) {
+export function iconRefresher(
+  run: () => Promise<unknown>,
+  log: (message: string) => void,
+  what = 'icons',
+) {
   let running = false;
   return (): void => {
     if (running) return;
     running = true;
     run()
-      .catch(() => log('icons: the refresh failed'))
+      .catch(() => log(`${what}: the refresh failed`))
       .finally(() => {
         running = false;
       });

@@ -8,6 +8,7 @@ import {
   type ConfigureSiteRequest,
   type Handshake,
   type NewSiteRequest,
+  type Platform,
   type RemoveSiteResponse,
   type SiteBackupSchedule,
   type SiteDetailResponse,
@@ -27,6 +28,12 @@ export type CareSend = (
   endpoint: string,
   body: Record<string, unknown>,
 ) => Promise<CareResult>;
+
+const PLATFORM_WORDS: Record<Platform, string> = {
+  wordpress: 'WordPress',
+  static: 'a static site',
+  app: 'an app',
+};
 
 type HandshakeValue = { ok: true; hello: CareHello } | { ok: false; problem: string };
 
@@ -53,10 +60,21 @@ export function createSite(
   const url = normalizeUrl(request.url);
   const id = url.host;
   if (db.prepare('SELECT 1 FROM sites WHERE id = ?').get(id)) return { error: 'exists' };
+  // A static site or an app has no Craftish Care to connect: straight to Configure.
+  const setup = request.platform === 'wordpress' ? 'connect' : 'configure';
   db.prepare(
-    `INSERT INTO sites (id, name, url, host_kind, client_slug, mode, setup, created_at)
-     VALUES (?, ?, ?, ?, ?, 'monitoring', 'connect', ?)`,
-  ).run(id, request.name, url.href, request.hostKind, request.clientSlug, now);
+    `INSERT INTO sites (id, name, url, host_kind, client_slug, mode, platform, setup, created_at)
+     VALUES (?, ?, ?, ?, ?, 'monitoring', ?, ?, ?)`,
+  ).run(
+    id,
+    request.name,
+    url.href,
+    request.hostKind,
+    request.clientSlug,
+    request.platform,
+    setup,
+    now,
+  );
   recordEvent(db, now, {
     kind: 'site.setup-started',
     summary: `Started adding ${request.name}`,
@@ -68,12 +86,14 @@ export function createSite(
 
 /** Step 2, either way. Connecting stays on this step until a handshake succeeds. */
 export function chooseMode(db: Db, id: string, mode: 'connected' | 'monitoring'): boolean {
+  // Only WordPress connects; a static site or an app is monitoring only by design.
   const result = db
     .prepare(
       `UPDATE sites SET mode = ?, setup = CASE WHEN ? = 'monitoring' THEN 'configure' ELSE setup END
-       WHERE id = ? AND removed_at IS NULL AND setup = 'connect'`,
+       WHERE id = ? AND removed_at IS NULL AND setup = 'connect'
+       AND (? = 'monitoring' OR platform = 'wordpress')`,
     )
-    .run(mode, mode, id);
+    .run(mode, mode, id, mode);
   return Number(result.changes) === 1;
 }
 
@@ -96,7 +116,8 @@ export async function handshake(
   now: () => number,
 ): Promise<Handshake | null> {
   const row = siteRow(db, id);
-  if (!row || (row.mode !== 'connected' && row.setup !== 'done')) return null;
+  if (!row || row.platform !== 'wordpress') return null;
+  if (row.mode !== 'connected' && row.setup !== 'done') return null;
   const result = await send(new URL(String(row.url)), keys.report, 'hello', {});
   let value: HandshakeValue;
   if (!result.ok) {
@@ -148,14 +169,21 @@ export function configureSite(
   request: ConfigureSiteRequest,
   now: number,
   login: string,
-): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' {
+): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' | 'connected' {
   const row = siteRow(db, id);
   if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return 'not-found';
+  const beforePlatform = String(row.platform) as Platform;
+  const platform = request.platform ?? beforePlatform;
+  const wordpress = platform === 'wordpress';
+  // A connected site is WordPress until it's disconnected (Remove asks the plugin to forget it).
+  if (!wordpress && row.mode === 'connected') return 'connected';
   const craftish = row.host_kind === 'craftish';
-  if (request.backupExpectation === 'kamaji' && !craftish) return 'not-craftish';
+  if (wordpress && request.backupExpectation === 'kamaji' && !craftish) return 'not-craftish';
   const own = request.own ?? Number(row.own) === 1;
   const before = String(row.site_backup_schedule) as SiteBackupSchedule;
-  const schedule = request.siteBackups ?? before;
+  // A static site or an app has no backups to expect, from Kamaji or anyone.
+  const schedule = wordpress ? (request.siteBackups ?? before) : 'off';
+  const backupExpectation = wordpress ? request.backupExpectation : null;
   const hadConsent = row.site_backup_consent_at !== null;
   if (schedule !== 'off') {
     if (!craftish) return 'not-craftish';
@@ -171,22 +199,29 @@ export function configureSite(
   const name = request.name ?? beforeName;
   db.prepare(
     `UPDATE sites SET name = ?, expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
-       own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?
+       own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?,
+       platform = ?
      WHERE id = ?`,
   ).run(
     name,
     request.expectedText || null,
-    request.backupExpectation,
+    backupExpectation,
     request.notifications,
     own ? 1 : 0,
     schedule,
     consent?.at ?? null,
     consent?.by ?? null,
+    platform,
     id,
   );
   const event = (kind: string, summary: string) =>
     recordEvent(db, now, { kind, summary, resourceType: 'site', resourceId: id });
   if (name !== beforeName) event('site.renamed', `Renamed ${beforeName} to ${name}`);
+  if (platform !== beforePlatform)
+    event(
+      'site.platform',
+      `${name} is ${PLATFORM_WORDS[platform]} (was ${PLATFORM_WORDS[beforePlatform]})`,
+    );
   if (row.setup !== 'done') event('site.added', `Added ${name}: first checks pending`);
   if (consent && !hadConsent) {
     event(

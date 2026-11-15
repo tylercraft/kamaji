@@ -9,6 +9,8 @@ import { getCookie, setCookie } from 'hono/cookie';
 import {
   ApproveRequest,
   ConfigureSiteRequest,
+  DetectPlatformRequest,
+  type DetectPlatformResponse,
   WholeSiteRequest,
   NewSiteRequest,
   PasskeyChallengeRequest,
@@ -30,6 +32,8 @@ import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
 import { iconStatus, iconVersions, refetchIcon, siteNames, storedIcon } from './checks/icons.js';
+import { checkDomain, siteDomain } from './checks/domains.js';
+import { detectPlatform } from './checks/platform.js';
 import { checkServer, type ServerCheckOptions } from './checks/serverCheck.js';
 import { checkSites, type SiteCheckers } from './checks/sites.js';
 import { checkEndOfLife } from './endOfLife/check.js';
@@ -91,6 +95,8 @@ export interface AppOptions {
   iconFetch?: typeof fetch;
   /** The home page and certificate checks; tests stand in for the web. */
   siteCheckers?: SiteCheckers;
+  /** Where domains' renewal dates are read from (checks/domains.ts); tests stand in for RDAP. */
+  rdapFetch?: typeof fetch;
   /** What Check now needs to read a server (checks/serverCheck.ts). Without it, it's refused. */
   serverCheck?: ServerCheckOptions;
   now?: () => number;
@@ -134,10 +140,14 @@ const PASSKEY_FREE = new Set([
   'POST /api/sites',
   // Recheck all: a report from each connected site, which changes nothing on any of them.
   'POST /api/sites/report',
+  // Add site's look at a home page: the plain GET the icon fetch makes.
+  'POST /api/sites/detect',
 ]);
 // Refetch icon: the plain GETs of the home page and its icon that the cycle makes once a day.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
-const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch)$/;
+// Domain check: the daily RDAP read of the site's renewal date, now.
+const PASSKEY_FREE_SITE_STEP =
+  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check)$/;
 // Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
 const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
@@ -200,6 +210,7 @@ export function createApp({
   iconsDir,
   iconFetch,
   siteCheckers,
+  rdapFetch,
   serverCheck,
   now = Date.now,
   log,
@@ -305,6 +316,16 @@ export function createApp({
     const result = createSite(db, body, now());
     return 'error' in result ? c.json(result, 409) : c.json(result, 201);
   });
+  // Add site's guess at the platform: one GET of the home page, as the icon fetch makes it.
+  app.post('/api/sites/detect', async (c) => {
+    const body = await readJson(c, DetectPlatformRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const answer: DetectPlatformResponse = await detectPlatform(
+      body.url,
+      iconFetch ? { fetch: iconFetch } : {},
+    );
+    return c.json(answer);
+  });
   // Sites' icons, fetched by Kamaji (checks/icons.ts): which sites have one, then each one's
   // bytes. Served as an image only, with nothing it could load or run, so an SVG stays a picture.
   app.get('/api/site-icons', (c) => {
@@ -356,7 +377,11 @@ export function createApp({
   app.get('/api/sites/:id/craftish-care.zip', (c) => {
     const detail = siteDetail(db, c.req.param('id'), { workerOn, canConnect: Boolean(care?.keys) });
     // Connecting: a new site that chose to, or one already set up as monitoring only.
-    if (!detail || (detail.site.mode !== 'connected' && detail.site.setup !== 'done')) {
+    if (
+      !detail ||
+      detail.site.platform !== 'wordpress' ||
+      (detail.site.mode !== 'connected' && detail.site.setup !== 'done')
+    ) {
       return c.json({ error: 'not_found' }, 404);
     }
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
@@ -375,14 +400,21 @@ export function createApp({
   // A site's backup evidence, and "Back up now": the export a run makes first, recorded the same
   // way (backups/evidence.ts). It can take minutes, so it runs in the background and the page
   // asks again.
-  const backupSite = (id: string) =>
+  // Only WordPress backs up: a static site or an app has nothing to export or pull. Its evidence
+  // still reads (there's none), so its page needn't ask differently.
+  const siteRowFor = (id: string) =>
     db
       .prepare(
-        'SELECT id, host_kind, backup_expectation FROM sites WHERE id = ? AND removed_at IS NULL',
+        `SELECT id, host_kind, backup_expectation, platform FROM sites
+         WHERE id = ? AND removed_at IS NULL`,
       )
       .get(id);
+  const backupSite = (id: string) => {
+    const row = siteRowFor(id);
+    return row?.platform === 'wordpress' ? row : undefined;
+  };
   app.get('/api/sites/:id/backups', (c) => {
-    const row = backupSite(c.req.param('id'));
+    const row = siteRowFor(c.req.param('id'));
     if (!row) return c.json({ error: 'not_found' }, 404);
     const id = String(row.id);
     return c.json(
@@ -523,6 +555,13 @@ export function createApp({
       checkingServers.delete(id);
     }
   });
+  // Check again, for a site's domain: its renewal date read through RDAP now, as the daily read.
+  app.post('/api/sites/:id/domain/check', async (c) => {
+    const domain = siteDomain(db, c.req.param('id'));
+    if (!domain) return c.json({ error: 'not_found' }, 404);
+    const read = await checkDomain(db, domain, { now, ...(rdapFetch ? { fetch: rdapFetch } : {}) });
+    return c.json({ ok: read.state !== 'failed', state: read.state });
+  });
   // Recheck all: the same, for every connected site that isn't paused, three at a time.
   app.post('/api/sites/report', async (c) => {
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
@@ -537,6 +576,7 @@ export function createApp({
     if (result === 'not-found') return c.json({ error: 'not_found' }, 404);
     if (result === 'not-craftish') return c.json({ error: 'not_craftish' }, 400);
     if (result === 'no-consent') return c.json({ error: 'no_consent' }, 400);
+    if (result === 'connected') return c.json({ error: 'connected' }, 409);
     return c.json({ ok: true });
   });
   app.post('/api/sites/:id/remove', async (c) => {

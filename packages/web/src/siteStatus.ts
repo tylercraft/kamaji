@@ -159,6 +159,26 @@ export function informationalCount(inventory: Inventory): number {
   ].filter((v) => v.informational).length;
 }
 
+/**
+ * The domain's renewal date, read through RDAP once a day: amber within 30 days, red within 7, as
+ * the domain-expiring issue counts them. No date is neither good nor bad: it says why.
+ */
+export function domain(site: SiteSummary, now: number): StatusLine {
+  const label = 'Domain';
+  const r = site.renewal;
+  if (!r) return line(label, 'neutral', 'Not applicable', 'This address has no domain to renew.');
+  const at = r.checkedAt;
+  if (!r.expiresOn)
+    return line(label, 'neutral', r.note ?? 'Renewal date not available', `${r.domain}.`, at);
+  const days = Math.floor((Date.parse(`${r.expiresOn}T00:00:00Z`) - now) / DAY);
+  const state = days < 0 ? `Expired ${r.expiresOn}` : `Renews ${r.expiresOn}`;
+  const detail = `${r.domain}${
+    days >= 0 ? `: ${days} ${days === 1 ? 'day' : 'days'} left` : ''
+  }.${r.note ? ` ${r.note}.` : ''}`;
+  const tone: Tone = days <= 7 ? 'red' : days <= 30 ? 'amber' : r.note ? 'neutral' : 'green';
+  return line(label, tone, state, detail, at);
+}
+
 /** Security findings. "None known" only with vulnerability data and a report that's current. */
 export function security(detail: SiteDetailResponse, now: number): StatusLine {
   const label = 'Security';

@@ -1,6 +1,10 @@
+import type { HostKind, Platform } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import {
   filterSites,
+  groupSites,
+  readGroupBy,
+  saveGroupBy,
   matchesSite,
   NO_FILTERS,
   present,
@@ -91,5 +95,73 @@ describe('Recheck all', () => {
       ok: false,
       message: 'Rechecked 2 sites. 1 site didn’t report: B (Couldn’t reach the site)',
     });
+  });
+});
+
+describe('grouping', () => {
+  const s = (name: string, platform: Platform, hostKind: HostKind) => ({
+    name,
+    platform,
+    hostKind,
+  });
+  const sites = [
+    s('Romaji', 'static', 'craftish'),
+    s('Aleya', 'wordpress', 'craftish'),
+    s('Minton', 'wordpress', 'kinsta'),
+    s('Ledger', 'app', 'other'),
+  ];
+  const names = (groups: ReturnType<typeof groupSites<(typeof sites)[number]>>) =>
+    groups.map((g) => [g.label, g.sites.map((x) => x.name)]);
+
+  it('goes WordPress, Static, then App, and leaves out an empty group', () => {
+    expect(names(groupSites(sites, 'platform'))).toEqual([
+      ['WordPress', ['Aleya', 'Minton']],
+      ['Static', ['Romaji']],
+      ['App', ['Ledger']],
+    ]);
+    expect(names(groupSites(sites.slice(1, 3), 'platform'))).toEqual([
+      ['WordPress', ['Aleya', 'Minton']],
+    ]);
+  });
+
+  it('groups by host, or not at all', () => {
+    expect(names(groupSites(sites, 'host'))).toEqual([
+      ['craftish', ['Romaji', 'Aleya']],
+      ['Kinsta', ['Minton']],
+      ['Other host', ['Ledger']],
+    ]);
+    expect(names(groupSites(sites, 'none'))).toEqual([
+      [null, ['Romaji', 'Aleya', 'Minton', 'Ledger']],
+    ]);
+    expect(groupSites([], 'none')).toEqual([]);
+  });
+
+  it('keeps filtering inside the groups: a filtered list groups the same way', () => {
+    const filtered = sites.filter((x) => x.hostKind === 'craftish');
+    expect(names(groupSites(filtered, 'platform'))).toEqual([
+      ['WordPress', ['Aleya']],
+      ['Static', ['Romaji']],
+    ]);
+  });
+
+  it('remembers the choice in this browser, and falls back to Platform', () => {
+    let value: string | null = null;
+    const store = { getItem: () => value, setItem: (_: string, v: string) => void (value = v) };
+    expect(readGroupBy(store)).toBe('platform');
+    saveGroupBy('host', store);
+    expect(readGroupBy(store)).toBe('host');
+    value = 'colour';
+    expect(readGroupBy(store)).toBe('platform');
+    expect(readGroupBy(null)).toBe('platform');
+    const blocked = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    expect(readGroupBy(blocked)).toBe('platform');
+    expect(() => saveGroupBy('none', blocked)).not.toThrow();
   });
 });

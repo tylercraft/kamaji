@@ -33,6 +33,7 @@ import { readDiscord } from './discord.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
 import { CYCLE } from './cycle.js';
+import { renewalFor } from './checks/domains.js';
 import { HEALTH_STATE } from './molcajete/check.js';
 import { recentCrashGroups } from './molcajete/crashes.js';
 import { updatesWaiting } from './inventory/report.js';
@@ -51,6 +52,7 @@ const toSite = (r: Row): Site => ({
   hostKind: String(r.host_kind) as Site['hostKind'],
   clientSlug: strOrNull(r.client_slug),
   mode: String(r.mode) as Site['mode'],
+  platform: String(r.platform) as Site['platform'],
   setup: String(r.setup) as Site['setup'],
   tailnetOnly: Number(r.tailnet_only) === 1,
   expectedText: strOrNull(r.expected_text),
@@ -151,6 +153,7 @@ export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
     certificate: certificate(db, site),
     updates: updatesWaiting(db, site),
     updateWork: updateWork(db, site.id),
+    renewal: renewalFor(db, site),
     findings: siteFindings(db, site.id),
   }));
 }

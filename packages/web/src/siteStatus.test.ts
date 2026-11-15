@@ -8,7 +8,15 @@ import type {
   WholeSiteBackups,
 } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { backups, certificate, fromOutside, homePage, security, updates } from './siteStatus';
+import {
+  backups,
+  certificate,
+  domain,
+  fromOutside,
+  homePage,
+  security,
+  updates,
+} from './siteStatus';
 
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -21,6 +29,7 @@ const site: SiteSummary = {
   hostKind: 'craftish',
   clientSlug: null,
   mode: 'connected',
+  platform: 'wordpress',
   setup: 'done',
   tailnetOnly: false,
   expectedText: null,
@@ -37,6 +46,7 @@ const site: SiteSummary = {
   },
   updates: { known: true, value: 0 },
   updateWork: { toApprove: 0, held: 0, running: 0, noDownload: 0 },
+  renewal: { domain: 'a.test', expiresOn: '2027-03-14', note: null, checkedAt: ago(60) },
   findings: [],
 };
 
@@ -345,5 +355,34 @@ describe('the updates line', () => {
       }).state,
     ).toBe('1 running · 1 without a download');
     expect(updates(site)).toMatchObject({ state: 'None offered', tone: 'green' });
+  });
+});
+
+describe('the domain line', () => {
+  const on = (renewal: SiteSummary['renewal']) => domain({ ...site, renewal }, NOW);
+  const renews = (expiresOn: string) =>
+    on({ domain: 'a.test', expiresOn, note: null, checkedAt: ago(60) });
+
+  it('says when it renews, amber within 30 days and red within 7', () => {
+    expect(renews('2027-03-14')).toMatchObject({ tone: 'green', state: 'Renews 2027-03-14' });
+    expect(renews('2026-12-14')).toMatchObject({ tone: 'amber', detail: 'a.test: 30 days left.' });
+    expect(renews('2026-11-20')).toMatchObject({ tone: 'red', state: 'Renews 2026-11-20' });
+    expect(renews('2026-11-01')).toMatchObject({ tone: 'red', state: 'Expired 2026-11-01' });
+  });
+
+  it('says why there’s no date, and isn’t green without one', () => {
+    expect(
+      on({ domain: 'a.nz', expiresOn: null, note: 'Renewal date not available', checkedAt: null }),
+    ).toMatchObject({ tone: 'neutral', state: 'Renewal date not available' });
+    expect(on(null)).toMatchObject({ tone: 'neutral', state: 'Not applicable' });
+    // A failed read keeps the last date, but doesn't call it current.
+    expect(
+      on({
+        domain: 'a.test',
+        expiresOn: '2027-03-14',
+        note: 'Couldn’t read it: HTTP 503',
+        checkedAt: ago(60),
+      }),
+    ).toMatchObject({ tone: 'neutral', state: 'Renews 2027-03-14' });
   });
 });

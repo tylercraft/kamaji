@@ -7,6 +7,7 @@ import {
   backups,
   certificate,
   CURRENT_FOR,
+  domain,
   fromOutside,
   homePage,
   isOutOfDate,
@@ -176,7 +177,7 @@ export function siteLooks(
   const { site } = detail;
   const waiting = updates(site);
   return [
-    ...[homePage(site, now), fromOutside(site, now), certificate(site)]
+    ...[homePage(site, now), fromOutside(site, now), certificate(site), domain(site, now)]
       .map(checkLook)
       .filter((l): l is Look => l !== null),
     ...softwareLooks(detail, now),

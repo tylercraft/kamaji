@@ -9,6 +9,7 @@ import {
   RemoveSiteResponse,
   SiteIconStatus,
   type HostKind,
+  type Platform,
   type SiteBackupSchedule,
   type SiteDetailResponse,
 } from '@kamaji/shared';
@@ -20,6 +21,7 @@ import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
 import { RememberedDetails } from '../components/remembered';
+import { PLATFORM_NAMES } from '../sitesView';
 import { load as reloadIcons, SiteIcon } from '../components/SiteIcon';
 
 const OK = z.object({ ok: z.literal(true) });
@@ -450,6 +452,9 @@ const POLICY_SHORT: Record<BackupExpectation, string> = {
 
 /** Configure's closed line: the choices as they're saved. */
 function configureSummary(detail: SiteDetailResponse): string {
+  const notes = detail.notifications === 'digest' ? 'Digest only' : 'Normal notifications';
+  if (detail.site.platform !== 'wordpress')
+    return `${PLATFORM_NAMES[detail.site.platform]}, monitoring only · ${notes}`;
   const policy = detail.backupExpectation
     ? POLICY_SHORT[detail.backupExpectation]
     : 'Backups before updates not decided';
@@ -457,7 +462,6 @@ function configureSummary(detail: SiteDetailResponse): string {
     detail.site.hostKind === 'craftish'
       ? ` · Whole-site backups ${SCHEDULES[detail.siteBackups.schedule].toLowerCase()}`
       : '';
-  const notes = detail.notifications === 'digest' ? 'Digest only' : 'Normal notifications';
   return `${policy}${whole} · ${notes}`;
 }
 
@@ -497,6 +501,8 @@ export function ConfigureStep({
   const { site } = detail;
   const [own, setOwn] = useState(detail.own);
   const [schedule, setSchedule] = useState(detail.siteBackups.schedule);
+  const [platform, setPlatform] = useState<Platform>(site.platform);
+  const wordpress = platform === 'wordpress';
   const { busy, error, run } = useAction({
     saved: `Saved ${site.name}’s settings`,
     failed: 'Not saved',
@@ -508,10 +514,11 @@ export function ConfigureStep({
     const name = form.get('name');
     const request = ConfigureSiteRequest.parse({
       ...(typeof name === 'string' ? { name } : {}),
+      platform,
       expectedText: String(form.get('expected') ?? '').trim() || null,
-      backupExpectation: backup === '' ? null : backup,
+      backupExpectation: !wordpress || backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
-      ...(site.hostKind === 'craftish'
+      ...(wordpress && site.hostKind === 'craftish'
         ? { own, siteBackups: schedule, clientAgreed: form.get('clientAgreed') === 'on' }
         : {}),
     });
@@ -540,6 +547,29 @@ export function ConfigureStep({
               />
             </Field>
           )}
+          <Field
+            id="platform"
+            label="Platform"
+            hint={
+              site.mode === 'connected'
+                ? 'Connected through Craftish Care, so it stays WordPress until it’s removed.'
+                : 'A static site or an app is monitoring only: uptime, the certificate and the domain. No Craftish Care, backups or updates.'
+            }
+          >
+            <select
+              id="platform"
+              value={platform}
+              disabled={site.mode === 'connected'}
+              onChange={(e) => setPlatform(e.target.value as Platform)}
+              aria-describedby="platform-hint"
+            >
+              {(Object.entries(PLATFORM_NAMES) as [Platform, string][]).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
           {section && <IconChoice detail={detail} reload={reload} />}
           <Field
             id="expected"
@@ -577,60 +607,70 @@ export function ConfigureStep({
             </label>
           </Choices>
         </div>
-        <div>
-          <h3>Backups</h3>
-          <Choices>
-            <legend>Before each update</legend>
-            {(Object.entries(BACKUPS) as [BackupExpectation, string][])
-              .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
-              .map(([value, label]) => (
-                <label key={value}>
-                  <input
-                    type="radio"
-                    name="backup"
-                    value={value}
-                    defaultChecked={detail.backupExpectation === value}
-                  />
-                  {label}
-                </label>
-              ))}
-            <label>
-              <input
-                type="radio"
-                name="backup"
-                value=""
-                defaultChecked={detail.backupExpectation === null}
+        {wordpress ? (
+          <div>
+            <h3>Backups</h3>
+            <Choices>
+              <legend>Before each update</legend>
+              {(Object.entries(BACKUPS) as [BackupExpectation, string][])
+                .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
+                .map(([value, label]) => (
+                  <label key={value}>
+                    <input
+                      type="radio"
+                      name="backup"
+                      value={value}
+                      defaultChecked={detail.backupExpectation === value}
+                    />
+                    {label}
+                  </label>
+                ))}
+              <label>
+                <input
+                  type="radio"
+                  name="backup"
+                  value=""
+                  defaultChecked={detail.backupExpectation === null}
+                />
+                Not decided yet: shown as unknown
+              </label>
+            </Choices>
+            {site.hostKind === 'craftish' && (
+              <WholeSiteChoices
+                detail={detail}
+                own={own}
+                setOwn={setOwn}
+                schedule={schedule}
+                setSchedule={setSchedule}
               />
-              Not decided yet: shown as unknown
-            </label>
-          </Choices>
-          {site.hostKind === 'craftish' && (
-            <WholeSiteChoices
-              detail={detail}
-              own={own}
-              setOwn={setOwn}
-              schedule={schedule}
-              setSchedule={setSchedule}
-            />
-          )}
-          {site.hostKind === 'craftish' && (
-            <RememberedDetails name="backup-contents">
-              <summary>What a whole-site backup holds</summary>
-              <Muted css={{ marginTop: 6 }}>
-                <code>wp-content</code>, <code>.htaccess</code> if there is one, a fresh database
-                export and a manifest. Left out: <code>wp-content/cache</code>, <code>upgrade</code>
-                , <code>ai1wm-backups</code>, <code>updraft</code>, <code>backups*</code> and{' '}
-                <code>*.log</code> files. <code>wp-config.php</code> and WordPress’s own files are
-                never read.
-              </Muted>
-              <Muted css={{ marginTop: 6 }}>
-                <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
-                craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
-                craftish has; ops/README.md, “Updating site-pull”, installs it.
-              </Muted>
-            </RememberedDetails>
-          )}
-        </div>
+            )}
+            {site.hostKind === 'craftish' && (
+              <RememberedDetails name="backup-contents">
+                <summary>What a whole-site backup holds</summary>
+                <Muted css={{ marginTop: 6 }}>
+                  <code>wp-content</code>, <code>.htaccess</code> if there is one, a fresh database
+                  export and a manifest. Left out: <code>wp-content/cache</code>,{' '}
+                  <code>upgrade</code>, <code>ai1wm-backups</code>, <code>updraft</code>,{' '}
+                  <code>backups*</code> and <code>*.log</code> files. <code>wp-config.php</code> and
+                  WordPress’s own files are never read.
+                </Muted>
+                <Muted css={{ marginTop: 6 }}>
+                  <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
+                  craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
+                  craftish has; ops/README.md, “Updating site-pull”, installs it.
+                </Muted>
+              </RememberedDetails>
+            )}
+          </div>
+        ) : (
+          <div>
+            <h3>Backups</h3>
+            <Muted>
+              Nothing to expect: {platform === 'static' ? 'a static site' : 'an app'} has no
+              WordPress to back up before updates, and Kamaji doesn’t take whole-site backups of it.
+            </Muted>
+          </div>
+        )}
       </Columns>
       <Muted>
         {site.setup === 'done'
@@ -655,7 +695,7 @@ export function ConfigureStep({
       component={Disclosure}
       id="configure"
       name="configure"
-      force={detail.backupExpectation === null}
+      force={site.platform === 'wordpress' && detail.backupExpectation === null}
     >
       <summary>
         <h2>Configure</h2>

@@ -18,6 +18,8 @@ export const ISSUE_FAMILIES = [
   'backup-failed',
   'backup-overdue',
   'restore-check-failed',
+  'domain-expiring',
+  'domain-unreadable',
   // Servers: craftish's report, and molcajete's own readers
   'unreadable',
   'security-updates',
@@ -80,6 +82,14 @@ const refreshInventory = (i: Of): IssueAction => ({
   body: {},
   asked: 'Asked for a fresh report',
 });
+/** The domain's renewal date, read through RDAP now, as the daily read. */
+const checkDomainAgain = (i: Of): IssueAction => ({
+  type: 'recheck',
+  label: 'Check again',
+  path: `${site(i.resourceId)}/domain/check`,
+  body: {},
+  asked: 'Checked the renewal date again',
+});
 const backUpNow = (i: Of): IssueAction => ({
   type: 'recheck',
   label: 'Back up now',
@@ -108,6 +118,9 @@ const ACTIONS: Record<IssueFamily, (issue: Of) => IssueAction> = {
   abandoned: refreshInventory,
   'end-of-life': look('Ask the host or client to upgrade.'),
   'update-held': look('Look at what held it on Updates, then carry on or stop.', '/updates'),
+  // Renewed: a fresh read finds the later date and clears it.
+  'domain-expiring': checkDomainAgain,
+  'domain-unreadable': checkDomainAgain,
   'backup-failed': backUpNow,
   'backup-overdue': backUpNow,
   'restore-check-failed': (i) => ({
