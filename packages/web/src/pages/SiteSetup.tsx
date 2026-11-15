@@ -250,7 +250,7 @@ function IconChoice({ detail, reload }: { detail: SiteDetailResponse; reload: ()
       </div>
       <Muted>
         {icon === null ? (
-          'Not tried yet: Kamaji fetches it once a day.'
+          'Not fetched yet: Refetch icon gets it.'
         ) : icon.problem === null ? (
           <>
             Fetched <Time iso={icon.checkedAt} />. Kamaji takes the sharpest the site offers.

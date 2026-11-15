@@ -4,19 +4,17 @@ import { join } from 'node:path';
 import { SiteDetailResponse, SiteIconStatus, SiteIconsResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { inBackground } from './background.js';
 import type { Db } from '../db.js';
 import { testAuthenticator } from '../passkeys/testing.js';
 import { testDb } from '../testing.js';
 import {
-  ICON_EVERY_MS,
   fetchIcon,
   headerType,
-  iconRefresher,
   iconLinks,
   mayFetch,
   pickIcons,
   refetchIcon,
-  refreshIcons,
   sniff,
   storedIcon,
 } from './icons.js';
@@ -226,9 +224,7 @@ function site(db: Db, id: string, url = `https://${id}/`) {
   ).run(id, id, url, T);
 }
 
-const fetched = (outcomes: { ok: boolean }[]) => outcomes.filter((o) => o.ok).length;
-
-describe('refreshing icons', () => {
+describe('fetching icons', () => {
   it('keeps the last icon when a fetch fails, and says why', async () => {
     const db = testDb();
     const dir = mkdtempSync(join(tmpdir(), 'kamaji-icons-'));
@@ -237,15 +233,11 @@ describe('refreshing icons', () => {
       [SITE]: page('<link rel="icon" href="/icon.png" sizes="32x32">'),
       'https://example.test/icon.png': { type: 'image/png', body: PNG },
     });
-    expect(fetched(await refreshIcons(db, { dir, now: () => T, fetch: good.fetch }))).toBe(1);
+    expect(await refetchIcon(db, 'example.test', { dir, now: () => T, fetch: good.fetch })).toEqual(
+      { id: 'example.test', name: 'example.test', ok: true, problem: null },
+    );
     const first = storedIcon(db, dir, 'example.test');
     expect(first).toMatchObject({ type: 'image/png' });
-    // Not due again until a day has passed.
-    expect(await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch })).toEqual([]);
-    // Unless it's asked for, as Refetch icon does.
-    expect(
-      await refetchIcon(db, 'example.test', { dir, now: () => T + 1000, fetch: good.fetch }),
-    ).toEqual({ id: 'example.test', name: 'example.test', ok: true, problem: null });
     expect(
       await refetchIcon(db, 'nowhere.test', { dir, now: () => T, fetch: good.fetch }),
     ).toBeNull();
@@ -253,68 +245,56 @@ describe('refreshing icons', () => {
     const down = (async () => {
       throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
     }) as typeof fetch;
-    await refreshIcons(db, { dir, now: () => T + 1000 + ICON_EVERY_MS, fetch: down });
+    await refetchIcon(db, 'example.test', { dir, now: () => T + 1000, fetch: down });
     expect(storedIcon(db, dir, 'example.test')).toEqual(first);
     expect(
       db.prepare("SELECT problem FROM site_icons WHERE site_id = 'example.test'").get()?.problem,
     ).toBe('Connection refused');
   });
 
-  it('replaces a changed icon and removes the old file; one site failing doesn’t stop the rest', async () => {
+  it('replaces a changed icon and removes the old file', async () => {
     const db = testDb();
     const dir = mkdtempSync(join(tmpdir(), 'kamaji-icons-'));
-    site(db, 'a.test');
     site(db, 'b.test');
-    site(db, 'c.test');
     const answers = (icon: Uint8Array) =>
-      web({
-        'https://a.test/': () => {
-          throw new Error('boom');
-        },
-        'https://b.test/favicon.ico': { type: 'image/png', body: icon },
-        'https://c.test/favicon.ico': { type: 'image/x-icon', body: ICO },
-      }).fetch;
-    expect(await refreshIcons(db, { dir, now: () => T, fetch: answers(PNG) })).toEqual([
-      { id: 'a.test', name: 'a.test', ok: false, problem: 'HTTP 404' },
-      { id: 'b.test', name: 'b.test', ok: true, problem: null },
-      { id: 'c.test', name: 'c.test', ok: true, problem: null },
-    ]);
+      web({ 'https://b.test/favicon.ico': { type: 'image/png', body: icon } }).fetch;
+    await refetchIcon(db, 'b.test', { dir, now: () => T, fetch: answers(PNG) });
     const before = storedIcon(db, dir, 'b.test')!;
-    await refreshIcons(db, { dir, now: () => T + ICON_EVERY_MS, fetch: answers(PNG2) });
+    await refetchIcon(db, 'b.test', { dir, now: () => T + 1000, fetch: answers(PNG2) });
     const after = storedIcon(db, dir, 'b.test')!;
     expect(after.sha256).not.toBe(before.sha256);
     expect(existsSync(join(dir, before.sha256))).toBe(false);
-    expect(storedIcon(db, dir, 'c.test')?.type).toBe('image/x-icon');
-    expect(storedIcon(db, dir, 'a.test')).toBeNull();
   });
 });
 
-describe('the cycle’s part', () => {
-  it('starts a refresh without waiting for it, one at a time, and logs only that one failed', async () => {
+describe('work started in the background', () => {
+  it('starts a run without waiting for it, one at a time, and logs only that one failed', async () => {
     let calls = 0;
     let finish: () => void = () => {};
     const logged: string[] = [];
-    const start = iconRefresher(
+    const start = inBackground(
       () => {
         calls += 1;
         return new Promise<void>((resolve) => (finish = resolve));
       },
       (m) => logged.push(m),
+      'domains',
     );
     expect(start()).toBeUndefined();
     start();
     expect(calls).toBe(1);
     finish();
     await new Promise((r) => setTimeout(r, 0));
-    const failing = iconRefresher(
+    const failing = inBackground(
       () => Promise.reject(new Error('/secret/path')),
       (m) => logged.push(m),
+      'domains',
     );
     failing();
     await new Promise((r) => setTimeout(r, 0));
     start();
     expect(calls).toBe(2);
-    expect(logged).toEqual(['icons: the refresh failed']);
+    expect(logged).toEqual(['domains: the refresh failed']);
   });
 });
 
@@ -327,8 +307,10 @@ describe('the icon routes', () => {
     const { fetch } = web({
       [SITE]: page('<link rel="icon" href="/icon.svg">'),
       'https://example.test/icon.svg': { type: 'image/svg+xml', body: SVG },
+      'https://fresh.test/favicon.ico': { type: 'image/x-icon', body: ICO },
     });
-    await refreshIcons(db, { dir, now: () => T, fetch });
+    for (const id of ['example.test', 'bare.test'])
+      await refetchIcon(db, id, { dir, now: () => T, fetch });
     const app = createApp({
       db,
       login: 'tylercraft@github',
@@ -361,8 +343,27 @@ describe('the icon routes', () => {
         },
         body: '{}',
       });
-    return { get, refetch };
+    const add = (url: string) =>
+      app.request('/api/sites', {
+        method: 'POST',
+        headers: {
+          'Tailscale-User-Login': 'tylercraft@github',
+          Host: 'kamaji.test',
+          Origin: 'https://kamaji.test',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Fresh', url, hostKind: 'other', clientSlug: null }),
+      });
+    return { get, refetch, add, db, dir };
   }
+
+  it('fetches a site’s icon when it’s added', async () => {
+    const { add, db, dir } = await setup();
+    expect((await add('https://fresh.test')).status).toBe(201);
+    // In the background: the answer doesn't wait for it.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(storedIcon(db, dir, 'fresh.test')?.type).toBe('image/x-icon');
+  });
 
   it('serves the icon as an image that can’t load or run anything, cached for a day', async () => {
     const { get } = await setup();

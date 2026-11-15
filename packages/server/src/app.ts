@@ -143,7 +143,7 @@ const PASSKEY_FREE = new Set([
   // Add site's look at a home page: the plain GET the icon fetch makes.
   'POST /api/sites/detect',
 ]);
-// Refetch icon: the plain GETs of the home page and its icon that the cycle makes once a day.
+// Refetch icon: the plain GETs of the home page and its icon, as when the site was added.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
 // Domain check: the daily RDAP read of the site's renewal date, now.
 const PASSKEY_FREE_SITE_STEP =
@@ -318,7 +318,15 @@ export function createApp({
     const body = await readJson(c, NewSiteRequest);
     if (!body) return c.json({ error: 'bad_request' }, 400);
     const result = createSite(db, body, now());
-    return 'error' in result ? c.json(result, 409) : c.json(result, 201);
+    if ('error' in result) return c.json(result, 409);
+    // Its icon, once, in the background: adding never waits on the site.
+    if (iconsDir)
+      void refetchIcon(db, result.id, {
+        dir: iconsDir,
+        now,
+        ...(iconFetch ? { fetch: iconFetch } : {}),
+      }).catch(() => log?.('icons: fetching a new site’s icon failed'));
+    return c.json(result, 201);
   });
   // Add site's guess at the platform: one GET of the home page, as the icon fetch makes it.
   app.post('/api/sites/detect', async (c) => {
