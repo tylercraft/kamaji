@@ -125,15 +125,35 @@ export async function restoreCheck(
       { timeoutMs: 10 * 60_000 },
     );
     if (db.code !== 0) return fail('database', `MariaDB (${MARIADB}) didn’t start`, db);
-    const ready = await waitFor(deps, 120, async () => {
-      const ping = await docker(['exec', `${name}-db`, 'mariadb', '-uroot', '-e', 'SELECT 1']);
-      return ping.code === 0;
-    });
-    if (!ready) return fail('database', 'MariaDB didn’t become ready within 2 minutes');
-    const imported = await docker(['exec', '-i', `${name}-db`, 'mariadb', '-uroot', 'wordpress'], {
-      stdinFile: join(files, 'database.sql'),
-      timeoutMs: 30 * 60_000,
-    });
+    // Ready means the real server, not the image's first-run one. Its entrypoint initialises the
+    // database with a temporary server (socket only, --skip-networking), stops it, then starts the
+    // real one; a socket ping passes against the temporary server, and an import sent then lands
+    // in the restart gap (ERROR 2002). The image's own healthcheck connects over TCP, so it passes
+    // only once the real server is up with InnoDB initialised.
+    const healthy = () =>
+      waitFor(deps, 120, async () => {
+        const check = await docker([
+          'exec',
+          `${name}-db`,
+          'healthcheck.sh',
+          '--connect',
+          '--innodb_initialized',
+        ]);
+        return check.code === 0;
+      });
+    if (!(await healthy())) return fail('database', 'MariaDB didn’t become ready within 2 minutes');
+    const load = () =>
+      docker(['exec', '-i', `${name}-db`, 'mariadb', '-uroot', 'wordpress'], {
+        stdinFile: join(files, 'database.sql'),
+        timeoutMs: 30 * 60_000,
+      });
+    let imported = await load();
+    // Couldn't reach the server at all, so nothing was imported: once more, after waiting again.
+    if (imported.code !== 0 && /ERROR 2002 \(HY000\)/.test(imported.stderr ?? '')) {
+      if (!(await healthy()))
+        return fail('database', 'MariaDB didn’t become ready within 2 minutes');
+      imported = await load();
+    }
     if (imported.code !== 0) return fail('database', 'database.sql didn’t import', imported);
 
     const home = `http://${name}-wp`;

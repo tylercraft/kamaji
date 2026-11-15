@@ -118,3 +118,85 @@ describe('the restore check', () => {
     expect(readdirSync(workDir)).toEqual([]);
   });
 });
+
+describe('waiting for MariaDB', () => {
+  const NO_SOCKET =
+    "ERROR 2002 (HY000): Can't connect to local server through socket '/run/mysqld/mysqld.sock' (2)";
+  const healthcheck = (args: string[]) => args.includes('healthcheck.sh');
+  const importing = (args: string[]) => args.includes('-i') && args.includes('wordpress');
+  const ok = (args: string[]) =>
+    args.includes('curl') ? { code: 0, stdout: '<h1>Hello</h1>\n200' } : { code: 0 };
+
+  it('waits for the image’s healthcheck, not a socket ping the first-run server passes', async () => {
+    // The temporary server answers over the socket from the start; the real one, over TCP, only
+    // from the fourth healthcheck.
+    let checks = 0;
+    let imports = 0;
+    const { deps, asked } = setup(pullOf(), (args) => {
+      if (args.includes('SELECT 1')) return { code: 0 };
+      if (healthcheck(args)) return { code: ++checks >= 4 ? 0 : 1 };
+      if (importing(args)) {
+        imports += 1;
+        return checks >= 4 ? { code: 0 } : { code: 1, stderr: NO_SOCKET };
+      }
+      return ok(args);
+    });
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toEqual({ ok: true });
+    expect(checks).toBe(4);
+    expect(imports).toBe(1);
+    expect(asked.find(healthcheck)).toEqual([
+      'exec',
+      expect.stringMatching(/-db$/),
+      'healthcheck.sh',
+      '--connect',
+      '--innodb_initialized',
+    ]);
+    expect(asked.some((a) => a.includes('SELECT 1'))).toBe(false);
+  });
+
+  it('tries an import that couldn’t reach the server once more, after waiting again', async () => {
+    let imports = 0;
+    const { deps } = setup(pullOf(), (args) => {
+      if (importing(args)) return ++imports === 1 ? { code: 1, stderr: NO_SOCKET } : { code: 0 };
+      return ok(args);
+    });
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toEqual({ ok: true });
+    expect(imports).toBe(2);
+  });
+
+  it('tries only once more, and never for an import that failed in the SQL', async () => {
+    let imports = 0;
+    const always = setup(pullOf(), (args) =>
+      importing(args) ? (imports++, { code: 1, stderr: NO_SOCKET }) : ok(args),
+    );
+    expect(await restoreCheck(always.deps, site, 'a'.repeat(64))).toMatchObject({
+      step: 'database',
+      problem: 'database.sql didn’t import',
+    });
+    expect(imports).toBe(2);
+    imports = 0;
+    const syntax = setup(pullOf(), (args) =>
+      importing(args)
+        ? (imports++, { code: 1, stderr: 'ERROR 1064 (42000) at line 3: syntax' })
+        : ok(args),
+    );
+    expect(await restoreCheck(syntax.deps, site, 'a'.repeat(64))).toMatchObject({
+      problem: 'database.sql didn’t import',
+    });
+    expect(imports).toBe(1);
+  });
+
+  it('gives up after two minutes of an unhealthy server, still cleaning up', async () => {
+    const { deps, asked, workDir } = setup(pullOf(), (args) =>
+      healthcheck(args) ? { code: 1 } : ok(args),
+    );
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toEqual({
+      ok: false,
+      step: 'database',
+      problem: 'MariaDB didn’t become ready within 2 minutes',
+    });
+    expect(asked.filter(healthcheck)).toHaveLength(60);
+    expect(asked.at(-1)?.slice(0, 2)).toEqual(['network', 'rm']);
+    expect(readdirSync(workDir)).toEqual([]);
+  });
+});
