@@ -234,8 +234,8 @@ snap.run(
 );
 const restore =
   db.prepare(`INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok,
-  failed_step, problem) VALUES (?,?,?,?,?,?,?)`);
-restore.run(OK, 'c'.repeat(64), now - 50 * DAY, now - 50 * DAY + 90_000, 1, null, null);
+  failed_step, problem, problem_detail) VALUES (?,?,?,?,?,?,?,?)`);
+restore.run(OK, 'c'.repeat(64), now - 50 * DAY, now - 50 * DAY + 90_000, 1, null, null, null);
 restore.run(
   BAD,
   'e'.repeat(64),
@@ -244,6 +244,7 @@ restore.run(
   0,
   'wordpress',
   'WordPress didn’t start within 60 s',
+  'docker: Error response from daemon: Conflict. The container name is already in use.',
 );
 const evidence = db.prepare(`INSERT INTO backup_evidence (site_id, requested_by, recorded_at, ok,
   exported_at, bytes, sha256, words) VALUES (?, 'smoke@localhost', ?, ?, ?, ?, ?, ?)`);
@@ -376,7 +377,7 @@ const issue = db.prepare(
 issue.run(
   'i1',
   'mintonhomesllc.com',
-  'eol-database',
+  'end-of-life:database',
   'normal',
   'Minton Homes runs MySQL 5.7, past end of support',
   now - 2 * DAY,
@@ -861,6 +862,66 @@ for (const view of VIEWS) {
   else
     console.log(
       'ok   passkeys: a tab; made on the page, refused before install, signed after; copies',
+    );
+}
+
+// Needs attention: every issue shows its next step. Minton's end-of-life can't be checked again,
+// so it has a line and Dismiss, which takes the passkey; it folds into Dismissed (1), and Undo
+// brings it back. A failed restore check shows what the command said, on the site's Backups.
+{
+  problems = [];
+  const at = `http://localhost:${appPort}`;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const spent = () =>
+    Number(
+      db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces WHERE used_at IS NOT NULL').get().n,
+    );
+  await send('Page.navigate', { url: `${at}/` });
+  await wait(1500);
+  const panel = `document.querySelector('[aria-labelledby=attention]')`;
+  const bare = await evaluate(
+    `[...${panel}.querySelectorAll('li')].filter((li) => !li.querySelector('button')).length`,
+  );
+  if (bare !== 0) problems.push(`${bare} issues with no next step`);
+  const before = spent();
+  const dismissed = await evaluate(`(() => {
+    const li = [...${panel}.querySelectorAll('li')].find((l) => l.textContent.includes('MySQL 5.7'));
+    if (!li?.textContent.includes('Ask the host or client to upgrade.')) return 'no line';
+    const b = [...li.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Dismiss');
+    b?.click();
+    return b ? 'clicked' : 'missing';
+  })()`);
+  if (dismissed !== 'clicked') problems.push(`Minton’s end-of-life: ${dismissed}`);
+  await wait(2000);
+  if (spent() !== before + 1) problems.push('Dismiss wasn’t signed with the passkey');
+  const folded = await evaluate(`${panel}.innerText`);
+  if (!folded.includes('Dismissed (1)')) problems.push('no Dismissed (1) after dismissing');
+  if (SHOTS) {
+    await evaluate(`${panel}.querySelector('details')?.setAttribute('open', '')`);
+    await wait(300);
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'attention.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  const undo = await evaluate(
+    `(() => { const b = [...${panel}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
+  );
+  if (undo !== 'clicked') problems.push('no Undo on the dismissed issue');
+  await wait(1500);
+  if ((await evaluate(`${panel}.innerText`)).includes('Dismissed ('))
+    problems.push('Undo didn’t bring it back');
+
+  await send('Page.navigate', { url: `${at}/sites/${BAD}` });
+  await wait(1500);
+  if (
+    !(await evaluate('document.body.textContent')).includes(
+      'Conflict. The container name is already in use.',
+    )
+  )
+    problems.push('the failed restore check doesn’t show what the command said');
+  if (problems.length) failures.push(`needs attention: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   needs attention: a step on each; Dismiss signed, folded, undone; restore detail shown',
     );
 }
 

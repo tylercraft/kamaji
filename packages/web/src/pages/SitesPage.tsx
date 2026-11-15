@@ -34,6 +34,7 @@ import {
   type SiteFilters,
 } from '../sitesView';
 import { useResource } from '../useResource';
+import { IssueStep } from '../components/IssueStep';
 import { SiteIcon, WithIcon } from '../components/SiteIcon';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
@@ -132,8 +133,11 @@ function UpdatesCell({ site }: { site: SiteSummary }) {
 
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** Open findings other than reachability: a site can be reachable and still need attention. */
-function Findings({ site }: { site: SiteSummary }) {
+/**
+ * Open findings other than reachability: a site can be reachable and still need attention. Each
+ * with its next step, as on Overview.
+ */
+function Findings({ site, reload }: { site: SiteSummary; reload: () => void }) {
   const f = site.findings;
   if (f.length === 0) return null;
   const urgent = f.some((x) => x.severity === 'urgent');
@@ -144,11 +148,7 @@ function Findings({ site }: { site: SiteSummary }) {
       >
         {f.length} {f.length === 1 ? 'finding' : 'findings'}
       </summary>
-      <ul css={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12, maxWidth: 360 }}>
-        {f.map((x) => (
-          <li key={x.kind}>{x.summary}</li>
-        ))}
-      </ul>
+      <FindingList findings={f} reload={reload} />
     </details>
   );
 }
@@ -231,7 +231,36 @@ const field = {
  * On a phone, a site per card: its home page check always, then a flag for anything else that
  * needs a look (outside check, certificate, updates, findings), and every check one click down.
  */
-function SiteCard({ site, now }: { site: SiteSummary; now: number }) {
+function FindingList({
+  findings,
+  reload,
+}: {
+  findings: SiteSummary['findings'];
+  reload: () => void;
+}) {
+  return (
+    <ul
+      css={{
+        margin: '4px 0 0',
+        padding: 0,
+        listStyle: 'none',
+        display: 'grid',
+        gap: 8,
+        fontSize: 12,
+        maxWidth: 420,
+      }}
+    >
+      {findings.map((x) => (
+        <li key={x.id} css={{ display: 'grid', gap: 4 }}>
+          <span>{x.summary}</span>
+          <IssueStep id={x.id} action={x.action} onDone={reload} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reload: () => void }) {
   const lines =
     site.setup !== 'done'
       ? []
@@ -303,11 +332,7 @@ function SiteCard({ site, now }: { site: SiteSummary; now: number }) {
             <>
               <dt>Findings</dt>
               <dd>
-                <ul css={{ margin: 0, paddingLeft: 16 }}>
-                  {site.findings.map((f) => (
-                    <li key={f.kind}>{f.summary}</li>
-                  ))}
-                </ul>
+                <FindingList findings={site.findings} reload={reload} />
               </dd>
             </>
           )}
@@ -395,6 +420,9 @@ function Toolbar({
 
 export function SitesPage() {
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
+  const reloadSites = () => {
+    if (sites.state === 'ready') sites.reload();
+  };
   const [filters, setFilters] = useState<SiteFilters>(NO_FILTERS);
   const now = sites.state === 'ready' ? sites.loadedAt : 0;
   return (
@@ -447,7 +475,7 @@ export function SitesPage() {
                       }}
                     >
                       {sites.map((site) => (
-                        <SiteCard key={site.id} site={site} now={now} />
+                        <SiteCard key={site.id} site={site} now={now} reload={reloadSites} />
                       ))}
                     </ul>
                     <div
@@ -493,7 +521,7 @@ export function SitesPage() {
                                       {hostNames[site.hostKind]} · {MODES[site.mode]}
                                       {site.tailnetOnly ? ' · private' : ''}
                                     </Muted>
-                                    <Findings site={site} />
+                                    <Findings site={site} reload={reloadSites} />
                                   </div>
                                 </div>
                               </td>

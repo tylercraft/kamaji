@@ -7,7 +7,8 @@ import {
   type MacHealth,
   type MacJob,
 } from '@kamaji/shared';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { reveal } from '../components/reveal';
 import {
   Button,
   Dot,
@@ -297,10 +298,18 @@ function JobRow({ job, crashes }: { job: MacJob; crashes: number }) {
 }
 
 function CrashList({ crashes }: { crashes: CrashGroup[] }) {
+  // An issue's link names a crash group in the address: open it once it's on the page.
+  const goTo = useRef<string | null>(
+    window.location.hash.startsWith('#crash-') ? window.location.hash.slice(1) : null,
+  );
+  useEffect(() => {
+    if (goTo.current && reveal(goTo.current)) goTo.current = null;
+  });
   return (
     <div css={{ display: 'grid', gap: 10 }}>
       {crashes.map((g) => (
-        <div key={g.id}>
+        // An issue's "See the stack on Servers" lands here.
+        <div key={g.id} id={`crash-${g.id}`}>
           <Flag tone="amber">
             {g.job.replace(/^dev\.craftish\.calcifer\./, '')}: {g.type}
           </Flag>{' '}

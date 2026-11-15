@@ -26,6 +26,7 @@ import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { groupIssues, recentOutcomes, siteNote, withoutName, type Outcome } from '../overviewView';
 import { useLink } from '../router';
 import { useResource, type Resource } from '../useResource';
+import { IssueStep, UndoDismiss } from '../components/IssueStep';
 import { WithIcon } from '../components/SiteIcon';
 
 const Metrics = styled.dl`
@@ -101,13 +102,20 @@ function ResourceName({
   return type === 'site' ? <WithIcon id={id}>{a}</WithIcon> : a;
 }
 
-/** Open issues grouped by site or server, each with when it started and was last seen. */
+/**
+ * Open issues grouped by site or server, each with when it started and was last seen, and its
+ * next step: no warning without something to do. Dismissed ones are folded away below, with Undo.
+ */
 function Attention({
   attention,
+  dismissed,
   names,
+  reload,
 }: {
   attention: OverviewResponse['attention'];
+  dismissed: OverviewResponse['dismissed'];
   names: Map<string, string>;
+  reload: () => void;
 }) {
   if (!attention.known)
     return (
@@ -116,8 +124,18 @@ function Attention({
         urgent first, once they have.
       </Empty>
     );
+  const folded = <Dismissed issues={dismissed} names={names} reload={reload} />;
   if (attention.value.length === 0)
-    return <Empty title="Nothing needs you">Every check that ran last passed.</Empty>;
+    return (
+      <>
+        <Empty title="Nothing needs you">
+          {dismissed.length > 0
+            ? 'Everything open is dismissed until something new happens.'
+            : 'Every check that ran last passed.'}
+        </Empty>
+        {folded}
+      </>
+    );
   return (
     <div css={{ display: 'grid', gap: 14 }}>
       {groupIssues(attention.value).map((g) => (
@@ -149,12 +167,68 @@ function Attention({
                   Open since <Time iso={issue.firstSeenAt} /> · last seen{' '}
                   <Time iso={issue.lastSeenAt} />
                 </Muted>
+                <div css={{ marginTop: 4 }}>
+                  <IssueStep id={issue.id} action={issue.action} onDone={reload} />
+                </div>
               </li>
             ))}
           </ul>
         </section>
       ))}
+      {folded}
     </div>
+  );
+}
+
+/** Dismissed (n): each with who hid it and when, and Undo. Nothing when there are none. */
+function Dismissed({
+  issues,
+  names,
+  reload,
+}: {
+  issues: OverviewResponse['dismissed'];
+  names: Map<string, string>;
+  reload: () => void;
+}) {
+  if (issues.length === 0) return null;
+  return (
+    <details>
+      <summary css={{ fontSize: 12, cursor: 'pointer' }}>Dismissed ({issues.length})</summary>
+      <ul css={{ margin: '8px 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: 6 }}>
+        {issues.map((issue) => (
+          <li
+            key={issue.id}
+            css={{
+              display: 'flex',
+              gap: 10,
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              padding: '6px 10px',
+              border: '1px solid var(--line)',
+              borderRadius: 4,
+            }}
+          >
+            <span css={{ display: 'grid', gap: 2, minWidth: 0 }}>
+              <span>
+                <ResourceName type={issue.resourceType} id={issue.resourceId} names={names} />
+                {': '}
+                {withoutName(
+                  issue.summary,
+                  names.get(`${issue.resourceType}:${issue.resourceId}`) ?? issue.resourceId,
+                )}
+              </span>
+              {issue.dismissed && (
+                <Muted>
+                  Dismissed <Time iso={issue.dismissed.at} /> by {issue.dismissed.by}
+                </Muted>
+              )}
+            </span>
+            <UndoDismiss id={issue.id} onDone={reload} />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -454,7 +528,14 @@ export function OverviewPage() {
           <Panel aria-labelledby="attention">
             <PanelTitle id="attention">Needs attention</PanelTitle>
             <ResourceView resource={overview} label="open problems">
-              {(o) => <Attention attention={o.attention} names={names} />}
+              {(o) => (
+                <Attention
+                  attention={o.attention}
+                  dismissed={o.dismissed}
+                  names={names}
+                  reload={overview.state === 'ready' ? overview.reload : () => {}}
+                />
+              )}
             </ResourceView>
           </Panel>
           <RecentOutcomes />
