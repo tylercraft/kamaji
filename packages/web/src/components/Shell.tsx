@@ -15,7 +15,6 @@ import type { ReactNode } from 'react';
 import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { useLink, useRoute } from '../router';
 import { useResource } from '../useResource';
-import { ThemeToggle } from './ThemeToggle';
 import { Toasts } from './toast';
 import { Dot, Pill } from './ui';
 
@@ -32,7 +31,7 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
 // One iron header at laptop widths: the brand, the tabs, then Kamaji's own health. Under 980px
 // the tabs wrap onto their own row below the brand. On a phone (640px and under) it's the brand
 // and a menu button, as on the Calcifer dashboard: a checkbox holds the menu open, with no script,
-// and the menu covers the page with the tabs, Kamaji's health and Appearance.
+// and the menu covers the page with the tabs and Kamaji's health.
 const PHONE = '@media (max-width: 640px)';
 
 const Top = styled.header`
@@ -427,7 +426,6 @@ export function Shell({ children }: { children: ReactNode }) {
           </Nav>
           <Health>
             <StatusSummary status={status} />
-            <ThemeToggle />
           </Health>
         </div>
       </Top>

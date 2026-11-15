@@ -83,15 +83,12 @@ const globalStyles = css`
     --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  /* Light or dark as the system is: there's no choice in Kamaji itself. */
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme='light']) {
+    :root {
       ${dark}
       color-scheme: dark;
     }
-  }
-  :root[data-theme='dark'] {
-    ${dark}
-    color-scheme: dark;
   }
   *,
   *::before,
@@ -144,28 +141,4 @@ const globalStyles = css`
 
 export function GlobalStyles() {
   return <Global styles={globalStyles} />;
-}
-
-export type ThemeChoice = 'system' | 'light' | 'dark';
-const KEY = 'kamaji.theme';
-
-export function readThemeChoice(): ThemeChoice {
-  try {
-    const saved = localStorage.getItem(KEY);
-    return saved === 'light' || saved === 'dark' ? saved : 'system';
-  } catch {
-    return 'system';
-  }
-}
-
-export function applyThemeChoice(choice: ThemeChoice): void {
-  const root = document.documentElement;
-  if (choice === 'system') root.removeAttribute('data-theme');
-  else root.setAttribute('data-theme', choice);
-  try {
-    if (choice === 'system') localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, choice);
-  } catch {
-    // Storage blocked: the choice lasts until the page reloads.
-  }
 }
