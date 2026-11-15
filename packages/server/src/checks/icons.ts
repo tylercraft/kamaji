@@ -1,11 +1,12 @@
 // Each site's favicon, fetched by Kamaji itself so the page never loads anything from a client
 // site. Once a day per site, alongside the cycle but never holding it up: a plain GET of the home
-// page for its <link rel="icon"> and apple-touch-icon tags, then a GET of the icon (or of
-// /favicon.ico). Only a small image of a known type is kept, checked from its bytes as well as
+// page for its icon, apple-touch-icon and tile tags, then a GET of the sharpest icon (or of
+// /apple-touch-icon.png and /favicon.ico). Only a small image of a known type is kept, checked from its bytes as well as
 // its header, and a failed try keeps the last icon.
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { SiteIconStatus } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { describeError, USER_AGENT } from './http.js';
 
@@ -25,14 +26,17 @@ const MAX_PAGE_BYTES = 512 * 1024;
 const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
 export const ICON_EVERY_MS = 24 * 60 * 60 * 1000;
-/** Largest icon worth fetching: the Sites table shows 48px, so 192 covers a 2x screen and more. */
-const LARGEST = 192;
+/** At most this many of the page's icons are tried, sharpest first, before the usual paths. */
+const MOST_TRIES = 4;
 
 export interface IconLink {
   href: URL;
-  /** The size it says it is, in pixels (see linkSize), or null when it doesn't say. */
+  /**
+   * How sharp it says it is, in pixels: from its sizes, its file name (WordPress's
+   * cropped-…-192x192.png), or what its kind usually is (180 for an apple-touch-icon). Infinity
+   * for an SVG, null when nothing says.
+   */
   size: number | null;
-  apple: boolean;
 }
 
 const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' };
@@ -49,22 +53,26 @@ function attr(tag: string, name: string): string | null {
   return m ? decode(m[1] ?? m[2] ?? m[3] ?? '') : null;
 }
 
-/**
- * A link's sizes attribute as one number: its largest size that fits (192px or under), or its
- * smallest when none does. "any", or no sizes at all, is null.
- */
-function linkSize(sizes: string | null): number | null {
+/** The largest side in a sizes attribute ("32x32 192x192"), or null when there's none. */
+function largestSize(sizes: string | null): number | null {
   const sides = (sizes ?? '')
     .split(/\s+/)
     .map((t) => /^(\d+)x(\d+)$/i.exec(t))
     .filter((m): m is RegExpExecArray => m !== null)
     .map((m) => Math.max(Number(m[1]), Number(m[2])));
-  if (sides.length === 0) return null;
-  const fit = sides.filter((s) => s <= LARGEST);
-  return fit.length ? Math.max(...fit) : Math.min(...sides);
+  return sides.length ? Math.max(...sides) : null;
 }
 
-/** The icon and apple-touch-icon links in a page, in page order, resolved against `base`. */
+/** A size in the file name, as WordPress names its site icons: cropped-mark-192x192.png. */
+function nameSize(url: URL): number | null {
+  const m = /[-_](\d{2,4})x(\d{2,4})\.\w+$/i.exec(url.pathname);
+  return m ? Math.max(Number(m[1]), Number(m[2])) : null;
+}
+
+/**
+ * The icons a page lists, in page order, resolved against `base`: <link rel="icon">,
+ * apple-touch-icon, and the msapplication-TileImage meta WordPress adds for its site icon.
+ */
 export function iconLinks(html: string, base: string): IconLink[] {
   const baseHref = /<base\b[^>]*>/i.exec(html);
   let root: URL;
@@ -73,35 +81,52 @@ export function iconLinks(html: string, base: string): IconLink[] {
   } catch {
     root = new URL(base);
   }
+  const resolve = (href: string | undefined): URL | null => {
+    if (!href) return null;
+    try {
+      const url = new URL(href, root);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
+    } catch {
+      return null;
+    }
+  };
   const links: IconLink[] = [];
-  for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
+  for (const [tag] of html.matchAll(/<(link|meta)\b[^>]*>/gi)) {
+    if (/^<meta/i.test(tag)) {
+      if ((attr(tag, 'name') ?? '').toLowerCase() !== 'msapplication-tileimage') continue;
+      const href = resolve(attr(tag, 'content')?.trim());
+      // Windows' tile: 144px unless its name says otherwise.
+      if (href) links.push({ href, size: nameSize(href) ?? 144 });
+      continue;
+    }
     const rel = (attr(tag, 'rel') ?? '').toLowerCase().split(/\s+/);
     const apple = rel.includes('apple-touch-icon') || rel.includes('apple-touch-icon-precomposed');
     if (!rel.includes('icon') && !apple) continue;
-    const href = attr(tag, 'href')?.trim();
+    const href = resolve(attr(tag, 'href')?.trim());
     if (!href) continue;
-    let url: URL;
-    try {
-      url = new URL(href, root);
-    } catch {
-      continue;
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') continue;
-    links.push({ href: url, size: linkSize(attr(tag, 'sizes')), apple });
+    const svg =
+      (attr(tag, 'type') ?? '').toLowerCase().includes('svg') ||
+      href.pathname.toLowerCase().endsWith('.svg');
+    const size = svg
+      ? Infinity
+      : (largestSize(attr(tag, 'sizes')) ?? nameSize(href) ?? (apple ? 180 : null));
+    links.push({ href, size });
   }
   return links;
 }
 
 /**
- * Which link to use: the largest that says it's 64px or smaller; otherwise the first. Icon links
- * come before apple-touch-icons, which are usually 180px.
+ * Which to try, sharpest first: an SVG, then the largest size, then any that don't say, in page
+ * order. Too big a file (over 100 KB) just fails, and the next is tried.
  */
-export function pickIcon(links: IconLink[]): URL | null {
-  const ordered = [...links.filter((l) => !l.apple), ...links.filter((l) => l.apple)];
-  const fits = ordered.filter((l) => l.size !== null && l.size <= LARGEST);
-  if (fits.length)
-    return fits.reduce((best, l) => ((l.size ?? 0) > (best.size ?? 0) ? l : best)).href;
-  return ordered[0]?.href ?? null;
+export function pickIcons(links: IconLink[]): URL[] {
+  const seen = new Set<string>();
+  return links
+    .map((l, i) => ({ ...l, i }))
+    .sort((a, b) => (b.size ?? -1) - (a.size ?? -1) || a.i - b.i)
+    .filter((l) => !seen.has(l.href.href) && Boolean(seen.add(l.href.href)))
+    .slice(0, MOST_TRIES)
+    .map((l) => l.href);
 }
 
 const starts = (b: Uint8Array, bytes: number[], at = 0) => bytes.every((x, i) => b[at + i] === x);
@@ -243,11 +268,16 @@ export async function fetchIcon(siteUrl: string, options: FetchOptions = {}): Pr
   const site = new URL(siteUrl);
   const page = await get(site, site, 'text/html', MAX_PAGE_BYTES, 'cut', options);
   const home = page.ok ? page.url : site;
-  const tries: URL[] = [];
-  if (page.ok) {
-    const picked = pickIcon(iconLinks(new TextDecoder().decode(page.bytes), home.href));
-    if (picked) tries.push(picked);
-  }
+  const links = page.ok ? iconLinks(new TextDecoder().decode(page.bytes), home.href) : [];
+  // Where the apple-touch-icon usually is (180px), whether the page says so or not, when the page
+  // offers nothing as sharp: tried in its place by size. One that isn't there is no news, so its
+  // problem is never the one given.
+  const guess = new URL('/apple-touch-icon.png', home);
+  const quiet = links.some((l) => (l.size ?? 0) >= 180 || l.href.href === guess.href)
+    ? null
+    : guess;
+  const tries = pickIcons(quiet ? [...links, { href: quiet, size: 180 }] : links);
+  // Then /favicon.ico, the oldest place of all.
   const fallback = new URL('/favicon.ico', home);
   if (!tries.some((u) => u.href === fallback.href)) tries.push(fallback);
   let first: string | null = null;
@@ -262,7 +292,7 @@ export async function fetchIcon(siteUrl: string, options: FetchOptions = {}): Pr
       else if (said !== sniffed) problem = 'Its type doesn’t match what the server says';
       else return { ok: true, bytes: got.bytes, type: sniffed };
     }
-    first ??= problem;
+    if (url.href !== quiet?.href) first ??= problem;
   }
   return { ok: false, problem: first ?? 'No icon' };
 }
@@ -338,22 +368,15 @@ export function siteNames(db: Db): Record<string, string> {
   );
 }
 
-/**
- * Sites due an icon: not removed or paused, and not tried in the last day. With `all`, every site
- * that isn't removed or paused, however recently it was tried.
- */
-export function dueIcons(
-  db: Db,
-  now: number,
-  all = false,
-): { id: string; name: string; url: string }[] {
+/** Sites due an icon: not removed or paused, and not tried in the last day. */
+export function dueIcons(db: Db, now: number): { id: string; name: string; url: string }[] {
   return db
     .prepare(
       `SELECT s.id, s.name, s.url FROM sites s LEFT JOIN site_icons i ON i.site_id = s.id
        WHERE s.removed_at IS NULL AND s.paused_at IS NULL
-       AND (? OR i.checked_at IS NULL OR i.checked_at <= ?) ORDER BY s.id`,
+       AND (i.checked_at IS NULL OR i.checked_at <= ?) ORDER BY s.id`,
     )
-    .all(all ? 1 : 0, now - ICON_EVERY_MS)
+    .all(now - ICON_EVERY_MS)
     .map((r) => ({ id: String(r.id), name: String(r.name), url: String(r.url) }));
 }
 
@@ -365,37 +388,80 @@ export interface IconOutcome {
   problem: string | null;
 }
 
+type IconOptions = FetchOptions & { dir: string; now: () => number };
+
+/** One site's icon, fetched and kept. Never throws: a failure keeps the last icon, and says why. */
+async function fetchAndStore(
+  db: Db,
+  site: { id: string; name: string; url: string },
+  options: IconOptions,
+): Promise<IconOutcome | null> {
+  let icon: IconResult;
+  try {
+    icon = await fetchIcon(site.url, options);
+  } catch {
+    if (options.signal?.aborted) return null;
+    icon = { ok: false, problem: 'Kamaji couldn’t fetch it' };
+  }
+  let problem = icon.ok ? null : icon.problem;
+  try {
+    storeIcon(db, options.dir, site.id, icon, options.now());
+  } catch {
+    // A full disk or a locked database: tried again tomorrow, or on the next cycle if the row
+    // didn't save.
+    problem = 'Kamaji couldn’t save it';
+  }
+  return { id: site.id, name: site.name, ok: problem === null, problem };
+}
+
 /**
- * Every due site's icon (with `all`, every site's), three at a time, each site's outcome in id
- * order. Never throws: a site that fails, or throws, keeps its last icon and is tried again
- * tomorrow.
+ * Refetch icon, on a site's settings: its icon now, however recently it was tried. Null for a
+ * site that's removed or doesn't exist.
+ */
+export async function refetchIcon(
+  db: Db,
+  siteId: string,
+  options: IconOptions,
+): Promise<IconOutcome | null> {
+  const row = db
+    .prepare('SELECT id, name, url FROM sites WHERE id = ? AND removed_at IS NULL')
+    .get(siteId);
+  if (!row) return null;
+  return fetchAndStore(
+    db,
+    { id: String(row.id), name: String(row.name), url: String(row.url) },
+    options,
+  );
+}
+
+/** What a site's settings show: when its icon was fetched, and why the last try failed if it did. */
+export function iconStatus(db: Db, siteId: string): SiteIconStatus | null {
+  const row = db
+    .prepare('SELECT fetched_at, checked_at, problem FROM site_icons WHERE site_id = ?')
+    .get(siteId);
+  if (!row) return null;
+  return {
+    fetchedAt: row.fetched_at === null ? null : new Date(Number(row.fetched_at)).toISOString(),
+    checkedAt: new Date(Number(row.checked_at)).toISOString(),
+    problem: row.problem === null ? null : String(row.problem),
+  };
+}
+
+/**
+ * Every due site's icon, three at a time, each site's outcome in id order. Never throws: a site
+ * that fails, or throws, keeps its last icon and is tried again tomorrow.
  */
 export async function refreshIcons(
   db: Db,
-  options: FetchOptions & { dir: string; now: () => number; atOnce?: number; all?: boolean },
+  options: IconOptions & { atOnce?: number },
 ): Promise<IconOutcome[]> {
-  const sites = dueIcons(db, options.now(), options.all);
+  const sites = dueIcons(db, options.now());
   const outcomes: IconOutcome[] = [];
   let next = 0;
   async function worker() {
     while (next < sites.length && !options.signal?.aborted) {
-      const site = sites[next++]!;
-      let icon: IconResult;
-      try {
-        icon = await fetchIcon(site.url, options);
-      } catch {
-        if (options.signal?.aborted) return;
-        icon = { ok: false, problem: 'Kamaji couldn’t fetch it' };
-      }
-      let problem = icon.ok ? null : icon.problem;
-      try {
-        storeIcon(db, options.dir, site.id, icon, options.now());
-      } catch {
-        // A full disk or a locked database: tried again tomorrow, or on the next cycle if the
-        // row didn't save.
-        problem = 'Kamaji couldn’t save it';
-      }
-      outcomes.push({ id: site.id, name: site.name, ok: problem === null, problem });
+      const outcome = await fetchAndStore(db, sites[next++]!, options);
+      if (outcome) outcomes.push(outcome);
     }
   }
   await Promise.all(Array.from({ length: Math.min(options.atOnce ?? 3, sites.length) }, worker));
@@ -403,34 +469,19 @@ export async function refreshIcons(
 }
 
 /**
- * One refresh at a time, for two callers. `start` is the cycle's: it starts the day's refresh and
- * returns at once, so a slow site can never hold the cycle up, and does nothing while one is
- * going; a refresh that throws (a bug: refreshIcons doesn't) logs that it happened, nothing more.
- * `all` is Refetch icons on the Sites page: every site, now, after any refresh already going.
+ * What the cycle calls: starts a refresh and returns at once, so a slow site can never hold the
+ * cycle up, and does nothing while one is still going. A refresh that throws (a bug: refreshIcons
+ * doesn't) logs that it happened, nothing more.
  */
-export function iconRefresher(
-  run: (all: boolean) => Promise<IconOutcome[]>,
-  log: (message: string) => void,
-) {
-  let running: Promise<unknown> | null = null;
-  const go = (all: boolean) => {
-    const done = run(all);
-    const tracked: Promise<unknown> = done
-      .catch(() => {})
+export function iconRefresher(run: () => Promise<unknown>, log: (message: string) => void) {
+  let running = false;
+  return (): void => {
+    if (running) return;
+    running = true;
+    run()
+      .catch(() => log('icons: the refresh failed'))
       .finally(() => {
-        if (running === tracked) running = null;
+        running = false;
       });
-    running = tracked;
-    return done;
-  };
-  return {
-    start(): void {
-      if (running) return;
-      go(false).catch(() => log('icons: the refresh failed'));
-    },
-    async all(): Promise<IconOutcome[]> {
-      while (running) await running;
-      return go(true);
-    },
   };
 }

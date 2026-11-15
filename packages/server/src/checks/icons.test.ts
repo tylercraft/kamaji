@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { IconRefetchResponse, SiteIconsResponse } from '@kamaji/shared';
+import { SiteDetailResponse, SiteIconStatus, SiteIconsResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import type { Db } from '../db.js';
@@ -14,7 +14,8 @@ import {
   iconRefresher,
   iconLinks,
   mayFetch,
-  pickIcon,
+  pickIcons,
+  refetchIcon,
   refreshIcons,
   sniff,
   storedIcon,
@@ -55,45 +56,43 @@ const page = (head: string): Answer => ({
 });
 
 describe('picking the icon from the page', () => {
-  it('takes the largest that’s 192px or smaller, as WordPress lists its site icon', () => {
-    const links = iconLinks(
-      `<link rel="icon" href="/wp-content/uploads/cropped-mark-32x32.png" sizes="32x32" />
-       <link rel="icon" href="/wp-content/uploads/cropped-mark-192x192.png" sizes="192x192" />
-       <link rel="apple-touch-icon" href="/wp-content/uploads/cropped-mark-180x180.png" />`,
-      SITE,
-    );
-    expect(pickIcon(links)?.href).toBe(
-      'https://example.test/wp-content/uploads/cropped-mark-192x192.png',
-    );
+  const picks = (html: string) => pickIcons(iconLinks(html, SITE)).map((u) => u.pathname);
+
+  it('tries the sharpest first, as WordPress lists its site icon', () => {
     expect(
-      pickIcon(
-        iconLinks(
-          `<link rel=icon sizes="32x32" href=small.png><link rel=icon sizes="512x512" href=big.png>`,
-          SITE,
-        ),
-      )?.href,
-    ).toBe('https://example.test/small.png');
-    expect(
-      pickIcon(
-        iconLinks(
-          `<link rel=icon sizes="16x16" href=a.png><link rel="shortcut icon" sizes="48x48 16x16" href=b.ico>`,
-          SITE,
-        ),
-      )?.href,
-    ).toBe('https://example.test/b.ico');
+      picks(
+        `<link rel="icon" href="/wp-content/uploads/cropped-mark-32x32.png" sizes="32x32" />
+         <link rel="icon" href="/wp-content/uploads/cropped-mark-192x192.png" sizes="192x192" />
+         <link rel="apple-touch-icon" href="/wp-content/uploads/cropped-mark-180x180.png" />
+         <meta name="msapplication-TileImage" content="/wp-content/uploads/cropped-mark-270x270.png" />`,
+      ),
+    ).toEqual([
+      '/wp-content/uploads/cropped-mark-270x270.png',
+      '/wp-content/uploads/cropped-mark-192x192.png',
+      '/wp-content/uploads/cropped-mark-180x180.png',
+      '/wp-content/uploads/cropped-mark-32x32.png',
+    ]);
   });
 
-  it('takes the first when sizes aren’t given, an icon link before an apple-touch-icon', () => {
-    const links = iconLinks(
-      `<link rel="apple-touch-icon" href="https://cdn.example.test/touch.png">
-       <link href='/fav.svg?v=1&amp;x=2' rel='icon' type='image/svg+xml' sizes='any'>
-       <link rel="icon" href="/later.png">`,
-      SITE,
-    );
-    expect(pickIcon(links)?.href).toBe('https://example.test/fav.svg?v=1&x=2');
-    expect(pickIcon(iconLinks('<link rel="apple-touch-icon" href="/touch.png">', SITE))?.href).toBe(
-      'https://example.test/touch.png',
-    );
+  it('puts an SVG first, then an apple-touch-icon over a small or unsized icon', () => {
+    expect(
+      picks(
+        `<link rel="icon" href="/later.png">
+         <link rel="apple-touch-icon" href="/touch.png">
+         <link rel=icon sizes="16x16" href=a.png>
+         <link href='/fav.svg?v=1&amp;x=2' rel='icon' type='image/svg+xml' sizes='any'>
+         <link rel="shortcut icon" sizes="48x48 16x16" href=b.ico>`,
+      ),
+    ).toEqual(['/fav.svg', '/touch.png', '/b.ico', '/a.png']);
+  });
+
+  it('tries four at most, each once', () => {
+    const many = [512, 256, 192, 128, 64, 32]
+      .map(
+        (n) => `<link rel=icon sizes="${n}x${n}" href=/i${n}.png><link rel=icon href=/i${n}.png>`,
+      )
+      .join('');
+    expect(picks(many)).toEqual(['/i512.png', '/i256.png', '/i192.png', '/i128.png']);
   });
 
   it('skips data: and javascript: links, other rels, and follows <base href>', () => {
@@ -106,7 +105,7 @@ describe('picking the icon from the page', () => {
       SITE,
     );
     expect(links.map((l) => l.href.href)).toEqual(['https://example.test/sub/icon.png']);
-    expect(pickIcon(iconLinks('<p>No icons</p>', SITE))).toBeNull();
+    expect(pickIcons(iconLinks('<p>No icons</p>', SITE))).toEqual([]);
   });
 });
 
@@ -177,6 +176,30 @@ describe('what counts as an icon', () => {
     });
   });
 
+  it('tries /apple-touch-icon.png before a small icon the page lists, quietly', async () => {
+    const touch = web({
+      [SITE]: page('<link rel="icon" href="/small.png" sizes="32x32">'),
+      'https://example.test/apple-touch-icon.png': { type: 'image/png', body: PNG2 },
+      'https://example.test/small.png': { type: 'image/png', body: PNG },
+    });
+    expect(await fetchIcon(SITE, { fetch: touch.fetch })).toEqual({
+      ok: true,
+      bytes: PNG2,
+      type: 'image/png',
+    });
+    const none = web({ [SITE]: page('<link rel="icon" href="/small.png" sizes="32x32">') });
+    expect(await fetchIcon(SITE, { fetch: none.fetch })).toEqual({
+      ok: false,
+      problem: 'HTTP 404',
+    });
+    expect(none.asked).toEqual([
+      SITE,
+      'https://example.test/apple-touch-icon.png',
+      'https://example.test/small.png',
+      'https://example.test/favicon.ico',
+    ]);
+  });
+
   it('won’t follow a link or redirect to an IP address or a local name', async () => {
     expect(mayFetch(new URL('http://127.0.0.1:10002/api/status'), new URL(SITE))).toBe(false);
     expect(mayFetch(new URL('https://mini.local/x.png'), new URL(SITE))).toBe(false);
@@ -188,7 +211,11 @@ describe('what counts as an icon', () => {
       'https://example.test/favicon.ico': { status: 302, location: 'http://127.0.0.1/icon.ico' },
     });
     expect((await fetchIcon(SITE, { fetch })).ok).toBe(false);
-    expect(asked).toEqual([SITE, 'https://example.test/favicon.ico']);
+    expect(asked).toEqual([
+      SITE,
+      'https://example.test/apple-touch-icon.png',
+      'https://example.test/favicon.ico',
+    ]);
   });
 });
 
@@ -215,10 +242,13 @@ describe('refreshing icons', () => {
     expect(first).toMatchObject({ type: 'image/png' });
     // Not due again until a day has passed.
     expect(await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch })).toEqual([]);
-    // Unless it's every site, as Refetch icons asks.
+    // Unless it's asked for, as Refetch icon does.
     expect(
-      await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch, all: true }),
-    ).toEqual([{ id: 'example.test', name: 'example.test', ok: true, problem: null }]);
+      await refetchIcon(db, 'example.test', { dir, now: () => T + 1000, fetch: good.fetch }),
+    ).toEqual({ id: 'example.test', name: 'example.test', ok: true, problem: null });
+    expect(
+      await refetchIcon(db, 'nowhere.test', { dir, now: () => T, fetch: good.fetch }),
+    ).toBeNull();
     // The site is down: the page and /favicon.ico both refuse.
     const down = (async () => {
       throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
@@ -259,20 +289,20 @@ describe('refreshing icons', () => {
   });
 });
 
-describe('one refresh at a time', () => {
-  it('starts the cycle’s without waiting for it, once, and logs only that one failed', async () => {
+describe('the cycle’s part', () => {
+  it('starts a refresh without waiting for it, one at a time, and logs only that one failed', async () => {
     let calls = 0;
     let finish: () => void = () => {};
     const logged: string[] = [];
-    const icons = iconRefresher(
+    const start = iconRefresher(
       () => {
         calls += 1;
-        return new Promise((resolve) => (finish = () => resolve([])));
+        return new Promise<void>((resolve) => (finish = resolve));
       },
       (m) => logged.push(m),
     );
-    expect(icons.start()).toBeUndefined();
-    icons.start();
+    expect(start()).toBeUndefined();
+    start();
     expect(calls).toBe(1);
     finish();
     await new Promise((r) => setTimeout(r, 0));
@@ -280,33 +310,11 @@ describe('one refresh at a time', () => {
       () => Promise.reject(new Error('/secret/path')),
       (m) => logged.push(m),
     );
-    failing.start();
+    failing();
     await new Promise((r) => setTimeout(r, 0));
-    icons.start();
+    start();
     expect(calls).toBe(2);
     expect(logged).toEqual(['icons: the refresh failed']);
-  });
-
-  it('runs Refetch icons after the refresh already going, for every site', async () => {
-    const runs: string[] = [];
-    let finish: () => void = () => {};
-    const icons = iconRefresher(
-      (all) => {
-        runs.push(all ? 'all' : 'due');
-        if (all) return Promise.resolve([{ id: 'a', name: 'A', ok: true, problem: null }]);
-        return new Promise((resolve) => (finish = () => resolve([])));
-      },
-      () => {},
-    );
-    icons.start();
-    const refetched = icons.all();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(runs).toEqual(['due']);
-    // The cycle can't start another while Refetch icons waits.
-    icons.start();
-    finish();
-    expect(await refetched).toEqual([{ id: 'a', name: 'A', ok: true, problem: null }]);
-    expect(runs).toEqual(['due', 'all']);
   });
 });
 
@@ -326,7 +334,7 @@ describe('the icon routes', () => {
       login: 'tylercraft@github',
       webDist: mkdtempSync(join(tmpdir(), 'kamaji-web-')),
       iconsDir: dir,
-      refetchIcons: () => refreshIcons(db, { dir, now: () => T + 1000, fetch, all: true }),
+      iconFetch: fetch,
       passkeys: testAuthenticator().config,
       now: () => T,
       statusInput: () => ({
@@ -342,8 +350,8 @@ describe('the icon routes', () => {
     const get = (path: string, headers: Record<string, string> = {}) =>
       app.request(path, { headers: { 'Tailscale-User-Login': 'tylercraft@github', ...headers } });
     // No Kamaji-Passkey header: Refetch icons goes without one, as the page sends it.
-    const refetch = (origin = 'https://kamaji.test') =>
-      app.request('/api/site-icons/refetch', {
+    const refetch = (id: string, origin = 'https://kamaji.test') =>
+      app.request(`/api/sites/${id}/icon/refetch`, {
         method: 'POST',
         headers: {
           'Tailscale-User-Login': 'tylercraft@github',
@@ -381,14 +389,18 @@ describe('the icon routes', () => {
     expect(Object.keys(list.names).sort()).toEqual(['bare.test', 'example.test']);
   });
 
-  it('refetches every site’s icon without a passkey, saying which have none', async () => {
-    const { refetch } = await setup();
-    const res = await refetch();
+  it('refetches one site’s icon without a passkey, and its settings say how it went', async () => {
+    const { get, refetch } = await setup();
+    const res = await refetch('bare.test');
     expect(res.status).toBe(200);
-    expect(IconRefetchResponse.parse(await res.json()).sites).toEqual([
-      { id: 'bare.test', name: 'bare.test', ok: false, problem: 'HTTP 404' },
-      { id: 'example.test', name: 'example.test', ok: true, problem: null },
-    ]);
-    expect((await refetch('https://evil.example')).status).toBe(403);
+    expect(SiteIconStatus.parse(await res.json())).toMatchObject({
+      fetchedAt: null,
+      problem: 'HTTP 404',
+    });
+    expect((await refetch('example.test')).status).toBe(200);
+    const detail = SiteDetailResponse.parse(await (await get('/api/sites/example.test')).json());
+    expect(detail.icon).toMatchObject({ problem: null });
+    expect((await refetch('nowhere.test')).status).toBe(404);
+    expect((await refetch('example.test', 'https://evil.example')).status).toBe(403);
   });
 });
