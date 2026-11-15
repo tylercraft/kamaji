@@ -491,6 +491,11 @@ const app = createApp({
   workerOn: true,
   passkeys,
   iconsDir,
+  // Refetch icons, as if every site was tried: First & Last has none to give.
+  refetchIcons: async () => [
+    { id: OK, name: 'Aleya Hoerlein', ok: true, problem: null },
+    { id: BAD, name: 'First & Last Records', ok: false, problem: 'HTTP 404' },
+  ],
   statusInput: () => ({
     version: 'smoke',
     commit: null,
@@ -928,6 +933,31 @@ for (const view of VIEWS) {
     problems.push('no toast saying why Recheck all didn’t run');
   if (problems.length) failures.push(`recheck all: ${problems.join('; ')}`);
   else console.log('ok   recheck all: no passkey, and a toast');
+}
+
+// Refetch icons, on the Sites page: no passkey (the same plain GETs the cycle makes), and a toast
+// naming each site that gave no icon.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nonces = () => Number(db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces').get().n);
+  const before = nonces();
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await wait(1500);
+  const clicked = await evaluate(
+    `(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Refetch icons'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
+  );
+  if (clicked === 'missing') problems.push('no Refetch icons button');
+  await wait(1000);
+  if (nonces() !== before) problems.push('Refetch icons asked for a passkey');
+  if (
+    !(await evaluate('document.body.innerText')).includes(
+      'Fetched icons for 1 of 2 sites. None from: First & Last Records (HTTP 404)',
+    )
+  )
+    problems.push('no toast naming the site without an icon');
+  if (problems.length) failures.push(`refetch icons: ${problems.join('; ')}`);
+  else console.log('ok   refetch icons: no passkey, and a toast naming what’s missing');
 }
 
 // The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and
