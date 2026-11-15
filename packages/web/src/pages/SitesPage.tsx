@@ -1,9 +1,4 @@
-import {
-  IconRefetchResponse,
-  RecheckAllResponse,
-  SitesResponse,
-  type SiteSummary,
-} from '@kamaji/shared';
+import { RecheckAllResponse, SitesResponse, type SiteSummary } from '@kamaji/shared';
 import { postJson } from '../api';
 import { failed, reason, saved } from '../components/toast';
 import { useState } from 'react';
@@ -36,11 +31,10 @@ import {
   present,
   recheckable,
   recheckSummary,
-  refetchSummary,
   type SiteFilters,
 } from '../sitesView';
 import { useResource } from '../useResource';
-import { load as reloadIcons, SiteIcon, WithIcon } from '../components/SiteIcon';
+import { SiteIcon, WithIcon } from '../components/SiteIcon';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
   craftish: 'craftish',
@@ -194,36 +188,6 @@ function RecheckAll({ count, reload }: { count: number; reload: () => void }) {
       title="Has WordPress check for updates first on each connected site, then reports"
     >
       {asking === null ? 'Recheck all' : `Asking ${asking} site${asking === 1 ? '' : 's'}…`}
-    </Button>
-  );
-}
-
-/**
- * Refetch icons: every site's icon now, rather than once a day, so one just added shows at once.
- * Plain GETs, as the cycle makes, so no passkey. The toast names each site still without one.
- */
-function RefetchIcons({ count }: { count: number }) {
-  const [asking, setAsking] = useState(false);
-  if (count === 0) return null;
-  async function refetch() {
-    setAsking(true);
-    const result = await postJson('/api/site-icons/refetch', {}, IconRefetchResponse);
-    setAsking(false);
-    if (!result.ok) failed(`Refetch icons didn’t run: ${reason(result.error)}`);
-    else {
-      const summary = refetchSummary(result.data.sites);
-      (summary.ok ? saved : failed)(summary.message);
-    }
-    await reloadIcons();
-  }
-  return (
-    <Button
-      type="button"
-      disabled={asking}
-      onClick={refetch}
-      title="Fetches every site’s icon now, instead of waiting for the daily fetch"
-    >
-      {asking ? 'Fetching icons…' : 'Refetch icons'}
     </Button>
   );
 }
@@ -441,10 +405,7 @@ export function SitesPage() {
       >
         <div css={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {sites.state === 'ready' && (
-            <>
-              <RefetchIcons count={sites.data.sites.filter((s) => s.pausedAt === null).length} />
-              <RecheckAll count={recheckable(sites.data.sites)} reload={sites.reload} />
-            </>
+            <RecheckAll count={recheckable(sites.data.sites)} reload={sites.reload} />
           )}
           <AddSiteLink />
         </div>

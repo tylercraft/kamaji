@@ -7,6 +7,7 @@ import {
   ConfigureSiteRequest,
   Handshake,
   RemoveSiteResponse,
+  SiteIconStatus,
   type HostKind,
   type SiteBackupSchedule,
   type SiteDetailResponse,
@@ -19,6 +20,7 @@ import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
 import { RememberedDetails } from '../components/remembered';
+import { load as reloadIcons, SiteIcon } from '../components/SiteIcon';
 
 const OK = z.object({ ok: z.literal(true) });
 
@@ -212,6 +214,54 @@ function useAction(toasts?: { saved: string; failed: string }) {
     return result.ok;
   };
   return { busy, error, run };
+}
+
+/**
+ * The site's icon, in its settings: what Kamaji has and the last try, and Refetch icon to try
+ * again now rather than tomorrow, after adding one to the site. Plain GETs, so no passkey.
+ */
+function IconChoice({ detail, reload }: { detail: SiteDetailResponse; reload: () => void }) {
+  const { site, icon } = detail;
+  const [busy, setBusy] = useState(false);
+  async function refetch() {
+    setBusy(true);
+    const result = await postJson(
+      `/api/sites/${encodeURIComponent(site.id)}/icon/refetch`,
+      {},
+      SiteIconStatus,
+    );
+    setBusy(false);
+    if (!result.ok) failed(`Refetch didn’t run: ${reason(result.error)}`);
+    else if (result.data.problem === null) saved(`Fetched ${site.name}’s icon`);
+    else failed(`No icon from ${site.name}: ${result.data.problem}`);
+    await reloadIcons();
+    reload();
+  }
+  return (
+    <Choices>
+      <legend>Icon</legend>
+      <div css={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <SiteIcon id={site.id} size={48} />
+        <Button type="button" disabled={busy} onClick={refetch}>
+          {busy ? 'Fetching…' : 'Refetch icon'}
+        </Button>
+      </div>
+      <Muted>
+        {icon === null ? (
+          'Not tried yet: Kamaji fetches it once a day.'
+        ) : icon.problem === null ? (
+          <>
+            Fetched <Time iso={icon.checkedAt} />. Kamaji takes the sharpest the site offers.
+          </>
+        ) : (
+          <>
+            {icon.fetchedAt ? 'Showing the last one Kamaji got. ' : 'None yet. '}
+            Tried <Time iso={icon.checkedAt} />: {icon.problem}.
+          </>
+        )}
+      </Muted>
+    </Choices>
+  );
 }
 
 /** Step 2: Craftish Care, or monitoring only. */
@@ -490,6 +540,7 @@ export function ConfigureStep({
               />
             </Field>
           )}
+          {section && <IconChoice detail={detail} reload={reload} />}
           <Field
             id="expected"
             label="Text the home page must contain"

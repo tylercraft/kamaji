@@ -2,6 +2,7 @@
 // then connect through craftish-care or choose monitoring only, then configure. A setup is saved
 // from the first step so it can be resumed. Kamaji never installs the plugin: it offers the zip,
 // and the handshake is its first signed request.
+import { iconStatus } from '../checks/icons.js';
 import {
   CareHello,
   type ConfigureSiteRequest,
@@ -234,6 +235,7 @@ export function siteDetail(
           : new Date(Number(row.site_backup_consent_at)).toISOString(),
       consentBy: row.site_backup_consent_by === null ? null : String(row.site_backup_consent_by),
     },
+    icon: iconStatus(db, id),
   };
 }
 

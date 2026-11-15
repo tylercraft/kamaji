@@ -491,11 +491,8 @@ const app = createApp({
   workerOn: true,
   passkeys,
   iconsDir,
-  // Refetch icons, as if every site was tried: First & Last has none to give.
-  refetchIcons: async () => [
-    { id: OK, name: 'Aleya Hoerlein', ok: true, problem: null },
-    { id: BAD, name: 'First & Last Records', ok: false, problem: 'HTTP 404' },
-  ],
+  // Refetch icon, with the web stood in for: nothing answers, so the last icon stays.
+  iconFetch: async () => new globalThis.Response('not found', { status: 404 }),
   statusInput: () => ({
     version: 'smoke',
     commit: null,
@@ -935,29 +932,40 @@ for (const view of VIEWS) {
   else console.log('ok   recheck all: no passkey, and a toast');
 }
 
-// Refetch icons, on the Sites page: no passkey (the same plain GETs the cycle makes), and a toast
-// naming each site that gave no icon.
+// Refetch icon, in a site's settings: no passkey (the same plain GETs the cycle makes), a toast
+// saying why there's no new one, and the settings say the last icon still shows.
 {
   problems = [];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const nonces = () => Number(db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces').get().n);
   const before = nonces();
-  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/${OK}` });
   await wait(1500);
   const clicked = await evaluate(
-    `(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Refetch icons'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
+    `(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Refetch icon'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
   );
-  if (clicked === 'missing') problems.push('no Refetch icons button');
+  if (clicked === 'missing') problems.push('no Refetch icon button');
   await wait(1000);
-  if (nonces() !== before) problems.push('Refetch icons asked for a passkey');
-  if (
-    !(await evaluate('document.body.innerText')).includes(
-      'Fetched icons for 1 of 2 sites. None from: First & Last Records (HTTP 404)',
-    )
-  )
-    problems.push('no toast naming the site without an icon');
-  if (problems.length) failures.push(`refetch icons: ${problems.join('; ')}`);
-  else console.log('ok   refetch icons: no passkey, and a toast naming what’s missing');
+  if (nonces() !== before) problems.push('Refetch icon asked for a passkey');
+  const text = await evaluate('document.body.innerText');
+  if (!text.includes('No icon from Aleya Hoerlein: HTTP 404'))
+    problems.push('no toast saying why there’s no new icon');
+  // The settings may be folded away, so their text rather than what shows.
+  const field = await evaluate(
+    `[...document.querySelectorAll('fieldset')].find((f) => f.querySelector('legend')?.textContent === 'Icon')?.textContent ?? ''`,
+  );
+  if (!field.includes('Showing the last one Kamaji got.'))
+    problems.push('the settings don’t say the last icon still shows');
+  if (SHOTS) {
+    await evaluate(
+      `(() => { const f = [...document.querySelectorAll('fieldset')].find((f) => f.querySelector('legend')?.textContent === 'Icon'); let d = f?.closest('details'); while (d) { d.open = true; d = d.parentElement?.closest('details'); } f?.scrollIntoView({ block: 'center' }); })()`,
+    );
+    await wait(300);
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'site-icon-settings.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`refetch icon: ${problems.join('; ')}`);
+  else console.log('ok   refetch icon: in the site’s settings, no passkey, says how it went');
 }
 
 // The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and

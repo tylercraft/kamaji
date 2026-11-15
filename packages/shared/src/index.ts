@@ -369,6 +369,15 @@ export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
 export const RemoveSiteRequest = z.object({ confirm: z.string() });
 export type RemoveSiteRequest = z.infer<typeof RemoveSiteRequest>;
 
+/** A site's icon, as its settings show it: when Kamaji last got one, and the last try. */
+export const SiteIconStatus = z.object({
+  fetchedAt: Timestamp.nullable(),
+  checkedAt: Timestamp,
+  /** Why the last try didn't get one; null when it did. */
+  problem: z.string().nullable(),
+});
+export type SiteIconStatus = z.infer<typeof SiteIconStatus>;
+
 /** One site, for the setup and manage views. */
 export const SiteDetailResponse = z.object({
   site: SiteSummary,
@@ -385,6 +394,8 @@ export const SiteDetailResponse = z.object({
     consentAt: Timestamp.nullable(),
     consentBy: z.string().nullable(),
   }),
+  /** Its icon (checks/icons.ts); null until Kamaji has tried. */
+  icon: SiteIconStatus.nullable(),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 
@@ -677,14 +688,6 @@ export const SiteIconsResponse = z.object({
   names: z.record(z.string(), z.string()),
 });
 export type SiteIconsResponse = z.infer<typeof SiteIconsResponse>;
-
-/** Refetch icons: each site that was tried, and why there's no new icon when there isn't. */
-export const IconRefetchResponse = z.object({
-  sites: z.array(
-    z.object({ id: z.string(), name: z.string(), ok: z.boolean(), problem: z.string().nullable() }),
-  ),
-});
-export type IconRefetchResponse = z.infer<typeof IconRefetchResponse>;
 
 /** Recheck all: each connected site that was asked, and whether it reported. */
 export const RecheckAllResponse = z.object({
