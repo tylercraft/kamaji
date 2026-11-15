@@ -13,7 +13,7 @@ import {
   ProposeRequest,
   RemoveSiteRequest,
   type PasskeysResponse,
-  type IconRefetchResponse,
+  type SiteIconStatus,
   type RecheckAllResponse,
   type SiteIconsResponse,
   type BackupExpectation,
@@ -27,7 +27,7 @@ import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
-import { iconVersions, siteNames, storedIcon, type IconOutcome } from './checks/icons.js';
+import { iconStatus, iconVersions, refetchIcon, siteNames, storedIcon } from './checks/icons.js';
 import { checkSites } from './checks/sites.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
@@ -80,8 +80,8 @@ export interface AppOptions {
   passkeys?: PasskeyConfig;
   /** Where sites' icons are kept (checks/icons.ts). Without it, no site has one. */
   iconsDir?: string;
-  /** Refetch icons: every site's, now (main.ts, sharing the cycle's one-at-a-time). */
-  refetchIcons?: () => Promise<IconOutcome[]>;
+  /** Where icons are fetched from; tests stand in for the web. */
+  iconFetch?: typeof fetch;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -123,10 +123,9 @@ const PASSKEY_FREE = new Set([
   'POST /api/sites',
   // Recheck all: a report from each connected site, which changes nothing on any of them.
   'POST /api/sites/report',
-  // Refetch icons: the plain GETs of each home page and icon the cycle makes once a day.
-  'POST /api/site-icons/refetch',
 ]);
-const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report)$/;
+// Refetch icon: the plain GETs of the home page and its icon that the cycle makes once a day.
+const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|icon\/refetch)$/;
 
 const passkeyFree = (method: string, path: string) =>
   PASSKEY_FREE.has(`${method} ${path}`) || (method === 'POST' && PASSKEY_FREE_SITE_STEP.test(path));
@@ -166,7 +165,7 @@ export function createApp({
   startBackups = () => {},
   passkeys = NO_PASSKEYS,
   iconsDir,
-  refetchIcons,
+  iconFetch,
   now = Date.now,
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
@@ -259,9 +258,17 @@ export function createApp({
     };
     return c.json(body);
   });
-  app.post('/api/site-icons/refetch', async (c) => {
-    if (!iconsDir || !refetchIcons) return c.json({ error: 'not_set_up' }, 409);
-    const body: IconRefetchResponse = { sites: await refetchIcons() };
+  app.post('/api/sites/:id/icon/refetch', async (c) => {
+    if (!iconsDir) return c.json({ error: 'not_set_up' }, 409);
+    const id = c.req.param('id');
+    const done = await refetchIcon(db, id, {
+      dir: iconsDir,
+      now,
+      ...(iconFetch ? { fetch: iconFetch } : {}),
+    });
+    const icon = done && iconStatus(db, id);
+    if (!icon) return c.json({ error: 'not_found' }, 404);
+    const body: SiteIconStatus = icon;
     return c.json(body);
   });
   app.get('/api/sites/:id/icon', (c) => {
