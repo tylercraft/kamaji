@@ -9,6 +9,18 @@ export const Form = styled.form`
   max-width: 560px;
 `;
 
+/** The one input style, for an input outside a Field (Configure's pages to check). */
+export const inputStyle = {
+  font: 'inherit',
+  color: 'var(--ink)',
+  background: 'var(--bg)',
+  border: '1px solid var(--line)',
+  borderRadius: 3,
+  padding: '7px 9px',
+  minWidth: 0,
+  '&:focus-visible': { outline: '2px solid var(--copper)', outlineOffset: 1 },
+} as const;
+
 const FieldBox = styled.div`
   display: grid;
   gap: 5px;

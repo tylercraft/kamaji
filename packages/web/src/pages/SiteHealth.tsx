@@ -2,6 +2,8 @@
 // whatever needs Tyler, each with a link to the section that has the evidence. A problem always
 // shows here, even when its section's details are closed.
 import styled from '@emotion/styled';
+import type { CheckPage } from '@kamaji/shared';
+import { Fragment } from 'react';
 import { RevealLink } from '../components/reveal';
 import type { Look } from '../siteAttention';
 import type { StatusLine } from '../siteStatus';
@@ -107,8 +109,51 @@ export function HealthTiles({ lines }: { lines: StatusLine[] }) {
   );
 }
 
-/** Each check's line in full: what was checked, what it found, when. */
-export function CheckDetails({ lines }: { lines: StatusLine[] }) {
+/** A page as Tyler would type it: its path on the site's own host, else host and path. */
+export function pageLabel(url: string, siteUrl: string): string {
+  const u = new URL(url);
+  const path = `${u.pathname}${u.search}`;
+  return u.host === new URL(siteUrl).host ? path : `${u.host}${path}`;
+}
+
+/** The pages checked after each update, under the home page's line. */
+function PagesRow({ pages, siteUrl }: { pages: CheckPage[]; siteUrl: string }) {
+  return (
+    <div css={{ display: 'contents' }}>
+      <dt>Pages to check</dt>
+      <dd>
+        {pages.length === 0 ? (
+          'None yet: add them under Configure.'
+        ) : (
+          <>
+            {pages.map((p, i) => (
+              <span key={p.url}>
+                {i > 0 && ' · '}
+                <code>{pageLabel(p.url, siteUrl)}</code>
+                {p.expectedText && <> (must contain “{p.expectedText}”)</>}
+              </span>
+            ))}
+            . Checked after each update, as the home page is.
+          </>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * Each check's line in full: what was checked, what it found, when. A WordPress site's pages to
+ * check come straight after the home page.
+ */
+export function CheckDetails({
+  lines,
+  pages,
+  siteUrl,
+}: {
+  lines: StatusLine[];
+  pages?: CheckPage[] | undefined;
+  siteUrl?: string;
+}) {
   return (
     <RememberedDetails id="checks" name="checks">
       <summary>Check details</summary>
@@ -124,20 +169,23 @@ export function CheckDetails({ lines }: { lines: StatusLine[] }) {
           '@media (max-width: 520px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
         }}
       >
-        {lines.map((l) => (
-          <div key={l.label} css={{ display: 'contents' }}>
-            <dt>{l.label}</dt>
-            <dd>
-              {l.state}. {l.detail}
-              {l.at && (
-                <>
-                  {' '}
-                  Checked <Time iso={l.at} />
-                  {l.outOfDate && <span css={{ color: 'var(--amber)' }}> · out of date</span>}.
-                </>
-              )}
-            </dd>
-          </div>
+        {lines.map((l, i) => (
+          <Fragment key={l.label}>
+            <div css={{ display: 'contents' }}>
+              <dt>{l.label}</dt>
+              <dd>
+                {l.state}. {l.detail}
+                {l.at && (
+                  <>
+                    {' '}
+                    Checked <Time iso={l.at} />
+                    {l.outOfDate && <span css={{ color: 'var(--amber)' }}> · out of date</span>}.
+                  </>
+                )}
+              </dd>
+            </div>
+            {i === 0 && pages && siteUrl && <PagesRow pages={pages} siteUrl={siteUrl} />}
+          </Fragment>
         ))}
       </dl>
     </RememberedDetails>

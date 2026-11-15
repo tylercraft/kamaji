@@ -413,12 +413,29 @@ export type BackupExpectation = z.infer<typeof BackupExpectation>;
 export const SiteBackupSchedule = z.enum(['off', 'weekly', 'fortnightly']);
 export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
 
+/** A page checked after each update, as the home page is: on the site's own host, https. */
+export const CheckPage = z.object({ url: z.string(), expectedText: z.string().nullable() });
+export type CheckPage = z.infer<typeof CheckPage>;
+
 /** Add site, step 3. The whole-site backup fields are left as they were when absent. */
 export const ConfigureSiteRequest = z.object({
   /** The display name; left as it was when absent. The id, domain, keys and history never change. */
   name: z.string().trim().min(1).max(80).optional(),
   /** Left as it was when absent. Static and app sites are monitoring only, without backups. */
   platform: Platform.optional(),
+  /**
+   * Pages to check after each update: a path or a URL on the site, each with optional expected
+   * text. Up to five; left as they were when absent. WordPress only.
+   */
+  pages: z
+    .array(
+      z.object({
+        page: z.string().trim().max(500),
+        expectedText: z.string().trim().max(200).nullable(),
+      }),
+    )
+    .max(5)
+    .optional(),
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
@@ -459,6 +476,8 @@ export const SiteDetailResponse = z.object({
   inventory: known(Inventory),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
+  /** Pages checked after each update, besides the home page (sites/pages.ts). */
+  pages: z.array(CheckPage),
   /** Whether this Kamaji has craftish-care keys, so connecting is possible at all. */
   canConnect: z.boolean(),
   own: z.boolean(),

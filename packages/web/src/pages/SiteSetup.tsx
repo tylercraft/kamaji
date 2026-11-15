@@ -16,12 +16,13 @@ import {
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
-import { Choices, Field, Form, FormError, PrimaryButton } from '../components/forms';
+import { Choices, Field, Form, FormError, inputStyle, PrimaryButton } from '../components/forms';
 import { failed, reason, saved } from '../components/toast';
 import { Button, Dot, Muted, Panel, PanelTitle, Pill, Time } from '../components/ui';
 import { useRoute } from '../router';
 import { RememberedDetails } from '../components/remembered';
 import { PLATFORM_NAMES } from '../sitesView';
+import { pageLabel } from './SiteHealth';
 import { load as reloadIcons, SiteIcon } from '../components/SiteIcon';
 
 const OK = z.object({ ok: z.literal(true) });
@@ -373,7 +374,78 @@ export function InstallSteps({
 const CONFIGURE_WORDS: Record<string, string> = {
   not_craftish: 'Kamaji’s own backups are on craftish, and this site isn’t hosted there',
   no_consent: 'Tick that the client agreed before turning on whole-site backups of their site',
+  bad_page:
+    'Each page to check must be on this site, over https: a path like /shop/, or its full address',
+  connected: 'A site connected through Craftish Care stays WordPress until it’s removed',
 };
+
+const MAX_PAGES = 5;
+interface PageRow {
+  page: string;
+  expectedText: string;
+}
+
+/**
+ * Pages to check after each update, besides the home page: up to five of the site's own pages,
+ * each with text it must contain, if any. Kamaji refuses a page on another host or not https.
+ */
+function PagesToCheck({ rows, setRows }: { rows: PageRow[]; setRows: (rows: PageRow[]) => void }) {
+  const change = (i: number, patch: Partial<PageRow>) =>
+    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <Choices>
+      <legend>Pages to check</legend>
+      <Muted id="pages-hint">
+        Checked after each update, as the home page is. A path like <code>/shop/</code>, or a full
+        https address on this site, with text the page must contain if you like.
+      </Muted>
+      {rows.map((r, i) => (
+        <div
+          key={i}
+          css={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
+            gap: 6,
+            alignItems: 'center',
+            '@media (max-width: 520px)': { gridTemplateColumns: 'minmax(0, 1fr) auto' },
+          }}
+        >
+          <input
+            type="text"
+            aria-label={`Page ${i + 1}`}
+            placeholder="/shop/"
+            maxLength={500}
+            value={r.page}
+            onChange={(e) => change(i, { page: e.target.value })}
+            css={inputStyle}
+            aria-describedby="pages-hint"
+          />
+          <input
+            type="text"
+            aria-label={`Text page ${i + 1} must contain`}
+            placeholder="Text it must contain (optional)"
+            maxLength={200}
+            value={r.expectedText}
+            onChange={(e) => change(i, { expectedText: e.target.value })}
+            css={inputStyle}
+          />
+          <Button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+            Remove
+          </Button>
+        </div>
+      ))}
+      {rows.length < MAX_PAGES && (
+        <Button
+          type="button"
+          css={{ justifySelf: 'start' }}
+          onClick={() => setRows([...rows, { page: '', expectedText: '' }])}
+        >
+          Add page
+        </Button>
+      )}
+    </Choices>
+  );
+}
 
 export const SCHEDULES: Record<SiteBackupSchedule, string> = {
   off: 'Off',
@@ -503,6 +575,12 @@ export function ConfigureStep({
   const [schedule, setSchedule] = useState(detail.siteBackups.schedule);
   const [platform, setPlatform] = useState<Platform>(site.platform);
   const wordpress = platform === 'wordpress';
+  const [pages, setPages] = useState<PageRow[]>(() =>
+    detail.pages.map((p) => ({
+      page: pageLabel(p.url, site.url),
+      expectedText: p.expectedText ?? '',
+    })),
+  );
   const { busy, error, run } = useAction({
     saved: `Saved ${site.name}’s settings`,
     failed: 'Not saved',
@@ -520,6 +598,13 @@ export function ConfigureStep({
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
       ...(wordpress && site.hostKind === 'craftish'
         ? { own, siteBackups: schedule, clientAgreed: form.get('clientAgreed') === 'on' }
+        : {}),
+      ...(wordpress
+        ? {
+            pages: pages
+              .filter((p) => p.page.trim() !== '')
+              .map((p) => ({ page: p.page, expectedText: p.expectedText.trim() || null })),
+          }
         : {}),
     });
     if (await run(() => postJson(`/api/sites/${site.id}/configure`, request, OK), CONFIGURE_WORDS))
@@ -585,6 +670,7 @@ export function ConfigureStep({
               aria-describedby="expected-hint"
             />
           </Field>
+          {wordpress && <PagesToCheck rows={pages} setRows={setPages} />}
           <Choices>
             <legend>Notifications</legend>
             <label>

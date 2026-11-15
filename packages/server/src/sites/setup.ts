@@ -20,6 +20,7 @@ import { recordEvent } from '../events.js';
 import { latestObservations, recordObservation } from '../observations.js';
 import { siteInventory } from '../inventory/report.js';
 import { siteSummaries } from '../queries.js';
+import { checkPages, readPages } from './pages.js';
 
 /** Sends one signed request to a site; careRequest in production, a fake in tests. */
 export type CareSend = (
@@ -169,7 +170,7 @@ export function configureSite(
   request: ConfigureSiteRequest,
   now: number,
   login: string,
-): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' | 'connected' {
+): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' | 'connected' | { refused: string } {
   const row = siteRow(db, id);
   if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return 'not-found';
   const beforePlatform = String(row.platform) as Platform;
@@ -184,6 +185,14 @@ export function configureSite(
   // A static site or an app has no backups to expect, from Kamaji or anyone.
   const schedule = wordpress ? (request.siteBackups ?? before) : 'off';
   const backupExpectation = wordpress ? request.backupExpectation : null;
+  // Pages to check go with updates, so only WordPress keeps any.
+  let pages = readPages(String(row.important_pages ?? '[]'), String(row.url));
+  if (request.pages) {
+    const checked = checkPages(request.pages, String(row.url));
+    if (!checked.ok) return { refused: checked.refused };
+    pages = checked.pages;
+  }
+  if (!wordpress) pages = [];
   const hadConsent = row.site_backup_consent_at !== null;
   if (schedule !== 'off') {
     if (!craftish) return 'not-craftish';
@@ -200,7 +209,7 @@ export function configureSite(
   db.prepare(
     `UPDATE sites SET name = ?, expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
        own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?,
-       platform = ?
+       platform = ?, important_pages = ?
      WHERE id = ?`,
   ).run(
     name,
@@ -212,6 +221,7 @@ export function configureSite(
     consent?.at ?? null,
     consent?.by ?? null,
     platform,
+    JSON.stringify(pages),
     id,
   );
   const event = (kind: string, summary: string) =>
@@ -260,6 +270,7 @@ export function siteDetail(
         ? null
         : (String(row.backup_expectation) as SiteDetailResponse['backupExpectation']),
     notifications: String(row.notifications) as SiteDetailResponse['notifications'],
+    pages: readPages(String(row.important_pages ?? '[]'), String(row.url)),
     canConnect: options.canConnect,
     own: Number(row.own) === 1,
     siteBackups: {

@@ -366,7 +366,11 @@ export function SitePage({ id }: { id: string }) {
                       wordpress ? [...siteLines, backupTile(backupsResource, backupNow)] : siteLines
                     }
                   />
-                  <CheckDetails lines={checkLines} />
+                  <CheckDetails
+                    lines={checkLines}
+                    pages={wordpress ? d.pages : undefined}
+                    siteUrl={site.url}
+                  />
                 </div>
                 <Attention looks={looks} />
                 {wordpress && (

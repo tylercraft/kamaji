@@ -72,7 +72,9 @@ db.exec(`UPDATE sites SET mode = 'connected', backup_expectation = 'kamaji',
 
 // Platforms and renewals: Romaji as a static site, and domains' renewal dates as RDAP gave them
 // (craftish.dev's shared with Romaji; Aleya's within 30 days; photogravure's registry has none).
-db.exec(`UPDATE sites SET platform = 'static' WHERE id = 'romaji.craftish.dev';
+db.exec(`UPDATE sites SET important_pages = '[{"url":"https://${OK}/shop/","expectedText":"Add to cart"},"/contact/"]'
+    WHERE id = '${OK}';
+  UPDATE sites SET platform = 'static' WHERE id = 'romaji.craftish.dev';
   INSERT INTO domains (domain, checked_at, expires_at, state, failures) VALUES
     ('craftish.dev', ${now - H}, ${Date.parse('2027-03-14T00:00:00Z')}, 'ok', 0),
     ('${OK}', ${now - H}, ${now + 20 * DAY}, 'ok', 0),
@@ -1090,6 +1092,32 @@ for (const view of VIEWS) {
     console.log(
       'ok   platforms: grouped, remembered, renewals shown, static has no WordPress parts',
     );
+}
+
+// Pages to check: under the home page's line in Check details, each with its text, both shapes;
+// and in Configure, one row each, ready to change.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/${OK}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const text = await evaluate('document.body.textContent');
+  if (!text.includes('Pages to check/shop/ (must contain “Add to cart”) · /contact/'))
+    problems.push('the pages aren’t under the home page check');
+  const rows = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('input[aria-label^="Page "]')].map((i) => i.value))`,
+  ).then((j) => JSON.parse(j ?? '[]'));
+  if (JSON.stringify(rows) !== JSON.stringify(['/shop/', '/contact/']))
+    problems.push(`Configure’s rows: ${JSON.stringify(rows)}`);
+  if (SHOTS) {
+    await evaluate(
+      `(() => { for (const id of ['checks', 'configure']) document.getElementById(id)?.setAttribute('open', ''); document.querySelector('[aria-label="Page 1"]')?.scrollIntoView({ block: 'center' }); })()`,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'pages-to-check.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`pages to check: ${problems.join('; ')}`);
+  else console.log('ok   pages to check: shown under the home page, and in Configure');
 }
 
 // Refetch icon, in a site's settings: no passkey (the same plain GETs the cycle makes), a toast
