@@ -28,7 +28,11 @@ import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
 import { iconStatus, iconVersions, refetchIcon, siteNames, storedIcon } from './checks/icons.js';
-import { checkSites } from './checks/sites.js';
+import { checkSites, type SiteCheckers } from './checks/sites.js';
+import { checkEndOfLife } from './endOfLife/check.js';
+import { judgeAbandoned } from './inventory/directory.js';
+import { dismissIssue, undismissIssue } from './issues.js';
+import { judgeVulnerabilities } from './wordfence/feed.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
 import type { Backup } from './updater/backup.js';
@@ -82,6 +86,8 @@ export interface AppOptions {
   iconsDir?: string;
   /** Where icons are fetched from; tests stand in for the web. */
   iconFetch?: typeof fetch;
+  /** The home page and certificate checks; tests stand in for the web. */
+  siteCheckers?: SiteCheckers;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -125,10 +131,14 @@ const PASSKEY_FREE = new Set([
   'POST /api/sites/report',
 ]);
 // Refetch icon: the plain GETs of the home page and its icon that the cycle makes once a day.
-const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|icon\/refetch)$/;
+// Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
+const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch)$/;
+// Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
+const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
 
 const passkeyFree = (method: string, path: string) =>
-  PASSKEY_FREE.has(`${method} ${path}`) || (method === 'POST' && PASSKEY_FREE_SITE_STEP.test(path));
+  PASSKEY_FREE.has(`${method} ${path}`) ||
+  (method === 'POST' && (PASSKEY_FREE_SITE_STEP.test(path) || PASSKEY_FREE_ISSUE_STEP.test(path)));
 
 const NO_PASSKEYS: PasskeyConfig = {
   load: () => ({ ok: false, problem: 'passkeys aren’t set up' }),
@@ -166,6 +176,7 @@ export function createApp({
   passkeys = NO_PASSKEYS,
   iconsDir,
   iconFetch,
+  siteCheckers,
   now = Date.now,
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
@@ -419,7 +430,32 @@ export function createApp({
       return c.json({ error: 'not_found' }, 404);
     }
     const ok = await reportSite(db, site, care.keys, care.send, now, { refresh: true });
+    // Its findings judged now from the fresh inventory, as the cycle would: an issue's Refresh
+    // inventory clears what the report no longer shows.
+    judgeVulnerabilities(db, now());
+    judgeAbandoned(db, now());
+    checkEndOfLife(db, now());
     return c.json({ ok });
+  });
+  // Check again: the home page and certificate, for one site, as the cycle checks them.
+  app.post('/api/sites/:id/check', async (c) => {
+    const siteId = c.req.param('id');
+    const checked = await checkSites(db, {
+      now,
+      signal: AbortSignal.timeout(60_000),
+      only: [siteId],
+      ...(siteCheckers ? { checkers: siteCheckers } : {}),
+    });
+    if (checked === 0) return c.json({ error: 'not_found' }, 404);
+    const [last] = latestObservations<{ problem: string | null }>(
+      db,
+      'site',
+      siteId,
+      'http',
+      'mini',
+      1,
+    );
+    return c.json({ ok: last?.ok ?? false, problem: last?.value.problem ?? null });
   });
   // Recheck all: the same, for every connected site that isn't paused, three at a time.
   app.post('/api/sites/report', async (c) => {
@@ -508,6 +544,18 @@ export function createApp({
     startUpdater();
     return c.json({ ok: true });
   });
+  // Dismiss: hides an issue Kamaji can't check again, until something new happens (issues.ts).
+  app.post('/api/issues/:id/dismiss', (c) => {
+    const result = dismissIssue(db, now(), c.req.param('id'), login);
+    if (result === 'not-found') return c.json({ error: 'not_found' }, 404);
+    if (result === 'not-dismissable') return c.json({ error: 'not_dismissable' }, 409);
+    return c.json({ ok: true });
+  });
+  app.post('/api/issues/:id/undismiss', (c) =>
+    undismissIssue(db, now(), c.req.param('id'), login)
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404),
+  );
   // Re-run the checks: the home page from the mini, recorded like any check.
   app.post('/api/batches/:id/sites/:site/recheck', async (c) => {
     const siteId = c.req.param('site');

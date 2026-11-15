@@ -25,6 +25,7 @@ import {
   type ReportReading,
 } from './checks/serverReport.js';
 import { rateUpdates, updateRows, updatesView } from './checks/serverUpdates.js';
+import { actionFor } from './issueActions.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
@@ -74,6 +75,13 @@ const toIssue = (r: Row): Issue => ({
   summary: String(r.summary),
   firstSeenAt: iso(r.first_seen_at),
   lastSeenAt: iso(r.last_seen_at),
+  action: actionFor({
+    resourceType: String(r.resource_type),
+    resourceId: String(r.resource_id),
+    kind: String(r.kind),
+  }),
+  dismissed:
+    r.dismissed_at === null ? null : { at: iso(r.dismissed_at), by: String(r.dismissed_by) },
 });
 
 export function listSites(db: Db): Site[] {
@@ -177,20 +185,25 @@ function updateWork(db: Db, siteId: string): SiteSummary['updateWork'] {
   return { toApprove: free(1), held: count(true), running: count(false), noDownload: free(0) };
 }
 
-/** A site's open issues that aren't its reachability or certificate, most urgent first. */
+/**
+ * A site's open issues that aren't its reachability or certificate, most urgent first, each with
+ * its next step. Dismissed ones are left out, as on Overview.
+ */
 function siteFindings(db: Db, siteId: string): SiteSummary['findings'] {
   return db
     .prepare(
-      `SELECT kind, severity, summary FROM issues
+      `SELECT id, kind, severity, summary FROM issues
        WHERE resource_type = 'site' AND resource_id = ? AND resolved_at IS NULL
-       AND kind NOT IN ('down', 'certificate')
+       AND dismissed_at IS NULL AND kind NOT IN ('down', 'certificate')
        ORDER BY severity = 'urgent' DESC, first_seen_at`,
     )
     .all(siteId)
     .map((r) => ({
+      id: String(r.id),
       kind: String(r.kind),
       severity: String(r.severity) === 'urgent' ? 'urgent' : 'normal',
       summary: String(r.summary),
+      action: actionFor({ resourceType: 'site', resourceId: siteId, kind: String(r.kind) }),
     }));
 }
 
@@ -316,13 +329,14 @@ export function overview(db: Db): OverviewResponse {
   const checked = db.prepare('SELECT 1 FROM observations LIMIT 1').get() !== undefined;
   const watched = live.length + listServers(db).length;
   const connected = live.filter((s) => s.mode === 'connected').length;
-  const issues = db
+  const open = db
     .prepare(
       `SELECT * FROM issues WHERE resolved_at IS NULL
        ORDER BY severity = 'urgent' DESC, first_seen_at`,
     )
     .all()
     .map(toIssue);
+  const issues = open.filter((i) => i.dismissed === null);
 
   return {
     sites: {
@@ -337,12 +351,13 @@ export function overview(db: Db): OverviewResponse {
     },
     servers: { total: listServers(db).length },
     attention:
-      (watched > 0 && checked) || issues.length > 0
+      (watched > 0 && checked) || open.length > 0
         ? { known: true, value: issues }
         : {
             known: false,
             reason: watched > 0 ? 'First checks haven’t run yet' : 'Nothing is being watched yet',
           },
+    dismissed: open.filter((i) => i.dismissed !== null),
     updatesWaiting: totalUpdates(
       live.filter((s) => s.mode === 'connected'),
       connected,

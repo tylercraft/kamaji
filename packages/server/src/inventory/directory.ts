@@ -195,7 +195,7 @@ export function judgeAbandoned(db: Db, now: number): void {
     .all();
   const still = new Set<string>();
   for (const r of closed) {
-    const kind = `${ABANDONED_KIND}${String(r.slug)}`;
+    const kind = `${ABANDONED_KIND}${String(r.slug)}` as const;
     still.add(`${String(r.site_id)}\u0000${kind}`);
     const reason = r.closed_reason === null ? '' : ` (${String(r.closed_reason)})`;
     raiseIssue(db, now, {

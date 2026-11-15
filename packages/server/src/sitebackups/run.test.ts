@@ -213,4 +213,26 @@ describe('a night’s run', () => {
       { ok: 0, failed_step: 'home page', problem: 'the test copy’s home page gave HTTP 500' },
     ]);
   });
+
+  it('keeps a failed import’s last lines with the check, never in Activity', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    snapshot(db, 'one.test', T - DAY);
+    const { d, result } = deps(db);
+    result.value = {
+      ok: false,
+      step: 'database',
+      problem: 'database.sql didn’t import',
+      detail: 'ERROR 1146 (42S02) at line 88: Table doesn’t exist',
+    };
+    await runBackups(d);
+    expect(rows(db, 'SELECT problem, problem_detail FROM restore_checks')).toEqual([
+      {
+        problem: 'database.sql didn’t import',
+        problem_detail: 'ERROR 1146 (42S02) at line 88: Table doesn’t exist',
+      },
+    ]);
+    const said = rows(db, 'SELECT summary, detail FROM events').map((e) => JSON.stringify(e));
+    expect(said.join('\n')).not.toContain('ERROR 1146');
+  });
 });

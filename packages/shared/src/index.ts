@@ -80,6 +80,29 @@ export const OutsideCheck = z.object({
 });
 export type OutsideCheck = z.infer<typeof OutsideCheck>;
 
+/**
+ * An issue's next step (server issueActions.ts). Recheck: a button that reruns the check, through
+ * the same route and passkey rules as the button on the site page; the issue clears if it passes.
+ * Look: what to look at, maybe with a link, and Dismiss, since Kamaji can't check it again itself.
+ */
+export const IssueAction = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('recheck'),
+    label: z.string(),
+    path: z.string(),
+    body: z.record(z.string(), z.unknown()),
+    /** The toast once it's asked: whether it's done, or started and clears when it passes. */
+    asked: z.string(),
+  }),
+  z.object({
+    type: z.literal('look'),
+    /** What to look at; a link to it when it's somewhere in Kamaji. */
+    text: z.string(),
+    href: z.string().nullable(),
+  }),
+]);
+export type IssueAction = z.infer<typeof IssueAction>;
+
 export const SiteSummary = Site.extend({
   availability: known(Availability),
   outside: known(OutsideCheck),
@@ -103,7 +126,13 @@ export const SiteSummary = Site.extend({
    * site can be up and still need attention (vulnerabilities, end of life, backups, a held run).
    */
   findings: z.array(
-    z.object({ kind: z.string(), severity: z.enum(['urgent', 'normal']), summary: z.string() }),
+    z.object({
+      id: z.string(),
+      kind: z.string(),
+      severity: z.enum(['urgent', 'normal']),
+      summary: z.string(),
+      action: IssueAction,
+    }),
   ),
 });
 export type SiteSummary = z.infer<typeof SiteSummary>;
@@ -605,6 +634,9 @@ export const Issue = z.object({
   summary: z.string(),
   firstSeenAt: Timestamp,
   lastSeenAt: Timestamp,
+  action: IssueAction,
+  /** Set when Tyler dismissed it: hidden until something new happens (issues.ts). */
+  dismissed: z.object({ at: Timestamp, by: z.string() }).nullable(),
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -671,6 +703,8 @@ export const OverviewResponse = z.object({
   servers: z.object({ total: z.number().int() }),
   /** Open issues. Only meaningful once something is being watched: `known: false` until then. */
   attention: known(z.array(Issue)),
+  /** Issues Tyler dismissed that are still open, for "Dismissed (n)" and Undo. */
+  dismissed: z.array(Issue),
   /** Pending updates. Unknown until a connected site has reported its inventory. */
   updatesWaiting: known(z.number().int()),
 });
@@ -937,6 +971,8 @@ export const RestoreCheck = z.object({
   ok: z.boolean(),
   failedStep: z.string().nullable(),
   problem: z.string().nullable(),
+  /** A failed command's last lines, scrubbed of anything like a password or token. */
+  detail: z.string().nullable(),
 });
 export type RestoreCheck = z.infer<typeof RestoreCheck>;
 

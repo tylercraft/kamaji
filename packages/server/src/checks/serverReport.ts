@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
+import type { IssueKind } from '../issueActions.js';
 import { clearIssue, raiseIssue } from '../issues.js';
 import { latestObservations, recordObservation } from '../observations.js';
 import { readState, writeState } from '../state.js';
@@ -220,7 +221,8 @@ export function judgeServer(
   server: { id: string; name: string },
   reading: ReportReading,
 ): void {
-  const key = (kind: string) => ({ resourceType: 'server', resourceId: server.id, kind }) as const;
+  const key = <K extends string>(kind: K) =>
+    ({ resourceType: 'server', resourceId: server.id, kind }) as const;
   const history = latestObservations<ReportReading>(db, 'server', server.id, 'report', 'ssh', 2);
 
   if (!reading.ok) {
@@ -256,7 +258,7 @@ export function judgeServer(
       packages: r.rebootPackages,
     },
   });
-  const apply = (kind: string, finding: Finding) => {
+  const apply = (kind: IssueKind, finding: Finding) => {
     if (finding.action === 'raise') {
       raiseIssue(db, at, { ...key(kind), severity: finding.severity, summary: finding.summary });
     } else if (finding.action === 'clear') {
@@ -294,6 +296,8 @@ export function judgeServer(
     raiseIssue(db, at, {
       ...key('os-eol'),
       severity: 'normal',
+      // Dismissed, it comes back for another release, or once the date passes.
+      fingerprint: `${r.os.codename} ${Date.parse(eol) <= at ? 'ended' : 'ending'}`,
       summary: `${server.name}: ${r.os.name} leaves standard support on ${eol}`,
     });
   } else {

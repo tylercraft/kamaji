@@ -43,6 +43,7 @@ export function wholeSiteView(db: Db, siteId: string): WholeSiteBackups | null {
       ok: Number(r.ok) === 1,
       failedStep: strOrNull(r.failed_step),
       problem: strOrNull(r.problem),
+      detail: strOrNull(r.problem_detail),
     }));
   const lastGood = db
     .prepare('SELECT MAX(started_at) AS at FROM site_snapshots WHERE site_id = ? AND ok = 1')

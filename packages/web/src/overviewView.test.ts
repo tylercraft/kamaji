@@ -86,6 +86,8 @@ describe('findings by resource', () => {
       summary: id,
       firstSeenAt: '2026-11-10T00:00:00Z',
       lastSeenAt: '2026-11-13T00:00:00Z',
+      action: { type: 'look', text: 'Look', href: null },
+      dismissed: null,
     });
     const g = groupIssues([
       issue('a', 'minton', 'normal'),

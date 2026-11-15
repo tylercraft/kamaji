@@ -8,11 +8,14 @@ import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Restic } from './restic.js';
+import { stderrTail } from './stderrTail.js';
 import { checkPull, readTar, type Manifest } from './tar.js';
 
 export interface Ran {
   code: number | null;
   stdout: string;
+  /** The end of what it said on stderr: kept only as a failed step's scrubbed tail. */
+  stderr?: string;
 }
 export type Exec = (
   command: string,
@@ -32,13 +35,26 @@ export interface RestoreDeps {
 
 export type RestoreStep =
   'restore' | 'verify' | 'unpack' | 'docker' | 'database' | 'wordpress' | 'home page';
-export type RestoreResult = { ok: true } | { ok: false; step: RestoreStep; problem: string };
+export type RestoreResult =
+  | { ok: true }
+  | {
+      ok: false;
+      step: RestoreStep;
+      problem: string;
+      /** The last lines a failed command said, scrubbed (stderrTail.ts); null when it said none. */
+      detail?: string | null;
+    };
 
 export const MARIADB = 'mariadb:11.4';
 /** The official image for the manifest's WordPress, e.g. wordpress:6.8.3-apache. */
 export const wordpressImage = (version: string) => `wordpress:${version}-apache`;
 
-const fail = (step: RestoreStep, problem: string): RestoreResult => ({ ok: false, step, problem });
+const fail = (step: RestoreStep, problem: string, ran?: Ran): RestoreResult => ({
+  ok: false,
+  step,
+  problem,
+  ...(ran ? { detail: stderrTail(ran.stderr) } : {}),
+});
 
 async function waitFor(
   deps: RestoreDeps,
@@ -82,14 +98,14 @@ export async function restoreCheck(
       timeoutMs: 30 * 60_000,
     });
     if (unpacked.code !== 0)
-      return fail('unpack', `tar couldn’t unpack it (exit ${unpacked.code})`);
+      return fail('unpack', `tar couldn’t unpack it (exit ${unpacked.code})`, unpacked);
     await rm(tar, { force: true });
     // Readable to the test copy's www-data, whatever modes the tar carried. The folder around it
     // stays 700, so nobody else on the mini can reach it.
     await deps.exec('/bin/chmod', ['-R', 'u+rwX,go+rX', files]);
 
     const network = await docker(['network', 'create', '--internal', name]);
-    if (network.code !== 0) return fail('docker', 'Docker isn’t answering on the mini');
+    if (network.code !== 0) return fail('docker', 'Docker isn’t answering on the mini', network);
     started = true;
 
     const db = await docker(
@@ -108,7 +124,7 @@ export async function restoreCheck(
       ],
       { timeoutMs: 10 * 60_000 },
     );
-    if (db.code !== 0) return fail('database', `MariaDB (${MARIADB}) didn’t start`);
+    if (db.code !== 0) return fail('database', `MariaDB (${MARIADB}) didn’t start`, db);
     const ready = await waitFor(deps, 120, async () => {
       const ping = await docker(['exec', `${name}-db`, 'mariadb', '-uroot', '-e', 'SELECT 1']);
       return ping.code === 0;
@@ -118,7 +134,7 @@ export async function restoreCheck(
       stdinFile: join(files, 'database.sql'),
       timeoutMs: 30 * 60_000,
     });
-    if (imported.code !== 0) return fail('database', 'database.sql didn’t import');
+    if (imported.code !== 0) return fail('database', 'database.sql didn’t import', imported);
 
     const home = `http://${name}-wp`;
     const wp = await docker(
@@ -148,7 +164,7 @@ export async function restoreCheck(
       { timeoutMs: 10 * 60_000 },
     );
     if (wp.code !== 0) {
-      return fail('wordpress', `${wordpressImage(manifest.wordpress)} didn’t start`);
+      return fail('wordpress', `${wordpressImage(manifest.wordpress)} didn’t start`, wp);
     }
     let last = 'no answer';
     const served = await waitFor(deps, 120, async () => {

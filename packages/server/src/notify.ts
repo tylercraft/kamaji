@@ -58,7 +58,11 @@ export async function notifyNow(
   const { workerAlerts } = options;
 
   const fresh = db
-    .prepare(`${ISSUES} WHERE resolved_at IS NULL AND severity = 'urgent' AND notified_at IS NULL`)
+    // A dismissed issue stays out of Discord until it comes back (issues.ts).
+    .prepare(
+      `${ISSUES} WHERE resolved_at IS NULL AND severity = 'urgent' AND notified_at IS NULL
+       AND dismissed_at IS NULL`,
+    )
     .all()
     .filter((r) => oursToAnnounce(r, workerAlerts));
   // A crash group is announced once and then stays quiet (molcajete/crashes.ts).
@@ -70,7 +74,7 @@ export async function notifyNow(
     .all();
   const reminders = db
     .prepare(
-      `${ISSUES} WHERE resolved_at IS NULL AND notified_at IS NOT NULL
+      `${ISSUES} WHERE resolved_at IS NULL AND notified_at IS NOT NULL AND dismissed_at IS NULL
        AND COALESCE(reminded_at, notified_at) <= ? AND kind NOT LIKE '${CRASH_KIND}%'`,
     )
     .all(now - REMINDER_MS);
@@ -151,7 +155,8 @@ export async function sendDigest(
   const open = db
     .prepare(
       `SELECT id, kind, summary, digested_at FROM issues
-       WHERE resolved_at IS NULL AND severity = 'normal' ORDER BY first_seen_at`,
+       WHERE resolved_at IS NULL AND severity = 'normal' AND dismissed_at IS NULL
+       ORDER BY first_seen_at`,
     )
     .all()
     .filter((r) => {

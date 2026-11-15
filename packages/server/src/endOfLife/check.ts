@@ -81,7 +81,13 @@ export function checkEndOfLife(db: Db, now: number, list: List = END_OF_LIFE): v
     ] as const) {
       const key = { resourceType: 'site', resourceId: String(row.id), kind } as const;
       if (e.state === 'ending' || e.state === 'ended') {
-        raiseIssue(db, now, { ...key, severity: 'normal', summary: summary(site, e) });
+        raiseIssue(db, now, {
+          ...key,
+          severity: 'normal',
+          summary: summary(site, e),
+          // Dismissed, it comes back for another version, or once its end date passes.
+          fingerprint: `${e.product} ${e.line ?? ''} ${e.endsOn ?? ''} ${e.state}`,
+        });
       } else {
         clearIssue(
           db,
