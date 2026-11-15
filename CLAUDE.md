@@ -21,6 +21,7 @@ Read `README.md` first: layout, commands, rules of the code. The product decisio
 ## Never
 
 - Put a secret, webhook URL, token or traceback in a log line, event, error message, the database or a commit. Discord gets labels and a link, never details: it's a third party.
+  - The one exception: a failed restore check's scrubbed stderr tail (`sitebackups/stderrTail.ts`), kept only in `restore_checks.problem_detail` and never sent to Activity or Discord.
 - Send anything to a client site beyond the plain HTTP checks in `packages/server/src/checks/`. Updates are M4, through the updater only.
 - Edit anything in `~/calcifer`. When a decision changes something there, tell Tyler; a Calcifer session makes the edit.
 - Guess the format of a machine's output (launchctl, diskutil, SMART, logs). Parse captured fixtures in `packages/server/src/**/fixtures/`, and ask Tyler for one when it's missing.
