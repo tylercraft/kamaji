@@ -338,29 +338,45 @@ export function siteNames(db: Db): Record<string, string> {
   );
 }
 
-/** Sites due an icon: not removed or paused, and not tried in the last day. */
-export function dueIcons(db: Db, now: number): { id: string; url: string }[] {
+/**
+ * Sites due an icon: not removed or paused, and not tried in the last day. With `all`, every site
+ * that isn't removed or paused, however recently it was tried.
+ */
+export function dueIcons(
+  db: Db,
+  now: number,
+  all = false,
+): { id: string; name: string; url: string }[] {
   return db
     .prepare(
-      `SELECT s.id, s.url FROM sites s LEFT JOIN site_icons i ON i.site_id = s.id
+      `SELECT s.id, s.name, s.url FROM sites s LEFT JOIN site_icons i ON i.site_id = s.id
        WHERE s.removed_at IS NULL AND s.paused_at IS NULL
-       AND (i.checked_at IS NULL OR i.checked_at <= ?) ORDER BY s.id`,
+       AND (? OR i.checked_at IS NULL OR i.checked_at <= ?) ORDER BY s.id`,
     )
-    .all(now - ICON_EVERY_MS)
-    .map((r) => ({ id: String(r.id), url: String(r.url) }));
+    .all(all ? 1 : 0, now - ICON_EVERY_MS)
+    .map((r) => ({ id: String(r.id), name: String(r.name), url: String(r.url) }));
+}
+
+/** How one site's fetch went: its problem when there's no new icon. */
+export interface IconOutcome {
+  id: string;
+  name: string;
+  ok: boolean;
+  problem: string | null;
 }
 
 /**
- * Every due site's icon, three at a time. Never throws: a site that fails, or throws, keeps its
- * last icon and is tried again tomorrow.
+ * Every due site's icon (with `all`, every site's), three at a time, each site's outcome in id
+ * order. Never throws: a site that fails, or throws, keeps its last icon and is tried again
+ * tomorrow.
  */
 export async function refreshIcons(
   db: Db,
-  options: FetchOptions & { dir: string; now: () => number; atOnce?: number },
-): Promise<number> {
-  const sites = dueIcons(db, options.now());
+  options: FetchOptions & { dir: string; now: () => number; atOnce?: number; all?: boolean },
+): Promise<IconOutcome[]> {
+  const sites = dueIcons(db, options.now(), options.all);
+  const outcomes: IconOutcome[] = [];
   let next = 0;
-  let fetched = 0;
   async function worker() {
     while (next < sites.length && !options.signal?.aborted) {
       const site = sites[next++]!;
@@ -371,33 +387,50 @@ export async function refreshIcons(
         if (options.signal?.aborted) return;
         icon = { ok: false, problem: 'Kamaji couldn’t fetch it' };
       }
+      let problem = icon.ok ? null : icon.problem;
       try {
         storeIcon(db, options.dir, site.id, icon, options.now());
-        if (icon.ok) fetched += 1;
       } catch {
         // A full disk or a locked database: tried again tomorrow, or on the next cycle if the
         // row didn't save.
+        problem = 'Kamaji couldn’t save it';
       }
+      outcomes.push({ id: site.id, name: site.name, ok: problem === null, problem });
     }
   }
   await Promise.all(Array.from({ length: Math.min(options.atOnce ?? 3, sites.length) }, worker));
-  return fetched;
+  return outcomes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /**
- * What the cycle calls: starts a refresh and returns at once, so a slow site can never hold the
- * cycle up, and does nothing while one is still going. A refresh that throws (a bug: refreshIcons
- * doesn't) logs that it happened, nothing more.
+ * One refresh at a time, for two callers. `start` is the cycle's: it starts the day's refresh and
+ * returns at once, so a slow site can never hold the cycle up, and does nothing while one is
+ * going; a refresh that throws (a bug: refreshIcons doesn't) logs that it happened, nothing more.
+ * `all` is Refetch icons on the Sites page: every site, now, after any refresh already going.
  */
-export function iconRefresher(run: () => Promise<unknown>, log: (message: string) => void) {
-  let running = false;
-  return (): void => {
-    if (running) return;
-    running = true;
-    run()
-      .catch(() => log('icons: the refresh failed'))
+export function iconRefresher(
+  run: (all: boolean) => Promise<IconOutcome[]>,
+  log: (message: string) => void,
+) {
+  let running: Promise<unknown> | null = null;
+  const go = (all: boolean) => {
+    const done = run(all);
+    const tracked: Promise<unknown> = done
+      .catch(() => {})
       .finally(() => {
-        running = false;
+        if (running === tracked) running = null;
       });
+    running = tracked;
+    return done;
+  };
+  return {
+    start(): void {
+      if (running) return;
+      go(false).catch(() => log('icons: the refresh failed'));
+    },
+    async all(): Promise<IconOutcome[]> {
+      while (running) await running;
+      return go(true);
+    },
   };
 }

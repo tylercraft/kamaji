@@ -72,8 +72,8 @@ const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 // Sites' icons, once a day each: started by the cycle, never waited on (checks/icons.ts).
-const startIcons = iconRefresher(
-  () => refreshIcons(db, { dir: config.iconsDir, now: Date.now }),
+const icons = iconRefresher(
+  (all) => refreshIcons(db, { dir: config.iconsDir, now: Date.now, all }),
   log,
 );
 const runChecks = async (signal: AbortSignal) => {
@@ -81,7 +81,7 @@ const runChecks = async (signal: AbortSignal) => {
   const steps = cycleSteps(log);
   try {
     const checked = await steps.step('home pages', () => checkSites(db, { now: Date.now, signal }));
-    startIcons();
+    icons.start();
     if (config.worker) {
       const worker = config.worker;
       await steps.step('outside checks', () =>
@@ -173,6 +173,7 @@ const app = createApp({
   startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
   passkeys: passkeyConfig(process.env),
   iconsDir: config.iconsDir,
+  refetchIcons: icons.all,
   log,
   statusInput: () => ({
     version,
