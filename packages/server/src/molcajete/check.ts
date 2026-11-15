@@ -13,6 +13,7 @@
 import type { MacHealth, MacJob } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
+import type { IssueKind } from '../issueActions.js';
 import { clearIssue, raiseIssue, type Severity } from '../issues.js';
 import { localParts } from '../notify.js';
 import { recordObservation } from '../observations.js';
@@ -68,7 +69,8 @@ const empty = (): MacState => ({
 });
 
 const iso = (ms: number) => new Date(ms).toISOString();
-const key = (kind: string) => ({ resourceType: 'server', resourceId: SERVER_ID, kind }) as const;
+const key = <K extends string>(kind: K) =>
+  ({ resourceType: 'server', resourceId: SERVER_ID, kind }) as const;
 
 function when(at: number, now: number): string {
   const a = localParts(at);
@@ -83,7 +85,7 @@ export function judgeMolcajete(
   state: MacState,
 ): Omit<MacHealth, 'crashes'> {
   const seen = new Set<string>();
-  const set = (kind: string, severity: Severity, summary: string, holdFor = 1) => {
+  const set = (kind: IssueKind, severity: Severity, summary: string, holdFor = 1) => {
     seen.add(kind);
     const streak = (state.streaks[kind] ?? 0) + 1;
     state.streaks[kind] = streak;
@@ -96,9 +98,15 @@ export function judgeMolcajete(
   /** Leaves a condition as it was: the reading said nothing about it. */
   const hold = (kind: string) => seen.add(kind);
   const unreadable = (part: string, problem: string | null) => {
-    if (problem === null) ok(`unreadable:${part}`, `Kamaji can read molcajete’s ${part} again`);
+    if (problem === null)
+      ok(`unreadable:${part}` as const, `Kamaji can read molcajete’s ${part} again`);
     else
-      set(`unreadable:${part}`, 'normal', `Kamaji can’t read molcajete’s ${part}: ${problem}`, 3);
+      set(
+        `unreadable:${part}` as const,
+        'normal',
+        `Kamaji can’t read molcajete’s ${part}: ${problem}`,
+        3,
+      );
   };
 
   // Jobs
@@ -119,9 +127,9 @@ export function judgeMolcajete(
     const running = p?.running ?? false;
 
     let attention: string | null = null;
-    const missing = `job-missing:${name}`;
-    const stopped = `job-stopped:${name}`;
-    const failed = `job-failed:${name}`;
+    const missing = `job-missing:${name}` as const;
+    const stopped = `job-stopped:${name}` as const;
+    const failed = `job-failed:${name}` as const;
     if (!p) {
       attention = 'Installed but not loaded';
       set(missing, 'normal', `molcajete: ${name} is installed but not loaded`);
@@ -182,10 +190,10 @@ export function judgeMolcajete(
     const usedPercent = d.info
       ? Math.round(((d.info.sizeBytes - d.info.freeBytes) / Math.max(d.info.sizeBytes, 1)) * 100)
       : null;
-    const unmounted = `unmounted:${d.name}`;
-    const full = `disk:${d.name}`;
-    const smart = `smart:${d.name}`;
-    const readOnly = `read-only:${d.name}`;
+    const unmounted = `unmounted:${d.name}` as const;
+    const full = `disk:${d.name}` as const;
+    const smart = `smart:${d.name}` as const;
+    const readOnly = `read-only:${d.name}` as const;
     if (d.mounted === false) {
       set(unmounted, 'urgent', `${d.name} isn’t mounted on molcajete`, 2);
     } else if (d.mounted === true) {

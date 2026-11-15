@@ -189,7 +189,7 @@ const key = (id: string) =>
 /** Raises an issue for each group crashing now; closes those quiet for 7 days. */
 export function judgeCrashes(db: Db, now: number): void {
   const recent = db
-    .prepare('SELECT id, job FROM crash_groups WHERE last_at >= ?')
+    .prepare('SELECT id, job, last_at FROM crash_groups WHERE last_at >= ?')
     .all(now - QUIET_MS);
   const times = db.prepare('SELECT at FROM crashes WHERE group_id = ? ORDER BY at DESC');
   for (const g of recent) {
@@ -207,6 +207,8 @@ export function judgeCrashes(db: Db, now: number): void {
     raiseIssue(db, now, {
       ...key(id),
       severity: 'urgent',
+      // A new crash in the group brings a dismissed one back.
+      fingerprint: String(g.last_at),
       summary:
         count === 1
           ? `${name} crashed at ${when(start, now)}`

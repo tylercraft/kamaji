@@ -476,7 +476,7 @@ export function judgeVulnerabilities(db: Db, now: number): void {
     groups.set(key, [...(groups.get(key) ?? []), m]);
   }
   for (const [key, group] of groups) {
-    const [siteId, kind] = key.split('\u0000') as [string, string];
+    const [siteId, kind] = key.split('\u0000') as [string, `vulnerable:${string}`];
     const first = group[0]!;
     const fix = group.some((m) => m.fixedIn !== null);
     const count =

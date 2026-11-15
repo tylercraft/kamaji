@@ -538,4 +538,19 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 20,
+    name: 'dismissed issues and restore detail',
+    // Dismiss (issues.ts): who hid an issue Kamaji can't check again, and when. fingerprint is what
+    // the issue is about right now (a crash group's last crash, an end-of-life line and whether its
+    // date has passed); the issue comes back when it moves on from the one it was dismissed at.
+    // A restore check that failed in Docker keeps the end of what the command said, scrubbed.
+    sql: `
+      ALTER TABLE issues ADD COLUMN fingerprint TEXT NOT NULL DEFAULT '';
+      ALTER TABLE issues ADD COLUMN dismissed_at INTEGER;
+      ALTER TABLE issues ADD COLUMN dismissed_by TEXT;
+      ALTER TABLE issues ADD COLUMN dismissed_fingerprint TEXT;
+      ALTER TABLE restore_checks ADD COLUMN problem_detail TEXT;
+    `,
+  },
 ];
