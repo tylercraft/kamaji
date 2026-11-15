@@ -1,21 +1,21 @@
 // A site's favicon beside its name, so sites are quicker to tell apart. Kamaji fetches the icons
 // itself (server checks/icons.ts), so the page only ever loads them from Kamaji, and only as an
 // <img>: an SVG shown that way can't run script. Until one loads, or when a site has none, it's
-// the domain's first letter on a plain tile of the same size, so rows never shift.
+// the site name's first letter on a plain tile of the same size, so rows never shift.
 import { SiteIconsResponse } from '@kamaji/shared';
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { getJson } from '../api';
 
-// Which sites have an icon, by the hash of its bytes: one request for the whole page, shared by
-// every SiteIcon, and asked again every 15 minutes. A site not listed gets the letter, with no
-// request that would only 404.
-let versions: Record<string, string> = {};
+// Which sites have an icon, by the hash of its bytes, and every site's name: one request for the
+// whole page, shared by every SiteIcon, and asked again every 15 minutes. A site without an icon
+// gets its name's letter, with no request that would only 404.
+let list: SiteIconsResponse = { icons: {}, names: {} };
 const listeners = new Set<() => void>();
 let timer: number | undefined;
 
 async function load() {
   try {
-    versions = (await getJson('/api/site-icons', SiteIconsResponse)).icons;
+    list = await getJson('/api/site-icons', SiteIconsResponse);
     listeners.forEach((l) => l());
   } catch {
     // Letters until the next try.
@@ -37,16 +37,18 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** The letter on the tile: the domain's first, without www. */
-export const iconLetter = (id: string) => (id.replace(/^www\./i, '')[0] ?? '?').toUpperCase();
+/** The letter on the tile: the name's first letter or digit, or none before the names load. */
+export const iconLetter = (name: string | undefined) =>
+  (name?.match(/[\p{L}\p{N}]/u)?.[0] ?? '').toUpperCase();
 
 /** A site's icon, `size` pixels square: 16 in lists, 24 on the site's own page. */
 export function SiteIcon({ id, size = 16 }: { id: string; size?: 16 | 24 }) {
-  const version = useSyncExternalStore(
+  const { icons, names } = useSyncExternalStore(
     subscribe,
-    () => versions[id],
-    () => undefined,
+    () => list,
+    () => list,
   );
+  const version = icons[id];
   // The version that has loaded: a new version shows the letter again until it has.
   const [shown, setShown] = useState<string | null>(null);
   const loaded = version !== undefined && shown === version;
@@ -68,7 +70,7 @@ export function SiteIcon({ id, size = 16 }: { id: string; size?: 16 | 24 }) {
         font: `600 ${Math.round(size * 0.62)}px/1 var(--sans)`,
       }}
     >
-      {!loaded && iconLetter(id)}
+      {!loaded && iconLetter(names[id])}
       {version !== undefined && (
         <img
           src={`/api/sites/${encodeURIComponent(id)}/icon?v=${version}`}

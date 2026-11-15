@@ -328,6 +328,16 @@ export function iconVersions(db: Db): Record<string, string> {
   );
 }
 
+/** Every site's name, for the letter shown where there's no icon. */
+export function siteNames(db: Db): Record<string, string> {
+  return Object.fromEntries(
+    db
+      .prepare('SELECT id, name FROM sites WHERE removed_at IS NULL')
+      .all()
+      .map((r) => [String(r.id), String(r.name)]),
+  );
+}
+
 /** Sites due an icon: not removed or paused, and not tried in the last day. */
 export function dueIcons(db: Db, now: number): { id: string; url: string }[] {
   return db

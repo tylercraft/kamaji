@@ -26,7 +26,7 @@ import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
-import { iconVersions, storedIcon } from './checks/icons.js';
+import { iconVersions, siteNames, storedIcon } from './checks/icons.js';
 import { checkSites } from './checks/sites.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
@@ -247,7 +247,10 @@ export function createApp({
   // Sites' icons, fetched by Kamaji (checks/icons.ts): which sites have one, then each one's
   // bytes. Served as an image only, with nothing it could load or run, so an SVG stays a picture.
   app.get('/api/site-icons', (c) => {
-    const body: SiteIconsResponse = { icons: iconsDir ? iconVersions(db) : {} };
+    const body: SiteIconsResponse = {
+      icons: iconsDir ? iconVersions(db) : {},
+      names: siteNames(db),
+    };
     return c.json(body);
   });
   app.get('/api/sites/:id/icon', (c) => {

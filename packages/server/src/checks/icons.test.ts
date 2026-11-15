@@ -323,5 +323,6 @@ describe('the icon routes', () => {
     expect((await get('/api/sites/nowhere.test/icon')).status).toBe(404);
     const list = SiteIconsResponse.parse(await (await get('/api/site-icons')).json());
     expect(Object.keys(list.icons)).toEqual(['example.test']);
+    expect(Object.keys(list.names).sort()).toEqual(['bare.test', 'example.test']);
   });
 });
