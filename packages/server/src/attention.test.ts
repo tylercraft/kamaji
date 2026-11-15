@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ActivityResponse, OverviewResponse, SitesResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { createApp, DISMISS_WINDOW_MS } from './app.js';
+import { createApp, PASSKEY_WINDOW_MS } from './app.js';
 import type { SiteCheckers } from './checks/sites.js';
 import type { Db } from './db.js';
 import { checkEndOfLife } from './endOfLife/check.js';
@@ -300,10 +300,15 @@ function setup(home: { ok: boolean; problem: string | null } = { ok: true, probl
     'Content-Type': 'application/json',
   };
   const post = (path: string) => app.request(path, { method: 'POST', headers, body: '{}' });
-  const signed = (path: string) => passkey.post(app, path, '{}', headers);
+  const signed = (path: string, body: unknown = {}) =>
+    passkey.post(app, path, JSON.stringify(body), headers);
   const get = (path: string) => app.request(path, { headers });
-  const withCookie = (path: string, cookie: string) =>
-    app.request(path, { method: 'POST', headers: { ...headers, Cookie: cookie }, body: '{}' });
+  const withCookie = (path: string, cookie: string, body: unknown = {}) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { ...headers, Cookie: cookie },
+      body: JSON.stringify(body),
+    });
   return { db, post, signed, get, withCookie, clock };
 }
 
@@ -328,7 +333,7 @@ describe('the routes', () => {
     expect(findOpenIssue(db, crashKey)?.dismissedAt).toBeNull();
   });
 
-  it('lets a signed dismiss open ten minutes of dismissing, for dismissing only', async () => {
+  it('lets a signed write open ten minutes of passkey writes, approvals aside', async () => {
     const { db, signed, withCookie, clock } = setup();
     const a = crash(db, T - 60_000).issue;
     // Three issues with a line and Dismiss: an OS leaving support, on three servers.
@@ -347,26 +352,57 @@ describe('the routes', () => {
     const setCookie = first.headers.get('Set-Cookie') ?? '';
     expect(setCookie).toMatch(/HttpOnly/);
     expect(setCookie).toMatch(/SameSite=Strict/);
-    expect(setCookie).toMatch(/Path=\/api\/issues/);
+    expect(setCookie).toMatch(/Path=\/api;/);
     expect(setCookie).toMatch(/Max-Age=600/);
     const cookie = cookieFrom(first);
 
-    clock.now = T + DISMISS_WINDOW_MS - 1;
+    clock.now = T + PASSKEY_WINDOW_MS - 1;
     const second = await withCookie(`/api/issues/${disks[0]!.id}/dismiss`, cookie);
     expect(second.status).toBe(200);
     // Used, the window doesn't move on.
     expect(second.headers.get('Set-Cookie')).toBeNull();
-    // Not for anything else that takes a passkey.
+    // Any other write that takes a passkey: a site's settings, saved.
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES ('a.test', 'A', 'https://a.test/', 'other', 'monitoring', 'done', 0)`,
+    ).run();
+    const configure = await withCookie('/api/sites/a.test/configure', cookie, {
+      platform: 'static',
+      expectedText: null,
+      backupExpectation: null,
+      notifications: 'normal',
+    });
+    expect(configure.status).toBe(200);
+    // Approving a batch always signs: the updater checks the approval's own signature.
     expect((await withCookie('/api/batches', cookie)).status).toBe(401);
     // A made-up token, and the real one once the ten minutes are up.
     expect(
       (await withCookie(`/api/issues/${disks[1]!.id}/dismiss`, 'kamaji_dismiss=x')).status,
     ).toBe(401);
-    clock.now = T + DISMISS_WINDOW_MS;
+    clock.now = T + PASSKEY_WINDOW_MS;
     expect((await withCookie(`/api/issues/${disks[1]!.id}/dismiss`, cookie)).status).toBe(401);
     expect(
       findOpenIssue(db, { resourceType: 'server', resourceId: 'two', kind: 'os-eol' })?.dismissedAt,
     ).toBeNull();
+  });
+
+  it('opens a window from any signed write, and none from a refused one', async () => {
+    const { db, signed, withCookie } = setup();
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES ('a.test', 'A', 'https://a.test/', 'other', 'monitoring', 'done', 0)`,
+    ).run();
+    const opened = await signed('/api/sites/a.test/configure', {
+      expectedText: 'A',
+      backupExpectation: null,
+      notifications: 'normal',
+    });
+    expect(opened.status).toBe(200);
+    const cookie = cookieFrom(opened);
+    expect(cookie).toMatch(/^kamaji_passkey=/);
+    expect(
+      (await withCookie(`/api/issues/${crash(db, T - 60_000).issue.id}/dismiss`, cookie)).status,
+    ).toBe(200);
   });
 
   it('opens no window when the dismiss doesn’t happen', async () => {

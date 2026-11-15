@@ -154,16 +154,19 @@ const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
 
 /**
- * Dismissing one warning after another shouldn't take a passkey each time. A signed dismiss opens a
- * 10-minute window for more dismisses, from that browser only: a random token in an HttpOnly,
- * SameSite=Strict cookie, scoped to /api/issues. Kamaji keeps the token's hash in memory, not the
- * database, since anything on the mini can write the database. It's fixed from the signing, not
- * extended by use, and a restart closes it. Nothing else counts it: approving and every other
- * write still sign each time.
+ * One passkey for a run of writes: any signed write that succeeds opens a 10-minute window in which
+ * that browser's other passkey writes go through without one. A random token in an HttpOnly,
+ * SameSite=Strict cookie for /api; Kamaji keeps the token's hash in memory, not the database,
+ * since anything on the mini can write the database. It's fixed from the signing, not extended
+ * by use, and a restart closes it.
+ *
+ * Approving a batch always signs: the updater checks that approval's own signature again before
+ * it runs anything (passkeys/guard.ts, approvalProblem), so a batch written straight into the
+ * database doesn't run. An approval sent under the window would have no signature to check.
  */
-const DISMISS_STEP = /^\/api\/issues\/[^/]+\/dismiss$/;
-export const DISMISS_WINDOW_MS = 10 * 60_000;
-const DISMISS_COOKIE = 'kamaji_dismiss';
+export const PASSKEY_WINDOW_MS = 10 * 60_000;
+const WINDOW_COOKIE = 'kamaji_passkey';
+const SIGN_EACH_TIME = new Set(['POST /api/batches']);
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('base64url');
 
 const passkeyFree = (method: string, path: string) =>
@@ -216,8 +219,8 @@ export function createApp({
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
   const app = new Hono<{ Variables: { approval: string } }>();
-  /** Open dismiss windows: the token's hash, and when it closes. */
-  const dismissWindows = new Map<string, number>();
+  /** Open passkey windows: the token's hash, and when it closes. */
+  const passkeyWindows = new Map<string, number>();
   /** Servers being checked now: one Check now at a time each. */
   const checkingServers = new Set<string>();
   /** "Back up now" exports still going, by site: one at a time each. */
@@ -244,13 +247,13 @@ export function createApp({
     }
     // A passkey, for every write that starts or changes work on a site.
     const method = c.req.method;
-    const dismissing = method === 'POST' && DISMISS_STEP.test(c.req.path);
-    if (dismissing) {
-      for (const [hash, closes] of dismissWindows) if (closes <= now()) dismissWindows.delete(hash);
-      const token = getCookie(c, DISMISS_COOKIE);
-      if (token && dismissWindows.has(tokenHash(token))) return next();
+    const guarded = !['GET', 'HEAD'].includes(method) && !passkeyFree(method, c.req.path);
+    if (guarded && !SIGN_EACH_TIME.has(`${method} ${c.req.path}`)) {
+      for (const [hash, closes] of passkeyWindows) if (closes <= now()) passkeyWindows.delete(hash);
+      const token = getCookie(c, WINDOW_COOKIE);
+      if (token && passkeyWindows.has(tokenHash(token))) return next();
     }
-    if (!['GET', 'HEAD'].includes(method) && !passkeyFree(method, c.req.path)) {
+    if (guarded) {
       const body = await c.req.text();
       const check = checkWrite(
         db,
@@ -269,15 +272,16 @@ export function createApp({
       c.set('approval', JSON.stringify({ body, proof: check.proof }));
     }
     await next();
-    if (dismissing && c.res.status === 200) {
+    // Here only after a signed write: one under the window returned above.
+    if (guarded && c.res.status >= 200 && c.res.status < 300) {
       const token = randomBytes(32).toString('base64url');
-      dismissWindows.set(tokenHash(token), now() + DISMISS_WINDOW_MS);
-      setCookie(c, DISMISS_COOKIE, token, {
-        path: '/api/issues',
+      passkeyWindows.set(tokenHash(token), now() + PASSKEY_WINDOW_MS);
+      setCookie(c, WINDOW_COOKIE, token, {
+        path: '/api',
         httpOnly: true,
         secure: true,
         sameSite: 'Strict',
-        maxAge: DISMISS_WINDOW_MS / 1000,
+        maxAge: PASSKEY_WINDOW_MS / 1000,
       });
     }
   });
