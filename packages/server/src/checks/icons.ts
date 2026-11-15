@@ -1,8 +1,9 @@
 // Each site's favicon, fetched by Kamaji itself so the page never loads anything from a client
-// site. Once a day per site, alongside the cycle but never holding it up: a plain GET of the home
-// page for its icon, apple-touch-icon and tile tags, then a GET of the sharpest icon (or of
-// /apple-touch-icon.png and /favicon.ico). Only a small image of a known type is kept, checked from its bytes as well as
-// its header, and a failed try keeps the last icon.
+// site. Fetched once when a site is added, then only when Tyler asks (Refetch icon, in a site's
+// settings): a plain GET of the home page for its icon, apple-touch-icon and tile tags, then a GET
+// of the sharpest icon (or of /apple-touch-icon.png and /favicon.ico). Only a small image of a
+// known type is kept, checked from its bytes as well as its header, and a failed try keeps the
+// last icon.
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +26,6 @@ export const MAX_ICON_BYTES = 100 * 1024;
 export const MAX_PAGE_BYTES = 512 * 1024;
 const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
-export const ICON_EVERY_MS = 24 * 60 * 60 * 1000;
 /** At most this many of the page's icons are tried, sharpest first, before the usual paths. */
 const MOST_TRIES = 4;
 
@@ -373,17 +373,6 @@ export function siteNames(db: Db): Record<string, string> {
 }
 
 /** Sites due an icon: not removed or paused, and not tried in the last day. */
-export function dueIcons(db: Db, now: number): { id: string; name: string; url: string }[] {
-  return db
-    .prepare(
-      `SELECT s.id, s.name, s.url FROM sites s LEFT JOIN site_icons i ON i.site_id = s.id
-       WHERE s.removed_at IS NULL AND s.paused_at IS NULL
-       AND (i.checked_at IS NULL OR i.checked_at <= ?) ORDER BY s.id`,
-    )
-    .all(now - ICON_EVERY_MS)
-    .map((r) => ({ id: String(r.id), name: String(r.name), url: String(r.url) }));
-}
-
 /** How one site's fetch went: its problem when there's no new icon. */
 export interface IconOutcome {
   id: string;
@@ -419,8 +408,8 @@ async function fetchAndStore(
 }
 
 /**
- * Refetch icon, on a site's settings: its icon now, however recently it was tried. Null for a
- * site that's removed or doesn't exist.
+ * A site's icon, now: when it's added, and Refetch icon in its settings. Null for a site that's
+ * removed or doesn't exist.
  */
 export async function refetchIcon(
   db: Db,
@@ -448,48 +437,5 @@ export function iconStatus(db: Db, siteId: string): SiteIconStatus | null {
     fetchedAt: row.fetched_at === null ? null : new Date(Number(row.fetched_at)).toISOString(),
     checkedAt: new Date(Number(row.checked_at)).toISOString(),
     problem: row.problem === null ? null : String(row.problem),
-  };
-}
-
-/**
- * Every due site's icon, three at a time, each site's outcome in id order. Never throws: a site
- * that fails, or throws, keeps its last icon and is tried again tomorrow.
- */
-export async function refreshIcons(
-  db: Db,
-  options: IconOptions & { atOnce?: number },
-): Promise<IconOutcome[]> {
-  const sites = dueIcons(db, options.now());
-  const outcomes: IconOutcome[] = [];
-  let next = 0;
-  async function worker() {
-    while (next < sites.length && !options.signal?.aborted) {
-      const outcome = await fetchAndStore(db, sites[next++]!, options);
-      if (outcome) outcomes.push(outcome);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(options.atOnce ?? 3, sites.length) }, worker));
-  return outcomes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-}
-
-/**
- * What the cycle calls: starts a refresh and returns at once, so a slow site can never hold the
- * cycle up, and does nothing while one is still going. A refresh that throws (a bug: refreshIcons
- * doesn't) logs that it happened, nothing more.
- */
-export function iconRefresher(
-  run: () => Promise<unknown>,
-  log: (message: string) => void,
-  what = 'icons',
-) {
-  let running = false;
-  return (): void => {
-    if (running) return;
-    running = true;
-    run()
-      .catch(() => log(`${what}: the refresh failed`))
-      .finally(() => {
-        running = false;
-      });
   };
 }
