@@ -147,6 +147,16 @@ export const SiteSummary = Site.extend({
    */
   /** Null for an address with no registrable domain (localhost, an IP). */
   renewal: Renewal.nullable(),
+  /**
+   * Craftish Care, for a connected site: its last good report, and the latest attempt when that
+   * failed since. Null when the site isn't connected.
+   */
+  care: z
+    .object({
+      lastReportAt: Timestamp.nullable(),
+      failure: z.object({ at: Timestamp, problem: z.string() }).nullable(),
+    })
+    .nullable(),
   findings: z.array(
     z.object({
       id: z.string(),

@@ -3,7 +3,13 @@
 // The components table holds the current state; every report is an observation and every change
 // an event, so the history is kept. A failed report never empties the inventory: the last good
 // one stays, saying how old it is.
-import { CareReport, type Inventory, type Known, type VulnerabilityMatch } from '@kamaji/shared';
+import {
+  CareReport,
+  type Inventory,
+  type Known,
+  type SiteSummary,
+  type VulnerabilityMatch,
+} from '@kamaji/shared';
 import type { CareKeys } from '../care/keys.js';
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
@@ -539,6 +545,20 @@ export function siteInventory(db: Db, site: { id: string; mode: string }): Known
           ? { at: iso(latest.at), problem: latest.value.problem }
           : null,
     },
+  };
+}
+
+/** Craftish Care's state for the Sites page: the last good report, and a failure since it. */
+export function careStatus(db: Db, site: { id: string; mode: string }): SiteSummary['care'] {
+  if (site.mode !== 'connected') return null;
+  const good = lastGood(db, site.id);
+  const [latest] = latestObservations<ReportValue>(db, 'site', site.id, REPORT_CHECK, 'plugin', 1);
+  return {
+    lastReportAt: good ? iso(Number(good.at)) : null,
+    failure:
+      latest && !latest.value.ok && (!good || latest.at > Number(good.at))
+        ? { at: iso(latest.at), problem: latest.value.problem }
+        : null,
   };
 }
 

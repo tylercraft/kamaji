@@ -10,6 +10,7 @@ import type {
 import { describe, expect, it } from 'vitest';
 import {
   backups,
+  careState,
   certificate,
   domain,
   fromOutside,
@@ -47,6 +48,7 @@ const site: SiteSummary = {
   updates: { known: true, value: 0 },
   updateWork: { toApprove: 0, held: 0, running: 0, noDownload: 0 },
   renewal: { domain: 'a.test', expiresOn: '2027-03-14', note: null, checkedAt: ago(60) },
+  care: { lastReportAt: ago(20), failure: null },
   findings: [],
 };
 
@@ -384,5 +386,38 @@ describe('the domain line', () => {
         checkedAt: ago(60),
       }),
     ).toMatchObject({ tone: 'neutral', state: 'Renews 2027-03-14' });
+  });
+});
+
+describe('Craftish Care on the Sites list', () => {
+  const on = (care: SiteSummary['care'], pausedAt: string | null = null) =>
+    careState({ care, pausedAt }, NOW);
+
+  it('says it’s reporting only when the last report came through and is current', () => {
+    expect(on({ lastReportAt: ago(20), failure: null })).toMatchObject({
+      tone: 'green',
+      text: 'Craftish Care: reporting',
+    });
+    expect(on({ lastReportAt: ago(5 * 60), failure: null })).toMatchObject({
+      tone: 'amber',
+      text: 'Craftish Care: no report for 5 h',
+    });
+    expect(on({ lastReportAt: ago(3 * DAY), failure: null })?.text).toBe(
+      'Craftish Care: no report for 3 days',
+    );
+  });
+
+  it('says when the latest report failed, and why', () => {
+    expect(
+      on({ lastReportAt: ago(90), failure: { at: ago(10), problem: 'HTTP 500' } }),
+    ).toMatchObject({ tone: 'red', text: 'Craftish Care: report failed', detail: 'HTTP 500.' });
+    expect(on({ lastReportAt: null, failure: null })).toMatchObject({ tone: 'neutral' });
+  });
+
+  it('says nothing for a site that isn’t connected, and doesn’t blame a paused one', () => {
+    expect(on(null)).toBeNull();
+    expect(on({ lastReportAt: ago(5 * DAY), failure: null }, ago(DAY))).toMatchObject({
+      tone: 'neutral',
+    });
   });
 });
