@@ -396,21 +396,19 @@ describe('Craftish Care on the Sites list', () => {
   it('says it’s reporting only when the last report came through and is current', () => {
     expect(on({ lastReportAt: ago(20), failure: null })).toMatchObject({
       tone: 'green',
-      text: 'Craftish Care: reporting',
+      state: 'Reporting',
     });
     expect(on({ lastReportAt: ago(5 * 60), failure: null })).toMatchObject({
       tone: 'amber',
-      text: 'Craftish Care: no report for 5 h',
+      state: 'No report for 5 h',
     });
-    expect(on({ lastReportAt: ago(3 * DAY), failure: null })?.text).toBe(
-      'Craftish Care: no report for 3 days',
-    );
+    expect(on({ lastReportAt: ago(3 * DAY), failure: null })?.state).toBe('No report for 3 days');
   });
 
   it('says when the latest report failed, and why', () => {
     expect(
       on({ lastReportAt: ago(90), failure: { at: ago(10), problem: 'HTTP 500' } }),
-    ).toMatchObject({ tone: 'red', text: 'Craftish Care: report failed', detail: 'HTTP 500.' });
+    ).toMatchObject({ tone: 'red', state: 'Report failed', detail: 'HTTP 500.' });
     expect(on({ lastReportAt: null, failure: null })).toMatchObject({ tone: 'neutral' });
   });
 
