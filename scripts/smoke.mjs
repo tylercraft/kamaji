@@ -863,7 +863,8 @@ for (const view of VIEWS) {
 }
 
 // Site icons on the Sites page: the two stored ones load from Kamaji as images, served so nothing
-// in them can run; a site without one shows its letter, the same size.
+// in them can run; a site without one shows its letter, the same size. In the table it's 48px,
+// its own column beside the name and two lines under it.
 {
   problems = [];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -871,27 +872,35 @@ for (const view of VIEWS) {
   await wait(1500);
   const icon = (id) =>
     evaluate(`(() => {
-      // The tile sits just before the name's link, in SiteIcon's WithIcon.
+      // The tile sits just before the block holding the name's link.
       // The page has a table and phone cards; one of them is hidden, so take the link that shows.
       const link = [...document.querySelectorAll('a[href="/sites/${id}"]')].find((a) => a.getClientRects().length > 0);
       const tile = link?.parentElement?.previousElementSibling;
       const img = tile?.querySelector('img');
       const box = tile?.getBoundingClientRect();
-      return JSON.stringify({ loaded: !!img && img.complete && img.naturalWidth > 0, letter: img ? '' : (tile?.textContent ?? ''), w: box?.width, h: box?.height });
+      const lines = link?.parentElement?.getBoundingClientRect();
+      return JSON.stringify({ lines: lines?.height, loaded: !!img && img.complete && img.naturalWidth > 0, letter: img ? '' : (tile?.textContent ?? ''), w: box?.width, h: box?.height });
     })()`).then((j) => JSON.parse(j ?? '{}'));
   for (const id of [OK, 'photogravure.com']) {
     const got = await icon(id);
     if (!got.loaded) problems.push(`${id}’s icon didn’t load`);
-    if (got.w !== 16 || got.h !== 16) problems.push(`${id}’s icon is ${got.w}×${got.h}`);
+    // About as tall as the name and its two lines; findings may add a fourth.
+    if (!(got.lines >= 44 && got.lines <= 72))
+      problems.push(`${id}’s lines are ${got.lines}px tall`);
+    if (got.w !== 48 || got.h !== 48) problems.push(`${id}’s icon is ${got.w}×${got.h}`);
   }
   const none = await icon(BAD);
-  if (none.letter !== 'F' || none.w !== 16 || none.h !== 16)
+  if (none.letter !== 'F' || none.w !== 48 || none.h !== 48)
     problems.push(`no letter tile for a site without an icon: ${JSON.stringify(none)}`);
   const headers = await evaluate(
     `fetch('/api/sites/photogravure.com/icon').then((r) => [r.headers.get('content-type'), r.headers.get('content-security-policy'), r.headers.get('x-content-type-options')].join(' | '))`,
   );
   if (headers !== "image/svg+xml | default-src 'none'; style-src 'unsafe-inline' | nosniff")
     problems.push(`icon headers: ${headers}`);
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'sites-icons.png'), Buffer.from(shot.result.data, 'base64'));
+  }
   if (problems.length) failures.push(`site icons: ${problems.join('; ')}`);
   else console.log('ok   site icons: PNG and SVG load as images, a letter where there’s none');
 }
