@@ -1,11 +1,14 @@
 // Add site, step 1: identify. Saved as an unfinished setup straight away, so it can be resumed.
-import { HostKind, NewSiteRequest } from '@kamaji/shared';
+// The platform is guessed from the home page once the address is in, and pre-selected; Tyler's own
+// choice wins over a guess that comes after it.
+import { DetectPlatformResponse, HostKind, NewSiteRequest, type Platform } from '@kamaji/shared';
 import { useState, type FormEvent } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { Field, Form, FormError, PrimaryButton } from '../components/forms';
 import { PageHeading, Panel, PanelTitle } from '../components/ui';
 import { useRoute } from '../router';
+import { PLATFORM_NAMES } from '../sitesView';
 import { Steps } from './SiteSetup';
 
 const hostOptions: [HostKind, string][] = [
@@ -25,6 +28,22 @@ export function AddSitePage() {
   const { navigate } = useRoute();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [platform, setPlatform] = useState<Platform>('wordpress');
+  const [chosen, setChosen] = useState(false);
+  const [guess, setGuess] = useState<string | null>(null);
+
+  async function detect(raw: string) {
+    const url = raw.trim();
+    if (chosen || !/^https?:\/\/\S+$/.test(url)) return;
+    setGuess('Looking at the home page…');
+    const result = await postJson('/api/sites/detect', { url }, DetectPlatformResponse);
+    if (!result.ok) return setGuess(null);
+    const { platform: found, problem } = result.data;
+    if (found) {
+      setPlatform((current) => (chosen ? current : found));
+      setGuess(`Guessed from the home page: ${PLATFORM_NAMES[found]}.`);
+    } else setGuess(`Couldn’t read the home page (${problem ?? 'no answer'}): choose it.`);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,6 +54,7 @@ export function AddSitePage() {
       url: String(form.get('url') ?? '').trim(),
       hostKind: form.get('host'),
       clientSlug: slug === '' ? null : slug,
+      platform,
     });
     if (!request.success) {
       setError(ERRORS.bad_request!);
@@ -63,7 +83,7 @@ export function AddSitePage() {
           <Field
             id="url"
             label="Address"
-            hint="WordPress’s own address for the site, with https://."
+            hint="The site’s address, with https://. For WordPress, its own address."
           >
             <input
               id="url"
@@ -72,7 +92,33 @@ export function AddSitePage() {
               required
               placeholder="https://example.com"
               aria-describedby="url-hint"
+              onBlur={(e) => void detect(e.currentTarget.value)}
             />
+          </Field>
+          <Field
+            id="platform"
+            label="Platform"
+            hint={
+              guess ??
+              'A static site or an app is monitoring only: no Craftish Care, backups or updates.'
+            }
+          >
+            <select
+              id="platform"
+              name="platform"
+              value={platform}
+              onChange={(e) => {
+                setChosen(true);
+                setPlatform(e.target.value as Platform);
+              }}
+              aria-describedby="platform-hint"
+            >
+              {(Object.entries(PLATFORM_NAMES) as [Platform, string][]).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field id="host" label="Host">
             <select id="host" name="host" defaultValue="other">

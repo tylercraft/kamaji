@@ -24,6 +24,7 @@ import {
   backups,
   certificate,
   CURRENT_FOR,
+  domain,
   fromOutside,
   homePage,
   isOutOfDate,
@@ -47,6 +48,7 @@ import {
 import { SiteUpdatesPanel } from './SiteUpdatesPanel';
 import { RememberedDetails } from '../components/remembered';
 import { SiteIcon } from '../components/SiteIcon';
+import { PLATFORM_NAMES } from '../sitesView';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -295,17 +297,20 @@ export function SitePage({ id }: { id: string }) {
         const now = detail.state === 'ready' ? detail.loadedAt : 0;
         const { site } = d;
         const connected = site.mode === 'connected';
-        const siteLines = [
+        // A static site or an app is monitoring only by design: no software, updates, backups
+        // or connection to show, so none of them is "not checked".
+        const wordpress = site.platform === 'wordpress';
+        const checkLines = [
           homePage(site, now),
           fromOutside(site, now),
           certificate(site),
-          security(d, now),
-          updates(site),
+          domain(site, now),
         ];
+        const siteLines = wordpress ? [...checkLines, security(d, now), updates(site)] : checkLines;
         const backupNow = backupsResource.state === 'ready' ? backupsResource.loadedAt : now;
         const looks = siteLooks(
           d,
-          backupsResource.state === 'ready' ? backupsResource.data : null,
+          wordpress && backupsResource.state === 'ready' ? backupsResource.data : null,
           backupNow,
         );
         return (
@@ -329,7 +334,11 @@ export function SitePage({ id }: { id: string }) {
               {site.setup === 'done' && (
                 <div css={{ display: 'grid', gap: 2, justifyItems: 'end', textAlign: 'right' }}>
                   <span css={{ fontSize: 12, fontWeight: 550 }}>
-                    {connected ? 'Craftish Care connected' : 'Monitoring only'}
+                    {!wordpress
+                      ? `${PLATFORM_NAMES[site.platform]}, monitoring only`
+                      : connected
+                        ? 'Craftish Care connected'
+                        : 'Monitoring only'}
                   </span>
                   <Freshness detail={d} now={now} />
                 </div>
@@ -352,35 +361,41 @@ export function SitePage({ id }: { id: string }) {
             {site.setup === 'done' && (
               <>
                 <div css={{ display: 'grid', gap: 8 }}>
-                  <HealthTiles lines={[...siteLines, backupTile(backupsResource, backupNow)]} />
-                  <CheckDetails lines={siteLines.slice(0, 3)} />
+                  <HealthTiles
+                    lines={
+                      wordpress ? [...siteLines, backupTile(backupsResource, backupNow)] : siteLines
+                    }
+                  />
+                  <CheckDetails lines={checkLines} />
                 </div>
                 <Attention looks={looks} />
-                <Cards>
-                  {connected && (
-                    <div className="updates">
-                      <SiteUpdatesPanel
-                        siteId={site.id}
-                        work={
-                          site.updates.known
-                            ? { known: true, value: site.updateWork }
-                            : { known: false, reason: site.updates.reason }
-                        }
-                      />
+                {wordpress && (
+                  <Cards>
+                    {connected && (
+                      <div className="updates">
+                        <SiteUpdatesPanel
+                          siteId={site.id}
+                          work={
+                            site.updates.known
+                              ? { known: true, value: site.updateWork }
+                              : { known: false, reason: site.updates.reason }
+                          }
+                        />
+                      </div>
+                    )}
+                    <div className="backups">
+                      <SiteBackupsPanel siteId={site.id} backups={backupsResource} />
                     </div>
-                  )}
-                  <div className="backups">
-                    <SiteBackupsPanel siteId={site.id} backups={backupsResource} />
-                  </div>
-                  <div className="connection">
-                    <Connection detail={d} reload={reload} />
-                  </div>
-                  {connected && (
-                    <div className="plugin">
-                      <PluginZip siteId={site.id} />
+                    <div className="connection">
+                      <Connection detail={d} reload={reload} />
                     </div>
-                  )}
-                </Cards>
+                    {connected && (
+                      <div className="plugin">
+                        <PluginZip siteId={site.id} />
+                      </div>
+                    )}
+                  </Cards>
+                )}
                 {connected && <InventoryPanel detail={d} now={now} reload={reload} />}
                 <ConfigureStep detail={d} reload={reload} section />
                 <RemovePanel detail={d} closed />

@@ -28,6 +28,25 @@ export type HostKind = z.infer<typeof HostKind>;
 export const SiteMode = z.enum(['connected', 'monitoring']);
 export type SiteMode = z.infer<typeof SiteMode>;
 
+/**
+ * What a site is built on. A static site or an app is monitoring only by design: no Craftish
+ * Care, no backups to expect, no updates. Uptime, the certificate and the domain are the same.
+ */
+export const Platform = z.enum(['wordpress', 'static', 'app']);
+export type Platform = z.infer<typeof Platform>;
+
+/** A site's registrable domain and when it renews, from RDAP (checks/domains.ts). */
+export const Renewal = z.object({
+  /** craftish.dev for romaji.craftish.dev too: one check for both. */
+  domain: z.string(),
+  /** The expiration date as RDAP gave it (YYYY-MM-DD); null when there's none to show. */
+  expiresOn: z.string().nullable(),
+  /** Why there's no date: not read yet, the registry has no RDAP, or the read failed. */
+  note: z.string().nullable(),
+  checkedAt: Timestamp.nullable(),
+});
+export type Renewal = z.infer<typeof Renewal>;
+
 /** Where an unfinished Add site setup stopped, or done. */
 export const SetupStep = z.enum(['identify', 'connect', 'configure', 'done']);
 export type SetupStep = z.infer<typeof SetupStep>;
@@ -39,6 +58,7 @@ export const Site = z.object({
   hostKind: HostKind,
   clientSlug: z.string().nullable(),
   mode: SiteMode,
+  platform: Platform,
   setup: SetupStep,
   /** Answers only on the tailnet: the Worker can't see it, so its alerts come from the mini. */
   tailnetOnly: z.boolean(),
@@ -125,6 +145,8 @@ export const SiteSummary = Site.extend({
    * Open issues other than reachability and the certificate, which have their own columns: a
    * site can be up and still need attention (vulnerabilities, end of life, backups, a held run).
    */
+  /** Null for an address with no registrable domain (localhost, an IP). */
+  renewal: Renewal.nullable(),
   findings: z.array(
     z.object({
       id: z.string(),
@@ -369,6 +391,8 @@ export const NewSiteRequest = z.object({
     .trim()
     .regex(/^[a-z0-9-]{1,60}$/)
     .nullable(),
+  /** WordPress unless Tyler chose otherwise; Add site guesses it from the home page. */
+  platform: Platform.default('wordpress'),
 });
 export type NewSiteRequest = z.infer<typeof NewSiteRequest>;
 
@@ -383,6 +407,8 @@ export type SiteBackupSchedule = z.infer<typeof SiteBackupSchedule>;
 export const ConfigureSiteRequest = z.object({
   /** The display name; left as it was when absent. The id, domain, keys and history never change. */
   name: z.string().trim().min(1).max(80).optional(),
+  /** Left as it was when absent. Static and app sites are monitoring only, without backups. */
+  platform: Platform.optional(),
   expectedText: z.string().trim().max(200).nullable(),
   backupExpectation: BackupExpectation.nullable(),
   notifications: z.enum(['normal', 'digest']),
@@ -393,6 +419,15 @@ export const ConfigureSiteRequest = z.object({
   clientAgreed: z.boolean().optional(),
 });
 export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
+
+/** Add site's guess at a site's platform, from its home page; null when it couldn't be read. */
+export const DetectPlatformRequest = z.object({ url: z.url({ protocol: /^https?$/ }) });
+export type DetectPlatformRequest = z.infer<typeof DetectPlatformRequest>;
+export const DetectPlatformResponse = z.object({
+  platform: Platform.nullable(),
+  problem: z.string().nullable(),
+});
+export type DetectPlatformResponse = z.infer<typeof DetectPlatformResponse>;
 
 /** Remove: the name typed back, as the confirmation. */
 export const RemoveSiteRequest = z.object({ confirm: z.string() });

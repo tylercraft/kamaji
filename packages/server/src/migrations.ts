@@ -553,4 +553,24 @@ export const migrations: Migration[] = [
       ALTER TABLE restore_checks ADD COLUMN problem_detail TEXT;
     `,
   },
+  {
+    version: 21,
+    name: 'site platforms and domain renewals',
+    // What a site is built on: WordPress, or a static site or an app, which are monitoring only by
+    // design (no Craftish Care, backups or updates). Every site so far is WordPress; Tyler sets the
+    // others. Each registrable domain's renewal date, read through RDAP once a day
+    // (checks/domains.ts): what the last read found, and how many reads in a row have failed.
+    sql: `
+      ALTER TABLE sites ADD COLUMN platform TEXT NOT NULL DEFAULT 'wordpress'
+        CHECK (platform IN ('wordpress', 'static', 'app'));
+      CREATE TABLE domains (
+        domain TEXT PRIMARY KEY,
+        checked_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('ok', 'no-rdap', 'no-date', 'failed')),
+        problem TEXT,
+        failures INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];

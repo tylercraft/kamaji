@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { careRequest } from './care/client.js';
 import { loadConfig, passkeyConfig } from './config.js';
+import { checkDomains } from './checks/domains.js';
 import { iconRefresher, refreshIcons } from './checks/icons.js';
 import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
@@ -76,12 +77,15 @@ const startIcons = iconRefresher(
   () => refreshIcons(db, { dir: config.iconsDir, now: Date.now }),
   log,
 );
+// Domains' renewal dates, once a day each, the same way: never waited on (checks/domains.ts).
+const startDomains = iconRefresher(() => checkDomains(db, { now: Date.now }), log, 'domains');
 const runChecks = async (signal: AbortSignal) => {
   // Each step timed; one that's slow or holds the event loop says so in the log (TY-169).
   const steps = cycleSteps(log);
   try {
     const checked = await steps.step('home pages', () => checkSites(db, { now: Date.now, signal }));
     startIcons();
+    startDomains();
     if (config.worker) {
       const worker = config.worker;
       await steps.step('outside checks', () =>

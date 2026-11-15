@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SiteDetailResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
+import { detectPlatform, platformOf } from '../checks/platform.js';
 import { testAuthenticator } from '../passkeys/testing.js';
 import type { CareResult } from '../care/client.js';
 import { loadCareKeys, newKeyPair, type CareKeys, type SigningKey } from '../care/keys.js';
@@ -398,5 +399,123 @@ describe('Remove', () => {
       disconnect: 'failed',
       problem: 'Couldn’t reach the site: remove Craftish Care in wp-admin',
     });
+  });
+});
+
+describe('Platforms', () => {
+  const STATIC = { ...NEW, name: 'Static', url: 'https://static.test', platform: 'static' };
+
+  it('takes a static site or an app straight to Configure, never connecting', async () => {
+    const { post, detail, sent } = setup(reportOnly, () => ok(HELLO));
+    expect((await post('/api/sites', STATIC)).status).toBe(201);
+    expect((await detail('static.test')).site).toMatchObject({
+      platform: 'static',
+      setup: 'configure',
+      mode: 'monitoring',
+    });
+    // Nothing to connect: no zip, no handshake, no choosing to connect.
+    expect((await post('/api/sites/static.test/mode', { mode: 'connected' })).status).toBe(404);
+    expect((await post('/api/sites/static.test/handshake')).status).toBe(404);
+    expect(sent).toEqual([]);
+    // WordPress stays the default.
+    await post('/api/sites', NEW);
+    expect((await detail('kamaji-wp.ddev.site')).site).toMatchObject({
+      platform: 'wordpress',
+      setup: 'connect',
+    });
+  });
+
+  it('keeps no backup expectation or backups for a static site, whatever is asked', async () => {
+    const { db, post, get, detail } = setup(reportOnly, () => ok(HELLO));
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES ('romaji.craftish.dev', 'Romaji', 'https://romaji.craftish.dev/', 'craftish',
+         'monitoring', 'done', 0)`,
+    ).run();
+    const saved = await post('/api/sites/romaji.craftish.dev/configure', {
+      platform: 'static',
+      expectedText: null,
+      backupExpectation: 'kamaji',
+      notifications: 'normal',
+      own: true,
+      siteBackups: 'weekly',
+    });
+    expect(saved.status).toBe(200);
+    const d = await detail('romaji.craftish.dev');
+    expect(d.site.platform).toBe('static');
+    expect(d.backupExpectation).toBeNull();
+    expect(d.siteBackups.schedule).toBe('off');
+    expect((await post('/api/sites/romaji.craftish.dev/backups')).status).toBe(404);
+    expect(
+      (await post('/api/sites/romaji.craftish.dev/backups/whole-site', { kind: 'backup' })).status,
+    ).toBe(404);
+    expect((await get('/api/sites/romaji.craftish.dev/craftish-care.zip')).status).toBe(404);
+    const activity = db
+      .prepare("SELECT summary FROM events WHERE kind = 'site.platform'")
+      .all()
+      .map((r) => r.summary);
+    expect(activity).toEqual(['Romaji is a static site (was WordPress)']);
+  });
+
+  it('won’t make a connected site static until it’s disconnected', async () => {
+    const { db, post } = setup(reportOnly, () => ok(HELLO));
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES ('wp.test', 'WP', 'https://wp.test/', 'other', 'connected', 'done', 0)`,
+    ).run();
+    const refused = await post('/api/sites/wp.test/configure', {
+      platform: 'app',
+      expectedText: null,
+      backupExpectation: null,
+      notifications: 'normal',
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'connected' });
+  });
+});
+
+describe('Add site’s platform guess', () => {
+  const page = (html: string) =>
+    (async () =>
+      new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })) as typeof fetch;
+
+  it('reads WordPress from its paths or generator tag, and static from anything else', async () => {
+    expect(platformOf('<link rel="stylesheet" href="/wp-content/themes/x/style.css">')).toBe(
+      'wordpress',
+    );
+    expect(platformOf('<link rel="https://api.w.org/" href="https://a.test/wp-json/">')).toBe(
+      'wordpress',
+    );
+    expect(platformOf('<meta name="generator" content="WordPress 6.9">')).toBe('wordpress');
+    expect(platformOf('<meta content="WordPress 6.9" name="generator">')).toBe('wordpress');
+    expect(platformOf('<meta name="generator" content="Astro v5">')).toBe('static');
+    expect(await detectPlatform('https://a.test/', { fetch: page('<h1>Hi</h1>') })).toEqual({
+      platform: 'static',
+      problem: null,
+    });
+    const down = (async () => new Response('', { status: 503 })) as typeof fetch;
+    expect(await detectPlatform('https://a.test/', { fetch: down })).toEqual({
+      platform: null,
+      problem: 'HTTP 503',
+    });
+  });
+
+  it('is asked without a passkey', async () => {
+    const { app } = setup(reportOnly, () => ok(HELLO));
+    const res = await app.request('/api/sites/detect', {
+      method: 'POST',
+      headers: {
+        'Tailscale-User-Login': LOGIN,
+        Host: 'kamaji.test',
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: 'https://127.0.0.1:9/' }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ platform: null });
   });
 });

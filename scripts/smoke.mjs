@@ -70,6 +70,14 @@ db.exec(`UPDATE sites SET mode = 'connected', backup_expectation = 'kamaji',
   UPDATE sites SET backup_expectation = 'host' WHERE id = 'photogravure.com';
   UPDATE sites SET paused_at = ${now - DAY} WHERE id = 'sweetleisure.com';`);
 
+// Platforms and renewals: Romaji as a static site, and domains' renewal dates as RDAP gave them
+// (craftish.dev's shared with Romaji; Aleya's within 30 days; photogravure's registry has none).
+db.exec(`UPDATE sites SET platform = 'static' WHERE id = 'romaji.craftish.dev';
+  INSERT INTO domains (domain, checked_at, expires_at, state, failures) VALUES
+    ('craftish.dev', ${now - H}, ${Date.parse('2027-03-14T00:00:00Z')}, 'ok', 0),
+    ('${OK}', ${now - H}, ${now + 20 * DAY}, 'ok', 0),
+    ('photogravure.com', ${now - H}, NULL, 'no-date', 0);`);
+
 // Icons for two sites, as the cycle would have fetched them (Kamaji's own, as stand-ins): a PNG
 // and an SVG. The rest show their letter.
 const iconsDir = mkdtempSync(join(tmpdir(), 'kamaji-smoke-icons-'));
@@ -1017,6 +1025,56 @@ for (const view of VIEWS) {
     problems.push('no toast saying why Recheck all didn’t run');
   if (problems.length) failures.push(`recheck all: ${problems.join('; ')}`);
   else console.log('ok   recheck all: no passkey, and a toast');
+}
+
+// Platforms on the Sites page: grouped WordPress then Static, with counts; Group by remembered in
+// this browser; each site's domain renewal as a column. A static site's page has no WordPress
+// parts: no backups, connection or software.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const headings = () =>
+    evaluate(
+      `JSON.stringify([...document.querySelectorAll('table h2')].map((h) => h.textContent.trim()))`,
+    ).then((j) => JSON.parse(j ?? '[]'));
+  const groupBy = (value) =>
+    evaluate(`(() => {
+      const select = [...document.querySelectorAll('label')].find((l) => l.textContent.startsWith('Group by'))?.querySelector('select');
+      if (!select) return 'missing';
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, '${value}');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return select.value;
+    })()`);
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await wait(1500);
+  const byPlatform = await headings();
+  if (!/^WordPress \d+$/.test(byPlatform[0] ?? '') || !/^Static 1$/.test(byPlatform[1] ?? ''))
+    problems.push(`platform groups: ${JSON.stringify(byPlatform)}`);
+  if (byPlatform.some((h) => h.startsWith('App'))) problems.push('an empty App group shows');
+  const text = await evaluate('document.body.innerText');
+  if (!text.includes('Renews 2027-03-14')) problems.push('no “Renews 2027-03-14”');
+  if (!text.includes('Renewal date not available'))
+    problems.push('no “Renewal date not available”');
+  if ((await groupBy('host')) !== 'host') problems.push('no Group by');
+  await send('Page.reload', {});
+  await wait(1500);
+  const byHost = await headings();
+  if (!byHost.some((h) => /^craftish \d+$/.test(h)))
+    problems.push(`Group by wasn’t remembered: ${JSON.stringify(byHost)}`);
+  await groupBy('platform');
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/romaji.craftish.dev` });
+  await wait(1500);
+  const page = await evaluate(
+    `JSON.stringify({ text: document.body.innerText, backups: !!document.getElementById('backups'), connection: !!document.getElementById('connection') })`,
+  ).then((j) => JSON.parse(j));
+  if (!page.text.includes('Static, monitoring only')) problems.push('Romaji isn’t shown as static');
+  if (!page.text.includes('Renews 2027-03-14')) problems.push('no renewal on Romaji’s page');
+  if (page.backups || page.connection) problems.push('Romaji’s page has backups or a connection');
+  if (problems.length) failures.push(`platforms: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   platforms: grouped, remembered, renewals shown, static has no WordPress parts',
+    );
 }
 
 // Refetch icon, in a site's settings: no passkey (the same plain GETs the cycle makes), a toast

@@ -6,7 +6,7 @@ describe('migrate', () => {
   it('applies every migration once', () => {
     const db = openDb(':memory:');
     expect(migrate(db).map((m) => m.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
     ]);
     expect(migrate(db)).toEqual([]);
     const tables = db
@@ -18,6 +18,7 @@ describe('migrate', () => {
         'backup_evidence',
         'crash_groups',
         'crashes',
+        'domains',
         'events',
         'issues',
         'jobs',
@@ -30,6 +31,17 @@ describe('migrate', () => {
         'state',
       ]),
     );
+  });
+
+  it('makes every site so far WordPress, and takes only the three platforms', () => {
+    const db = testDb({ seed: true });
+    const platforms = db.prepare('SELECT DISTINCT platform FROM sites').all();
+    expect(platforms).toEqual([{ platform: 'wordpress' }]);
+    const set = (platform: string) =>
+      db.prepare("UPDATE sites SET platform = ? WHERE id = 'craftish.dev'").run(platform);
+    expect(() => set('static')).not.toThrow();
+    expect(() => set('app')).not.toThrow();
+    expect(() => set('drupal')).toThrow();
   });
 
   it('marks Tyler’s own sites, and only those, in the estate', () => {

@@ -40,7 +40,7 @@ describe('every issue has a next step', () => {
         expect(action.label, family).not.toBe('');
         // Only the routes the site page's own buttons use, and a server's Check now.
         expect(action.path, family).toMatch(
-          /^\/api\/(sites\/a\.test\/(check|report|backups\/whole-site)|servers\/a\.test\/check)$/,
+          /^\/api\/(sites\/a\.test\/(check|report|backups\/whole-site|domain\/check)|servers\/a\.test\/check)$/,
         );
       } else {
         expect(action.text, family).toMatch(/\.$/);
@@ -59,6 +59,13 @@ describe('every issue has a next step', () => {
       body: { kind: 'restore' },
     });
     expect(of('backup-failed')).toMatchObject({ label: 'Back up now', body: { kind: 'backup' } });
+    // A domain renewed, or readable again: its renewal date read now.
+    for (const kind of ['domain-expiring', 'domain-unreadable'])
+      expect(of(kind), kind).toMatchObject({
+        type: 'recheck',
+        label: 'Check again',
+        path: '/api/sites/a.test/domain/check',
+      });
   });
 
   it('gives server issues a fresh read clears Check now, and keeps Dismiss for the rest', () => {

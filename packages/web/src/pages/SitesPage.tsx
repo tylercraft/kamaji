@@ -19,6 +19,7 @@ import { useLink } from '../router';
 import {
   certificate,
   CURRENT_FOR,
+  domain,
   fromOutside,
   isOutOfDate,
   updates,
@@ -27,7 +28,14 @@ import {
 } from '../siteStatus';
 import {
   filterSites,
+  GROUP_BYS,
+  groupSites,
+  HOST_NAMES,
   NO_FILTERS,
+  PLATFORM_NAMES,
+  readGroupBy,
+  saveGroupBy,
+  type GroupBy,
   present,
   recheckable,
   recheckSummary,
@@ -37,12 +45,7 @@ import { useResource } from '../useResource';
 import { IssueStep } from '../components/IssueStep';
 import { SiteIcon, WithIcon } from '../components/SiteIcon';
 
-const hostNames: Record<SiteSummary['hostKind'], string> = {
-  craftish: 'craftish',
-  kinsta: 'Kinsta',
-  wpengine: 'WP Engine',
-  other: 'Other host',
-};
+const hostNames = HOST_NAMES;
 
 const stateLabels = {
   up: ['Reachable', 'green'],
@@ -117,7 +120,20 @@ function CertificateCell({ site }: { site: SiteSummary }) {
   );
 }
 
+/** "Renews 2027-03-14", coloured within 30 days as the domain-expiring issue counts them. */
+function RenewalCell({ site, now }: { site: SiteSummary; now: number }) {
+  const l = domain(site, now);
+  if (l.tone === 'neutral' || l.tone === 'green') return <Muted>{l.state}</Muted>;
+  return (
+    <Pill tone={l.tone}>
+      <Dot /> {l.state}
+    </Pill>
+  );
+}
+
 function UpdatesCell({ site }: { site: SiteSummary }) {
+  // A static site or an app has nothing WordPress offers.
+  if (site.platform !== 'wordpress') return <Muted>Not applicable</Muted>;
   if (site.mode !== 'connected') return <Muted>Not monitored</Muted>;
   if (!site.updates.known) return <Muted>Unknown: {lower(site.updates.reason)}</Muted>;
   // The same words as the site's page and the Updates queue: to approve, held, running.
@@ -150,6 +166,15 @@ function Findings({ site, reload }: { site: SiteSummary; reload: () => void }) {
       </summary>
       <FindingList findings={f} reload={reload} />
     </details>
+  );
+}
+
+/** A group's name and how many of the shown sites are in it. */
+function GroupHeading({ label, count }: { label: string; count: number }) {
+  return (
+    <h2 css={{ margin: '14px 0 2px', fontSize: 13, fontWeight: 600 }}>
+      {label} <span css={{ color: 'var(--muted)', fontWeight: 400 }}>{count}</span>
+    </h2>
   );
 }
 
@@ -217,6 +242,12 @@ const MODES: Record<SiteSummary['mode'], string> = {
   monitoring: 'Monitoring only',
 };
 
+/** How a site is watched, in its meta line: WordPress says how; the rest are what they are. */
+const watched = (site: SiteSummary) =>
+  site.platform === 'wordpress'
+    ? MODES[site.mode]
+    : `${PLATFORM_NAMES[site.platform]}, monitoring only`;
+
 const field = {
   font: 'inherit',
   color: 'var(--ink)',
@@ -267,6 +298,7 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
       : [
           ...(site.tailnetOnly ? [] : [fromOutside(site, now)]),
           certificate(site),
+          domain(site, now),
           ...(site.mode === 'connected' ? [updates(site)] : []),
         ].filter((l) => l.tone === 'red' || l.tone === 'amber' || l.outOfDate);
   return (
@@ -286,7 +318,7 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
         <a href={site.url} target="_blank" rel="noreferrer" css={{ color: 'inherit' }}>
           {new URL(site.url).host} ↗
         </a>{' '}
-        · {hostNames[site.hostKind]} · {MODES[site.mode]}
+        · {hostNames[site.hostKind]} · {watched(site)}
         {site.tailnetOnly ? ' · private' : ''}
       </Muted>
       <div css={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -324,6 +356,10 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
           <dd>
             <CertificateCell site={site} />
           </dd>
+          <dt>Domain</dt>
+          <dd>
+            <RenewalCell site={site} now={now} />
+          </dd>
           <dt>Updates</dt>
           <dd>
             <UpdatesCell site={site} />
@@ -347,10 +383,14 @@ function Toolbar({
   filters,
   onChange,
   sites,
+  groupBy,
+  onGroupBy,
 }: {
   filters: SiteFilters;
   onChange: (f: SiteFilters) => void;
   sites: SiteSummary[];
+  groupBy: GroupBy;
+  onGroupBy: (g: GroupBy) => void;
 }) {
   const { hosts, modes } = present(sites);
   const label = { display: 'grid', gap: 4, fontSize: 12, fontWeight: 600 } as const;
@@ -407,6 +447,16 @@ function Toolbar({
           ))}
         </select>
       </label>
+      <label css={label}>
+        Group by
+        <select value={groupBy} onChange={(e) => onGroupBy(e.target.value as GroupBy)} css={field}>
+          {GROUP_BYS.map((g) => (
+            <option key={g.value} value={g.value}>
+              {g.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <Button
         type="button"
         disabled={filters.typed === '' && filters.host === '' && filters.mode === ''}
@@ -424,6 +474,11 @@ export function SitesPage() {
     if (sites.state === 'ready') sites.reload();
   };
   const [filters, setFilters] = useState<SiteFilters>(NO_FILTERS);
+  const [groupBy, setGroupBy] = useState<GroupBy>(readGroupBy);
+  const chooseGroupBy = (g: GroupBy) => {
+    setGroupBy(g);
+    saveGroupBy(g);
+  };
   const now = sites.state === 'ready' ? sites.loadedAt : 0;
   return (
     <>
@@ -449,10 +504,17 @@ export function SitesPage() {
                 </Empty>
               );
             const sites = filterSites(all, filters);
+            const groups = groupSites(sites, groupBy);
             const connected = sites.filter((s) => s.mode === 'connected').length;
             return (
               <>
-                <Toolbar filters={filters} onChange={setFilters} sites={all} />
+                <Toolbar
+                  filters={filters}
+                  onChange={setFilters}
+                  sites={all}
+                  groupBy={groupBy}
+                  onGroupBy={chooseGroupBy}
+                />
                 <Muted role="status" aria-live="polite">
                   {sites.length === all.length
                     ? `${all.length} sites`
@@ -465,19 +527,18 @@ export function SitesPage() {
                   </Empty>
                 ) : (
                   <>
-                    <ul
-                      aria-label="Sites"
-                      css={{
-                        margin: 0,
-                        padding: 0,
-                        listStyle: 'none',
-                        '@media (min-width: 761px)': { display: 'none' },
-                      }}
-                    >
-                      {sites.map((site) => (
-                        <SiteCard key={site.id} site={site} now={now} reload={reloadSites} />
+                    <div css={{ '@media (min-width: 761px)': { display: 'none' } }}>
+                      {groups.map((g) => (
+                        <section key={g.key} aria-label={g.label ?? 'Sites'}>
+                          {g.label && <GroupHeading label={g.label} count={g.sites.length} />}
+                          <ul css={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                            {g.sites.map((site) => (
+                              <SiteCard key={site.id} site={site} now={now} reload={reloadSites} />
+                            ))}
+                          </ul>
+                        </section>
                       ))}
-                    </ul>
+                    </div>
                     <div
                       css={{ overflowX: 'auto', '@media (max-width: 760px)': { display: 'none' } }}
                     >
@@ -488,58 +549,71 @@ export function SitesPage() {
                             <th scope="col">From the mini</th>
                             <th scope="col">From outside</th>
                             <th scope="col">Certificate</th>
+                            <th scope="col">Domain</th>
                             <th scope="col">Updates</th>
                           </tr>
                         </thead>
-                        <tbody>
-                          {sites.map((site) => (
-                            <tr key={site.id}>
-                              <td>
-                                {/* The icon is its own column, as tall as the three lines. */}
-                                <div
-                                  css={{
-                                    display: 'grid',
-                                    gridTemplateColumns: '48px minmax(0, 1fr)',
-                                    columnGap: 10,
-                                    alignItems: 'start',
-                                  }}
-                                >
-                                  <SiteIcon id={site.id} size={48} />
-                                  <div css={{ minWidth: 0 }}>
-                                    <SiteLink site={site} />
-                                    <Muted>
-                                      <a
-                                        href={site.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        css={{ color: 'inherit' }}
-                                      >
-                                        {new URL(site.url).host} ↗
-                                      </a>
-                                    </Muted>
-                                    <Muted>
-                                      {hostNames[site.hostKind]} · {MODES[site.mode]}
-                                      {site.tailnetOnly ? ' · private' : ''}
-                                    </Muted>
-                                    <Findings site={site} reload={reloadSites} />
+                        {groups.map((g) => (
+                          <tbody key={g.key}>
+                            {g.label && (
+                              <tr>
+                                <th scope="colgroup" colSpan={6} css={{ paddingTop: 14 }}>
+                                  <GroupHeading label={g.label} count={g.sites.length} />
+                                </th>
+                              </tr>
+                            )}
+                            {g.sites.map((site) => (
+                              <tr key={site.id}>
+                                <td>
+                                  {/* The icon is its own column, as tall as the three lines. */}
+                                  <div
+                                    css={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '48px minmax(0, 1fr)',
+                                      columnGap: 10,
+                                      alignItems: 'start',
+                                    }}
+                                  >
+                                    <SiteIcon id={site.id} size={48} />
+                                    <div css={{ minWidth: 0 }}>
+                                      <SiteLink site={site} />
+                                      <Muted>
+                                        <a
+                                          href={site.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          css={{ color: 'inherit' }}
+                                        >
+                                          {new URL(site.url).host} ↗
+                                        </a>
+                                      </Muted>
+                                      <Muted>
+                                        {hostNames[site.hostKind]} · {watched(site)}
+                                        {site.tailnetOnly ? ' · private' : ''}
+                                      </Muted>
+                                      <Findings site={site} reload={reloadSites} />
+                                    </div>
                                   </div>
-                                </div>
-                              </td>
-                              <td>
-                                <Availability site={site} now={now} />
-                              </td>
-                              <td>
-                                <Outside site={site} now={now} />
-                              </td>
-                              <td>
-                                <CertificateCell site={site} />
-                              </td>
-                              <td>
-                                <UpdatesCell site={site} />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
+                                </td>
+                                <td>
+                                  <Availability site={site} now={now} />
+                                </td>
+                                <td>
+                                  <Outside site={site} now={now} />
+                                </td>
+                                <td>
+                                  <CertificateCell site={site} />
+                                </td>
+                                <td>
+                                  <RenewalCell site={site} now={now} />
+                                </td>
+                                <td>
+                                  <UpdatesCell site={site} />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        ))}
                       </Table>
                     </div>
                   </>
