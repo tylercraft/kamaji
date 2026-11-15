@@ -14,7 +14,7 @@ import type { MacHealth, MacJob } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import type { IssueKind } from '../issueActions.js';
-import { clearIssue, raiseIssue, type Severity } from '../issues.js';
+import { clearIssue, findOpenIssue, raiseIssue, type Severity } from '../issues.js';
 import { localParts } from '../notify.js';
 import { recordObservation } from '../observations.js';
 import { readState, writeState } from '../state.js';
@@ -29,6 +29,11 @@ import {
   type Files,
   type Reading,
   type Run,
+  isDockerVm,
+  LOAD_CALM,
+  LOAD_HIGH,
+  type LoadReading,
+  type System,
 } from './read.js';
 
 export const SERVER_ID = 'molcajete';
@@ -56,6 +61,8 @@ export interface MacState {
   updatesFailures: number;
   /** Why the last try failed. */
   updatesProblem?: string | null;
+  /** Reads in a row over LOAD_HIGH and under LOAD_CALM, and the first of this overloaded run. */
+  load: { high: number; calm: number; highSince: number | null };
 }
 
 const empty = (): MacState => ({
@@ -66,6 +73,7 @@ const empty = (): MacState => ({
   updates: null,
   updatesTriedAt: null,
   updatesFailures: 0,
+  load: { high: 0, calm: 0, highSince: null },
 });
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -75,6 +83,52 @@ const key = <K extends string>(kind: K) =>
 function when(at: number, now: number): string {
   const a = localParts(at);
   return a.day === localParts(now).day ? a.time : `${a.day.slice(5).replace('-', '/')} ${a.time}`;
+}
+
+/** Reads over LOAD_HIGH in a row before molcajete counts as overloaded: 30 minutes of cycles. */
+export const LOAD_HOLD = 6;
+/** Reads under LOAD_CALM in a row before it's calm again. */
+export const LOAD_CLEARS = 2;
+const LOAD_KIND = 'molcajete-load';
+
+/** What's taking the CPU: the busiest container when it's Docker's VM, else the process. */
+export function culprit(load: LoadReading): string | null {
+  const top = load.busiest?.[0];
+  if (!top) return null;
+  const inside = isDockerVm(top.name) ? load.containers?.[0] : undefined;
+  return inside ? `${inside.name} ${inside.cpuPercent}% CPU` : `${top.name} ${top.cpuPercent}% CPU`;
+}
+
+/**
+ * molcajete-load: raised once the 5-minute load has stayed over 1.5× the cores for LOAD_HOLD reads
+ * running, cleared after LOAD_CLEARS reads under 1×. In between, an open issue holds and a
+ * building run starts again. Mutates `run`.
+ */
+export function judgeLoad(db: Db, at: number, load: LoadReading, run: MacState['load']): void {
+  const ratio = load.five / Math.max(load.cpus, 1);
+  const open = findOpenIssue(db, key(LOAD_KIND)) !== null;
+  if (ratio > LOAD_HIGH) {
+    run.high++;
+    run.calm = 0;
+    run.highSince ??= at;
+  } else {
+    run.high = 0;
+    run.calm = ratio < LOAD_CALM ? run.calm + 1 : 0;
+    if (!open) run.highSince = null;
+  }
+  if (ratio > LOAD_HIGH && (open || run.high >= LOAD_HOLD)) {
+    // The 5-minute load at the first high read already covers the five minutes before it.
+    const minutes = Math.round((at - (run.highSince ?? at)) / 60_000) + 5;
+    const what = culprit(load) ?? `load ${load.five.toFixed(1)} on ${load.cpus} cores`;
+    raiseIssue(db, at, {
+      ...key(LOAD_KIND),
+      severity: 'normal',
+      summary: `molcajete overloaded for ${minutes} min: ${what}`,
+    });
+  } else if (open && run.calm >= LOAD_CLEARS) {
+    clearIssue(db, at, key(LOAD_KIND), 'molcajete’s load is back to normal');
+    run.highSince = null;
+  }
 }
 
 /** Works out the issues and the health to show, from one reading. Mutates `state`. */
@@ -338,6 +392,8 @@ export function judgeMolcajete(
     } else ok('macos-updates', 'molcajete’s updates are installed');
   } else hold('macos-updates');
 
+  judgeLoad(db, at, reading.load, state.load);
+
   for (const kind of Object.keys(state.streaks)) if (!seen.has(kind)) delete state.streaks[kind];
 
   return {
@@ -380,6 +436,19 @@ export function judgeMolcajete(
             },
           },
     jobs,
+    load: {
+      one: reading.load.one,
+      five: reading.load.five,
+      fifteen: reading.load.fifteen,
+      cpus: reading.load.cpus,
+      totalBytes: reading.load.totalBytes,
+      memory:
+        'problem' in reading.load.memory
+          ? { known: false, reason: reading.load.memory.problem }
+          : { known: true, value: reading.load.memory },
+      busiest: reading.load.busiest,
+      containers: reading.load.containers,
+    },
   };
 }
 
@@ -389,6 +458,9 @@ export interface MolcajeteOptions {
   crashFiles: CrashFiles;
   exec?: Run;
   fs?: Files;
+  /** The kernel's load and memory, and the wait between ps's reads; tests stand in for both. */
+  system?: System;
+  wait?: (ms: number) => Promise<void>;
   repoPullLog?: string;
 }
 
@@ -397,7 +469,14 @@ export async function checkMolcajete(db: Db, options: MolcajeteOptions): Promise
   const exec = options.exec ?? run;
   const fs = options.fs ?? files;
   const { signal } = options;
-  const reading = await readMolcajete({ exec, fs, signal, repoPullLog: options.repoPullLog });
+  const reading = await readMolcajete({
+    exec,
+    fs,
+    signal,
+    system: options.system,
+    wait: options.wait,
+    repoPullLog: options.repoPullLog,
+  });
   const state = { ...empty(), ...readState<MacState>(db, STATE) };
 
   if (state.updatesTriedAt === null || options.now() - state.updatesTriedAt >= UPDATES_EVERY) {
@@ -438,6 +517,7 @@ export async function checkMolcajete(db: Db, options: MolcajeteOptions): Promise
           ? health.docker.value.containers.filter((c) => c.healthy).length
           : null,
         bootedAt: typeof reading.bootedAt === 'number' ? reading.bootedAt : null,
+        load: [reading.load.five, reading.load.cpus],
         needs,
       },
     });

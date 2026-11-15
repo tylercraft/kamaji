@@ -69,6 +69,7 @@ function setup(serverCheck?: Partial<ServerCheckOptions>) {
             },
             exec: failingTools,
             fs: { exists: () => false, agentLabels: () => [], tail: () => null },
+            system: { loadavg: () => [1, 1, 1], cpus: () => 10, totalmem: () => 32 * 1024 ** 3 },
             repoPullLog: '/nonexistent/repo-pull.log',
             ...serverCheck,
           },

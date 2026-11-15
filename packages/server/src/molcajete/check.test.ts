@@ -8,7 +8,7 @@ import { readState } from '../state.js';
 import { testDb } from '../testing.js';
 import { checkMolcajete, HEALTH_STATE, SERVER_ID, UPDATES_EVERY } from './check.js';
 import { parseLaunchctlList } from './parse.js';
-import { TOOLS, type Files, type Run } from './read.js';
+import { TOOLS, type Files, type Run, type System } from './read.js';
 
 const fixture = (name: string) =>
   readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -34,6 +34,15 @@ interface Mini {
   fail: Record<string, { code: number | null; stderr: string }>;
   /** The extra environment each call asked for, by tool path. */
   envs: [string, Record<string, string> | undefined][];
+  /** os.loadavg() and the core count. */
+  load: [number, number, number];
+  cores: number;
+  /** ps's two reads, in turn; and docker stats, or null when Docker's socket doesn't answer. */
+  ps: [string, string];
+  psCalls: number;
+  dockerStats: string | null;
+  /** Docker Desktop's CLI isn't installed. */
+  noDocker: boolean;
 }
 
 function mini(): Mini {
@@ -53,10 +62,16 @@ function mini(): Mini {
     calendars: {},
     fail: {},
     envs: [],
+    load: [1, 1, 1],
+    cores: 10,
+    ps: [fixture('ps-cputime-1.txt'), fixture('ps-cputime-2.txt')],
+    psCalls: 0,
+    dockerStats: fixture('docker-stats.jsonl'),
+    noDocker: false,
   };
 }
 
-function fake(m: Mini): { exec: Run; fs: Files } {
+function fake(m: Mini): { exec: Run; fs: Files; system: System; wait: () => Promise<void> } {
   const out = (stdout: string, code: number | null = 0) =>
     Promise.resolve({ code, stdout, stderr: '' });
   const exec: Run = (file, args, options) => {
@@ -88,29 +103,42 @@ function fake(m: Mini): { exec: Run; fs: Files } {
     if (file === TOOLS.docker && args[0] === 'ps') return out(fixture('docker-ps.jsonl'));
     if (file === TOOLS.tailscale) return out(m.tailscale);
     if (file === TOOLS.sysctl) return out(m.boottime);
+    if (file === TOOLS.vmStat) return out(fixture('vm_stat.txt'));
+    if (file === TOOLS.ps) return out(m.ps[m.psCalls++ % 2]!);
+    if (file === TOOLS.docker && args[0] === 'stats')
+      return m.dockerStats === null
+        ? Promise.resolve({ code: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' })
+        : out(m.dockerStats);
     return out('', 1);
   };
   const fs: Files = {
-    exists: () => true,
+    exists: (path) => !(m.noDocker && path === TOOLS.docker),
     agentLabels: () => m.plists,
     tail: (path) => {
       m.tails.push(path);
       return path.endsWith('calcifer-repo-pull.log') ? m.repoPull : null;
     },
   };
-  return { exec, fs };
+  const system: System = {
+    loadavg: () => m.load,
+    cpus: () => m.cores,
+    totalmem: () => 32 * 1024 ** 3,
+  };
+  return { exec, fs, system, wait: () => Promise.resolve() };
 }
 
 const crashFiles = () => ({ path: join(mkdtempSync(join(tmpdir(), 'kamaji-')), 'crashes.jsonl') });
 
 async function cycle(db: Db, m: Mini, at: number, files = crashFiles()) {
-  const { exec, fs } = fake(m);
+  const { exec, fs, system, wait } = fake(m);
   await checkMolcajete(db, {
     now: () => at,
     signal: new AbortController().signal,
     crashFiles: files,
     exec,
     fs,
+    system,
+    wait,
     repoPullLog: '/logs/calcifer-repo-pull.log',
   });
 }
@@ -322,7 +350,7 @@ describe('molcajete', () => {
     const db = testDb();
     const m = mini();
     let calls = 0;
-    const { exec, fs } = fake(m);
+    const { exec, fs, system } = fake(m);
     const counting: Run = (file, args, o) => {
       if (file === TOOLS.softwareupdate) calls++;
       return exec(file, args, o);
@@ -335,6 +363,7 @@ describe('molcajete', () => {
         crashFiles: files,
         exec: counting,
         fs,
+        system,
       });
     await at(T0);
     await at(T0 + 5 * MIN);
@@ -421,5 +450,101 @@ describe('molcajete', () => {
     m.boottime = '';
     for (const n of [0, 1, 2]) await cycle(db, m, T0 + n * 5 * MIN);
     expect(openIssues(db).map((i) => i.kind)).toEqual(['unreadable:boot time']);
+  });
+});
+
+describe('molcajete’s load', () => {
+  const loadIssue = (db: Db) => openIssues(db).find((i) => i.kind === 'molcajete-load');
+  const health = (db: Db) => readState<MacHealth>(db, HEALTH_STATE)!;
+  /** Five-minute loads, one a cycle, from T0. */
+  async function loads(db: Db, m: Mini, fives: number[], from = 0) {
+    for (const [i, five] of fives.entries()) {
+      m.load = [five, five, five];
+      await cycle(db, m, T0 + (from + i) * 5 * MIN);
+    }
+  }
+
+  it('records load, cores and memory every read, and the busiest only while it’s high', async () => {
+    const db = testDb();
+    const m = mini();
+    await cycle(db, m, T0);
+    const calm = health(db).load!;
+    expect(calm).toMatchObject({ five: 1, cpus: 10, totalBytes: 32 * 1024 ** 3 });
+    // vm_stat's pages, at its 16 KiB page size.
+    expect(calm.memory).toEqual({
+      known: true,
+      value: { freeBytes: 186507 * 16384, compressedBytes: 643966 * 16384 },
+    });
+    expect(calm.busiest).toBeNull();
+    expect(m.psCalls).toBe(0);
+
+    m.load = [16, 16, 16];
+    await cycle(db, m, T0 + 5 * MIN);
+    expect(m.psCalls).toBe(2);
+    expect(health(db).load?.busiest?.map((p) => p.name)).toEqual([
+      'com.apple.Virtualization.VirtualMachine',
+      'WindowServer',
+      'firefox',
+    ]);
+  });
+
+  it('is overloaded after six high reads running, not five, and clears after two calm ones', async () => {
+    const db = testDb();
+    const m = mini();
+    await loads(db, m, [16, 16, 16, 16, 16]);
+    expect(loadIssue(db)).toBeUndefined();
+    // One read between 1× and 1.5× the cores starts the count again.
+    await loads(db, m, [12, 16, 16, 16, 16, 16], 5);
+    expect(loadIssue(db)).toBeUndefined();
+    await loads(db, m, [16], 11);
+    expect(loadIssue(db)).toMatchObject({ severity: 'normal' });
+    expect(loadIssue(db)?.summary).toMatch(/^molcajete overloaded for 30 min: /);
+
+    // Still high: the time grows. Between 1× and 1.5× holds it; one calm read isn't enough.
+    await loads(db, m, [16, 12, 8], 12);
+    expect(loadIssue(db)?.summary).toMatch(/^molcajete overloaded for 35 min: /);
+    // A high read in between starts the calm count again.
+    await loads(db, m, [16, 8], 15);
+    expect(loadIssue(db)).toBeDefined();
+    await loads(db, m, [8], 17);
+    expect(loadIssue(db)).toBeUndefined();
+  });
+
+  it('names the busiest container when Docker’s VM is the busiest process', async () => {
+    const db = testDb();
+    const m = mini();
+    await loads(db, m, Array(6).fill(16));
+    expect(loadIssue(db)?.summary).toBe(
+      'molcajete overloaded for 30 min: ddev-kamaji-wp-db 2% CPU',
+    );
+    expect(health(db).load?.containers).toEqual([
+      { name: 'ddev-kamaji-wp-db', cpuPercent: 2, memoryBytes: Math.round(208.3 * 1024 ** 2) },
+      { name: 'ddev-kamaji-wp-web', cpuPercent: 1, memoryBytes: Math.round(131.7 * 1024 ** 2) },
+      { name: 'ddev-router', cpuPercent: 0, memoryBytes: Math.round(220.1 * 1024 ** 2) },
+    ]);
+  });
+
+  it('names the process itself when it isn’t Docker’s, and asks Docker nothing', async () => {
+    const db = testDb();
+    const m = mini();
+    // claude (pid 19469) used 15 s of CPU between the reads: 750% over the two seconds.
+    m.ps = [m.ps[0], m.ps[1].replace(/^19469 112:37\.66/m, '19469 112:52.56')];
+    m.dockerStats = null;
+    await loads(db, m, Array(6).fill(16));
+    expect(loadIssue(db)?.summary).toBe('molcajete overloaded for 30 min: claude 750% CPU');
+    expect(health(db).load?.containers).toBeNull();
+  });
+
+  it('leaves containers out without Docker’s CLI or its socket', async () => {
+    for (const change of [(m: Mini) => (m.noDocker = true), (m: Mini) => (m.dockerStats = null)]) {
+      const db = testDb();
+      const m = mini();
+      change(m);
+      await loads(db, m, Array(6).fill(16));
+      expect(health(db).load?.containers).toBeNull();
+      expect(loadIssue(db)?.summary).toBe(
+        'molcajete overloaded for 30 min: com.apple.Virtualization.VirtualMachine 26% CPU',
+      );
+    }
   });
 });

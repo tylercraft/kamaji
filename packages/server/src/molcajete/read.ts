@@ -3,21 +3,27 @@
 // guess. Log files are opened only for allowlisted jobs (./jobs.ts).
 import { execFile } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { cpus, homedir, loadavg, totalmem } from 'node:os';
 import { join } from 'node:path';
 import {
+  busiest,
   describeCalendar,
   parseBoottime,
   parseCalendar,
   parseDiskutil,
   parseDockerPs,
+  parseDockerStats,
   parseDockerVersion,
   parseLaunchctlList,
   parseLaunchctlPrint,
   parseMount,
+  parsePs,
   parseRepoPull,
   parseSoftwareUpdate,
   parseTailscale,
+  parseVmStat,
+  type BusyContainer,
+  type BusyProcess,
   type Container,
   type DiskInfo,
   type DockerVersion,
@@ -26,6 +32,7 @@ import {
   type RepoPull,
   type SoftwareUpdate,
   type TailscaleStatus,
+  type VmStat,
 } from './parse.js';
 
 export const TOOLS = {
@@ -35,6 +42,8 @@ export const TOOLS = {
   softwareupdate: '/usr/sbin/softwareupdate',
   sysctl: '/usr/sbin/sysctl',
   plutil: '/usr/bin/plutil',
+  ps: '/bin/ps',
+  vmStat: '/usr/bin/vm_stat',
   // Docker Desktop's CLI link and the Tailscale app's own CLI, as calcifer's scripts call them
   // (ops/molcajete/mini-status.py, inbox-mover.sh).
   docker: '/usr/local/bin/docker',
@@ -164,6 +173,87 @@ export interface Reading {
   tailscale: TailscaleStatus | { problem: string };
   bootedAt: number | { problem: string };
   repoPull: RepoPull | { problem: string };
+  load: LoadReading;
+}
+
+/** The load and memory Node reads from the kernel itself; tests stand in for it. */
+export interface System {
+  /** 1, 5 and 15 minutes. */
+  loadavg: () => number[];
+  cpus: () => number;
+  totalmem: () => number;
+}
+export const system: System = { loadavg, cpus: () => cpus().length, totalmem };
+
+/** Overloaded above this many times the core count (5-minute load); calm again below 1×. */
+export const LOAD_HIGH = 1.5;
+export const LOAD_CALM = 1;
+/** Between ps's two reads: what each process used in this time is its CPU. */
+export const PS_GAP_MS = 2_000;
+
+export interface LoadReading {
+  one: number;
+  five: number;
+  fifteen: number;
+  cpus: number;
+  totalBytes: number;
+  memory: VmStat | { problem: string };
+  /** Only read while the load is high; null otherwise, or when ps couldn't be read. */
+  busiest: BusyProcess[] | null;
+  /** Only read when Docker's VM is the busiest process; null otherwise, or without Docker. */
+  containers: BusyContainer[] | null;
+}
+
+/** Docker Desktop's VM, as ps names it: its containers' CPU is all counted to it. */
+export const isDockerVm = (name: string) => name.startsWith('com.apple.Virtualization');
+
+export async function readLoad(
+  exec: Run,
+  fs: Files,
+  sys: System,
+  signal: AbortSignal,
+  wait: (ms: number) => Promise<void>,
+): Promise<LoadReading> {
+  const [one = 0, five = 0, fifteen = 0] = sys.loadavg();
+  const cores = Math.max(sys.cpus(), 1);
+  const vm = await exec(TOOLS.vmStat, [], { timeoutMs: 10_000, signal });
+  const memory = (vm.code === 0 ? parseVmStat(vm.stdout) : null) ?? {
+    problem: failure('vm_stat failed', vm),
+  };
+  const reading: LoadReading = {
+    one,
+    five,
+    fifteen,
+    cpus: cores,
+    totalBytes: sys.totalmem(),
+    memory,
+    busiest: null,
+    containers: null,
+  };
+  if (five <= cores * LOAD_HIGH) return reading;
+
+  // Two reads of each process's CPU time, apart: ps's own %CPU is a decaying average.
+  const ps = () => exec(TOOLS.ps, ['-Ao', 'pid,cputime,rss,comm'], { timeoutMs: 15_000, signal });
+  const first = await ps();
+  const started = Date.now();
+  await wait(PS_GAP_MS);
+  const second = await ps();
+  const seconds = Math.max((Date.now() - started) / 1000, PS_GAP_MS / 1000);
+  const before = first.code === 0 ? parsePs(first.stdout) : null;
+  const after = second.code === 0 ? parsePs(second.stdout) : null;
+  if (!before || !after) return reading;
+  reading.busiest = busiest(before, after, seconds);
+
+  // Docker's VM at the top says only "Docker"; its containers say which one. Names and
+  // numbers only: never docker inspect, never a container's environment.
+  if (reading.busiest[0] && isDockerVm(reading.busiest[0].name) && fs.exists(TOOLS.docker)) {
+    const stats = await exec(TOOLS.docker, ['stats', '--no-stream', '--format', 'json'], {
+      timeoutMs: 30_000,
+      signal,
+    });
+    if (stats.code === 0) reading.containers = parseDockerStats(stats.stdout);
+  }
+  return reading;
 }
 
 const uid = () => process.getuid?.() ?? 501;
@@ -295,18 +385,23 @@ export function readRepoPull(fs: Files, path = REPO_PULL_LOG): Reading['repoPull
 export async function readMolcajete(options: {
   exec?: Run;
   fs?: Files;
+  system?: System | undefined;
+  wait?: ((ms: number) => Promise<void>) | undefined;
   signal: AbortSignal;
   repoPullLog?: string | undefined;
 }): Promise<Reading> {
   const exec = options.exec ?? run;
   const fs = options.fs ?? files;
   const { signal } = options;
-  const [jobs, disks, docker, tailscale, bootedAt] = await Promise.all([
+  const wait =
+    options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const [jobs, disks, docker, tailscale, bootedAt, load] = await Promise.all([
     readJobs(exec, fs, signal),
     readDisks(exec, signal),
     readDocker(exec, fs, signal),
     readTailscale(exec, fs, signal),
     readBoottime(exec, signal),
+    readLoad(exec, fs, options.system ?? system, signal, wait),
   ]);
   return {
     jobs,
@@ -315,5 +410,6 @@ export async function readMolcajete(options: {
     tailscale,
     bootedAt,
     repoPull: readRepoPull(fs, options.repoPullLog),
+    load,
   };
 }

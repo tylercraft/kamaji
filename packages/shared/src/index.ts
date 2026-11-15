@@ -550,6 +550,25 @@ export const CrashGroup = z.object({
 });
 export type CrashGroup = z.infer<typeof CrashGroup>;
 
+/** molcajete's load and memory, and while it's overloaded, what's busiest. Names and numbers only. */
+export const MacLoad = z.object({
+  one: z.number(),
+  five: z.number(),
+  fifteen: z.number(),
+  cpus: z.number().int(),
+  totalBytes: z.number(),
+  memory: known(z.object({ freeBytes: z.number(), compressedBytes: z.number() })),
+  /** The top 3 processes by CPU (100 is one core), read only while the load is high. */
+  busiest: z
+    .array(z.object({ name: z.string(), cpuPercent: z.number(), rssBytes: z.number() }))
+    .nullable(),
+  /** The top 3 containers, read only when Docker's VM is the busiest process. */
+  containers: z
+    .array(z.object({ name: z.string(), cpuPercent: z.number(), memoryBytes: z.number() }))
+    .nullable(),
+});
+export type MacLoad = z.infer<typeof MacLoad>;
+
 /** What molcajete's local readers last said. Each part can be unknown on its own. */
 export const MacHealth = z.object({
   kind: z.literal('local-mac'),
@@ -589,6 +608,8 @@ export const MacHealth = z.object({
   repoPull: known(z.object({ lastAt: Timestamp, failingSince: Timestamp.nullable() })),
   jobs: z.array(MacJob),
   crashes: z.array(CrashGroup),
+  /** Null until a read since Kamaji started reading load (2026-11-16). */
+  load: MacLoad.nullable().default(null),
 });
 export type MacHealth = z.infer<typeof MacHealth>;
 

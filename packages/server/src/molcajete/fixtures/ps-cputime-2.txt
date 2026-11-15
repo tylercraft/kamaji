@@ -1,0 +1,13 @@
+  PID      TIME    RSS COMM
+  409 2214:29.09 132880 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+ 6354 587:49.31 620960 /Applications/Firefox.app/Contents/MacOS/firefox
+ 6359 492:19.16  78016 /Applications/Firefox.app/Contents/MacOS/gpu-helper.app/Contents/MacOS/Firefox GPU Helper
+68434 2126:54.78 1624496 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+19469 112:37.66 466768 claude
+46911  24:08.47 447536 claude
+  423 672:25.42  44624 /usr/sbin/coreaudiod
+  697 674:30.22 156816 /Applications/Ghostty.app/Contents/MacOS/ghostty
+36626 143:50.11 105744 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/156.0.8078.80/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)
+49802  49:53.62  58960 /Applications/Xcode.app/Contents/Applications/DeviceHub.app/Contents/MacOS/DeviceHub
+ 6368 183:39.09 104672 /Applications/Firefox.app/Contents/MacOS/plugin-container.app/Contents/MacOS/plugin-container
+  712  65:09.94  69008 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder

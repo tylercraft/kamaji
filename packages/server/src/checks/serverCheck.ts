@@ -14,6 +14,8 @@ export interface ServerCheckOptions {
   read?: (target: SshTarget, signal: AbortSignal) => Promise<ReportReading>;
   exec?: MolcajeteOptions['exec'];
   fs?: MolcajeteOptions['fs'];
+  system?: MolcajeteOptions['system'];
+  wait?: MolcajeteOptions['wait'];
   repoPullLog?: string;
 }
 
@@ -43,6 +45,8 @@ export async function checkServer(
     crashFiles: options.crashFiles,
     ...(options.exec ? { exec: options.exec } : {}),
     ...(options.fs ? { fs: options.fs } : {}),
+    ...(options.system ? { system: options.system } : {}),
+    ...(options.wait ? { wait: options.wait } : {}),
     ...(options.repoPullLog ? { repoPullLog: options.repoPullLog } : {}),
   });
   return 'checked';
