@@ -30,6 +30,7 @@ import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
 import { iconStatus, iconVersions, refetchIcon, siteNames, storedIcon } from './checks/icons.js';
+import { checkServer, type ServerCheckOptions } from './checks/serverCheck.js';
 import { checkSites, type SiteCheckers } from './checks/sites.js';
 import { checkEndOfLife } from './endOfLife/check.js';
 import { judgeAbandoned } from './inventory/directory.js';
@@ -90,6 +91,8 @@ export interface AppOptions {
   iconFetch?: typeof fetch;
   /** The home page and certificate checks; tests stand in for the web. */
   siteCheckers?: SiteCheckers;
+  /** What Check now needs to read a server (checks/serverCheck.ts). Without it, it's refused. */
+  serverCheck?: ServerCheckOptions;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -135,6 +138,8 @@ const PASSKEY_FREE = new Set([
 // Refetch icon: the plain GETs of the home page and its icon that the cycle makes once a day.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
 const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch)$/;
+// Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
+const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
 const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
 
@@ -153,7 +158,10 @@ const tokenHash = (token: string) => createHash('sha256').update(token).digest('
 
 const passkeyFree = (method: string, path: string) =>
   PASSKEY_FREE.has(`${method} ${path}`) ||
-  (method === 'POST' && (PASSKEY_FREE_SITE_STEP.test(path) || PASSKEY_FREE_ISSUE_STEP.test(path)));
+  (method === 'POST' &&
+    [PASSKEY_FREE_SITE_STEP, PASSKEY_FREE_SERVER_STEP, PASSKEY_FREE_ISSUE_STEP].some((step) =>
+      step.test(path),
+    ));
 
 const NO_PASSKEYS: PasskeyConfig = {
   load: () => ({ ok: false, problem: 'passkeys aren’t set up' }),
@@ -192,12 +200,15 @@ export function createApp({
   iconsDir,
   iconFetch,
   siteCheckers,
+  serverCheck,
   now = Date.now,
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
   const app = new Hono<{ Variables: { approval: string } }>();
   /** Open dismiss windows: the token's hash, and when it closes. */
   const dismissWindows = new Map<string, number>();
+  /** Servers being checked now: one Check now at a time each. */
+  const checkingServers = new Set<string>();
   /** "Back up now" exports still going, by site: one at a time each. */
   const exporting = new Map<string, number>();
 
@@ -490,6 +501,27 @@ export function createApp({
       1,
     );
     return c.json({ ok: last?.ok ?? false, problem: last?.value.problem ?? null });
+  });
+  // Check now, for a server: the cycle's read of it, now. The issues it clears are gone when it
+  // answers; the page reloads to show them.
+  app.post('/api/servers/:id/check', async (c) => {
+    if (!serverCheck) return c.json({ error: 'not_set_up' }, 409);
+    const id = c.req.param('id');
+    if (checkingServers.has(id)) return c.json({ error: 'already_checking' }, 409);
+    checkingServers.add(id);
+    try {
+      const result = await checkServer(db, id, {
+        ...serverCheck,
+        now,
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (result === 'not-found') return c.json({ error: 'not_found' }, 404);
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: 'check_failed' }, 504);
+    } finally {
+      checkingServers.delete(id);
+    }
   });
   // Recheck all: the same, for every connected site that isn't paused, three at a time.
   app.post('/api/sites/report', async (c) => {

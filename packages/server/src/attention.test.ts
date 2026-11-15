@@ -38,9 +38,9 @@ describe('every issue has a next step', () => {
       });
       if (action.type === 'recheck') {
         expect(action.label, family).not.toBe('');
-        // Only the routes the site page's own buttons use.
+        // Only the routes the site page's own buttons use, and a server's Check now.
         expect(action.path, family).toMatch(
-          /^\/api\/sites\/a\.test\/(check|report|backups\/whole-site)$/,
+          /^\/api\/(sites\/a\.test\/(check|report|backups\/whole-site)|servers\/a\.test\/check)$/,
         );
       } else {
         expect(action.text, family).toMatch(/\.$/);
@@ -59,6 +59,45 @@ describe('every issue has a next step', () => {
       body: { kind: 'restore' },
     });
     expect(of('backup-failed')).toMatchObject({ label: 'Back up now', body: { kind: 'backup' } });
+  });
+
+  it('gives server issues a fresh read clears Check now, and keeps Dismiss for the rest', () => {
+    const of = (resourceId: string, kind: string) =>
+      actionFor({ resourceType: 'server', resourceId, kind });
+    const checkNow = (id: string) => ({
+      type: 'recheck',
+      label: 'Check now',
+      path: `/api/servers/${id}/check`,
+      body: {},
+    });
+    for (const kind of ['services', 'security-updates', 'reboot', 'stale-updates', 'disk'])
+      expect(of('craftish', kind), kind).toMatchObject(checkNow('craftish'));
+    expect(of('craftish', 'unreadable')).toMatchObject(checkNow('craftish'));
+    for (const kind of [
+      'job-missing:outbox',
+      'job-stopped:outbox',
+      'job-failed:outbox',
+      'unmounted:Backup',
+      'disk:Backup',
+      'smart:Backup',
+      'read-only:Backup',
+      'docker',
+      'containers',
+      'tailscale',
+      'tailscale-health',
+      'unreadable:Docker',
+    ])
+      expect(of('molcajete', kind), kind).toMatchObject(checkNow('molcajete'));
+    // What a read doesn't clear: time does, or the six-hourly updates read, or a new release.
+    for (const kind of [
+      'restarted',
+      'repo-pull',
+      'macos-updates',
+      'unreadable:software updates',
+      'crash:abc',
+    ])
+      expect(of('molcajete', kind).type, kind).toBe('look');
+    expect(of('craftish', 'os-eol').type).toBe('look');
   });
 
   it('says what to look at for the rest, linking a crash to its stack', () => {
@@ -177,11 +216,11 @@ describe('dismissing', () => {
       raiseIssue(db, at, {
         resourceType: 'server',
         resourceId: 'molcajete',
-        kind: 'disk:Backup',
+        kind: 'repo-pull',
         severity,
-        summary: 'molcajete: Backup is 91% full',
+        summary: 'Calcifer’s repo on molcajete hasn’t pulled since 09:00',
       });
-    const key = { resourceType: 'server', resourceId: 'molcajete', kind: 'disk:Backup' } as const;
+    const key = { resourceType: 'server', resourceId: 'molcajete', kind: 'repo-pull' } as const;
     dismissIssue(db, T, disk('normal').issue.id, LOGIN);
     disk('normal', T + 1);
     expect(findOpenIssue(db, key)?.dismissedAt).toBe(T);
@@ -190,7 +229,7 @@ describe('dismissing', () => {
 
     // Urgent, dismissed, resolved, and back: a new issue, urgent and announced.
     dismissIssue(db, T + 3, findOpenIssue(db, key)!.id, LOGIN);
-    clearIssue(db, T + 4, key, 'Backup has space again');
+    clearIssue(db, T + 4, key, 'Calcifer’s repo on molcajete is pulling again');
     disk('urgent', T + 5);
     expect(findOpenIssue(db, key)).toMatchObject({
       dismissedAt: null,
@@ -284,14 +323,15 @@ describe('the routes', () => {
   it('lets a signed dismiss open ten minutes of dismissing, for dismissing only', async () => {
     const { db, signed, withCookie, clock } = setup();
     const a = crash(db, T - 60_000).issue;
-    const disks = ['/', '/data', '/backups'].map(
-      (d) =>
+    // Three issues with a line and Dismiss: an OS leaving support, on three servers.
+    const disks = ['one', 'two', 'three'].map(
+      (server) =>
         raiseIssue(db, T, {
           resourceType: 'server',
-          resourceId: 'craftish',
-          kind: `disk:${d}`,
+          resourceId: server,
+          kind: 'os-eol',
           severity: 'normal',
-          summary: `${d} is filling`,
+          summary: `${server}: Ubuntu 22.04 LTS leaves standard support on 2027-06-01`,
         }).issue,
     );
     const first = await signed(`/api/issues/${a.id}/dismiss`);
@@ -317,8 +357,7 @@ describe('the routes', () => {
     clock.now = T + DISMISS_WINDOW_MS;
     expect((await withCookie(`/api/issues/${disks[1]!.id}/dismiss`, cookie)).status).toBe(401);
     expect(
-      findOpenIssue(db, { resourceType: 'server', resourceId: 'craftish', kind: 'disk:/data' })
-        ?.dismissedAt,
+      findOpenIssue(db, { resourceType: 'server', resourceId: 'two', kind: 'os-eol' })?.dismissedAt,
     ).toBeNull();
   });
 
