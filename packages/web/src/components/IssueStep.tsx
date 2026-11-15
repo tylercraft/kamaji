@@ -1,7 +1,8 @@
 // An issue's next step, wherever an issue is listed: no warning without something to do. A
 // recheck is a button that reruns the check (the server clears the issue if it passes); anything
 // Kamaji can't check again says what to look at, and Dismiss hides it until something new
-// happens. Dismiss takes a passkey (postJson asks for one when the server wants it); Undo doesn't.
+// happens. Dismiss takes a passkey (postJson asks for one when the server wants it), then none for
+// ten minutes in this browser (app.ts, DISMISS_STEP); Undo never does.
 import type { IssueAction } from '@kamaji/shared';
 import { useState } from 'react';
 import { z } from 'zod';
@@ -64,7 +65,7 @@ export function IssueStep({
       <Button
         type="button"
         disabled={busy}
-        title="Hides it until something new happens. Needs a passkey."
+        title="Hides it until something new happens. Needs a passkey, then none for 10 minutes on this device."
         onClick={() =>
           write(`/api/issues/${encodeURIComponent(id)}/dismiss`, {}, 'Dismissed', 'Not dismissed')
         }

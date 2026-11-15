@@ -1,9 +1,11 @@
 // The HTTP app. It listens on 127.0.0.1 only; `tailscale serve` puts it on the tailnet and sets
 // Tailscale-User-Login to the caller's real login (replacing any forged one). Every request must
 // carry the one allowed login, as the Calcifer dashboard does. No login configured, nobody gets in.
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { getCookie, setCookie } from 'hono/cookie';
 import {
   ApproveRequest,
   ConfigureSiteRequest,
@@ -136,6 +138,19 @@ const PASSKEY_FREE_SITE_STEP = /^\/api\/sites\/[^/]+\/(mode|handshake|report|che
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
 const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
 
+/**
+ * Dismissing one warning after another shouldn't take a passkey each time. A signed dismiss opens a
+ * 10-minute window for more dismisses, from that browser only: a random token in an HttpOnly,
+ * SameSite=Strict cookie, scoped to /api/issues. Kamaji keeps the token's hash in memory, not the
+ * database, since anything on the mini can write the database. It's fixed from the signing, not
+ * extended by use, and a restart closes it. Nothing else counts it: approving and every other
+ * write still sign each time.
+ */
+const DISMISS_STEP = /^\/api\/issues\/[^/]+\/dismiss$/;
+export const DISMISS_WINDOW_MS = 10 * 60_000;
+const DISMISS_COOKIE = 'kamaji_dismiss';
+const tokenHash = (token: string) => createHash('sha256').update(token).digest('base64url');
+
 const passkeyFree = (method: string, path: string) =>
   PASSKEY_FREE.has(`${method} ${path}`) ||
   (method === 'POST' && (PASSKEY_FREE_SITE_STEP.test(path) || PASSKEY_FREE_ISSUE_STEP.test(path)));
@@ -181,6 +196,8 @@ export function createApp({
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
   const app = new Hono<{ Variables: { approval: string } }>();
+  /** Open dismiss windows: the token's hash, and when it closes. */
+  const dismissWindows = new Map<string, number>();
   /** "Back up now" exports still going, by site: one at a time each. */
   const exporting = new Map<string, number>();
 
@@ -205,6 +222,12 @@ export function createApp({
     }
     // A passkey, for every write that starts or changes work on a site.
     const method = c.req.method;
+    const dismissing = method === 'POST' && DISMISS_STEP.test(c.req.path);
+    if (dismissing) {
+      for (const [hash, closes] of dismissWindows) if (closes <= now()) dismissWindows.delete(hash);
+      const token = getCookie(c, DISMISS_COOKIE);
+      if (token && dismissWindows.has(tokenHash(token))) return next();
+    }
     if (!['GET', 'HEAD'].includes(method) && !passkeyFree(method, c.req.path)) {
       const body = await c.req.text();
       const check = checkWrite(
@@ -224,6 +247,17 @@ export function createApp({
       c.set('approval', JSON.stringify({ body, proof: check.proof }));
     }
     await next();
+    if (dismissing && c.res.status === 200) {
+      const token = randomBytes(32).toString('base64url');
+      dismissWindows.set(tokenHash(token), now() + DISMISS_WINDOW_MS);
+      setCookie(c, DISMISS_COOKIE, token, {
+        path: '/api/issues',
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Strict',
+        maxAge: DISMISS_WINDOW_MS / 1000,
+      });
+    }
   });
 
   app.get('/api/status', (c) => c.json(status(db, statusInput())));

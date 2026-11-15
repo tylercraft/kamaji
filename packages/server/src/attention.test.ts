@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ActivityResponse, OverviewResponse, SitesResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { createApp } from './app.js';
+import { createApp, DISMISS_WINDOW_MS } from './app.js';
 import type { SiteCheckers } from './checks/sites.js';
 import type { Db } from './db.js';
 import { checkEndOfLife } from './endOfLife/check.js';
@@ -228,6 +228,7 @@ function setup(home: { ok: boolean; problem: string | null } = { ok: true, probl
     }),
     certificate: async () => ({ validTo: T + 60 * DAY, daysLeft: 60, problem: null }),
   };
+  const clock = { now: T };
   const app = createApp({
     db,
     login: LOGIN,
@@ -243,7 +244,7 @@ function setup(home: { ok: boolean; problem: string | null } = { ok: true, probl
     }),
     passkeys: passkey.config,
     siteCheckers: checkers,
-    now: () => T,
+    now: () => clock.now,
   });
   const headers = {
     'Tailscale-User-Login': LOGIN,
@@ -254,8 +255,13 @@ function setup(home: { ok: boolean; problem: string | null } = { ok: true, probl
   const post = (path: string) => app.request(path, { method: 'POST', headers, body: '{}' });
   const signed = (path: string) => passkey.post(app, path, '{}', headers);
   const get = (path: string) => app.request(path, { headers });
-  return { db, post, signed, get };
+  const withCookie = (path: string, cookie: string) =>
+    app.request(path, { method: 'POST', headers: { ...headers, Cookie: cookie }, body: '{}' });
+  return { db, post, signed, get, withCookie, clock };
 }
+
+/** The cookie a response sets, as a request sends it back. */
+const cookieFrom = (res: Response) => (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
 describe('the routes', () => {
   it('dismisses only with a passkey, shows it in Activity, and undoes without one', async () => {
@@ -273,6 +279,59 @@ describe('the routes', () => {
     });
     expect((await post(`/api/issues/${issue.id}/undismiss`)).status).toBe(200);
     expect(findOpenIssue(db, crashKey)?.dismissedAt).toBeNull();
+  });
+
+  it('lets a signed dismiss open ten minutes of dismissing, for dismissing only', async () => {
+    const { db, signed, withCookie, clock } = setup();
+    const a = crash(db, T - 60_000).issue;
+    const disks = ['/', '/data', '/backups'].map(
+      (d) =>
+        raiseIssue(db, T, {
+          resourceType: 'server',
+          resourceId: 'craftish',
+          kind: `disk:${d}`,
+          severity: 'normal',
+          summary: `${d} is filling`,
+        }).issue,
+    );
+    const first = await signed(`/api/issues/${a.id}/dismiss`);
+    expect(first.status).toBe(200);
+    const setCookie = first.headers.get('Set-Cookie') ?? '';
+    expect(setCookie).toMatch(/HttpOnly/);
+    expect(setCookie).toMatch(/SameSite=Strict/);
+    expect(setCookie).toMatch(/Path=\/api\/issues/);
+    expect(setCookie).toMatch(/Max-Age=600/);
+    const cookie = cookieFrom(first);
+
+    clock.now = T + DISMISS_WINDOW_MS - 1;
+    const second = await withCookie(`/api/issues/${disks[0]!.id}/dismiss`, cookie);
+    expect(second.status).toBe(200);
+    // Used, the window doesn't move on.
+    expect(second.headers.get('Set-Cookie')).toBeNull();
+    // Not for anything else that takes a passkey.
+    expect((await withCookie('/api/batches', cookie)).status).toBe(401);
+    // A made-up token, and the real one once the ten minutes are up.
+    expect(
+      (await withCookie(`/api/issues/${disks[1]!.id}/dismiss`, 'kamaji_dismiss=x')).status,
+    ).toBe(401);
+    clock.now = T + DISMISS_WINDOW_MS;
+    expect((await withCookie(`/api/issues/${disks[1]!.id}/dismiss`, cookie)).status).toBe(401);
+    expect(
+      findOpenIssue(db, { resourceType: 'server', resourceId: 'craftish', kind: 'disk:/data' })
+        ?.dismissedAt,
+    ).toBeNull();
+  });
+
+  it('opens no window when the dismiss doesn’t happen', async () => {
+    const { db, signed } = setup();
+    const { issue } = raiseIssue(db, T, {
+      resourceType: 'site',
+      resourceId: 'a.test',
+      kind: 'certificate',
+      severity: 'normal',
+      summary: 'A’s certificate ends soon',
+    });
+    expect((await signed(`/api/issues/${issue.id}/dismiss`)).headers.get('Set-Cookie')).toBeNull();
   });
 
   it('refuses to dismiss what can be checked again', async () => {
