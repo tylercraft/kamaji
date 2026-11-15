@@ -589,6 +589,7 @@ export function createApp({
     if (result === 'not-craftish') return c.json({ error: 'not_craftish' }, 400);
     if (result === 'no-consent') return c.json({ error: 'no_consent' }, 400);
     if (result === 'connected') return c.json({ error: 'connected' }, 409);
+    if (typeof result === 'object') return c.json({ error: 'bad_page', page: result.refused }, 400);
     return c.json({ ok: true });
   });
   app.post('/api/sites/:id/remove', async (c) => {

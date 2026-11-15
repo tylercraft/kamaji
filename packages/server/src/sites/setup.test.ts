@@ -519,3 +519,80 @@ describe('Add site’s platform guess', () => {
     expect(await res.json()).toMatchObject({ platform: null });
   });
 });
+
+describe('Pages to check', () => {
+  const site = (db: ReturnType<typeof setup>['db'], platform = 'wordpress') =>
+    db
+      .prepare(
+        `INSERT INTO sites (id, name, url, host_kind, mode, platform, setup, created_at)
+         VALUES ('minton.test', 'Minton', 'https://minton.test/', 'other', 'monitoring', ?, 'done', 0)`,
+      )
+      .run(platform);
+  const configure = (
+    pages: { page: string; expectedText: string | null }[],
+    platform?: string,
+  ) => ({
+    ...(platform ? { platform } : {}),
+    expectedText: null,
+    backupExpectation: null,
+    notifications: 'normal',
+    pages,
+  });
+
+  it('saves each page with its own text, and shows them on the site', async () => {
+    const { db, post, detail } = setup(reportOnly, () => ok(HELLO));
+    site(db);
+    const saved = await post(
+      '/api/sites/minton.test/configure',
+      configure([
+        { page: '/shop/', expectedText: 'Add to cart' },
+        { page: 'https://www.minton.test/contact/', expectedText: null },
+      ]),
+    );
+    expect(saved.status).toBe(200);
+    expect((await detail('minton.test')).pages).toEqual([
+      { url: 'https://minton.test/shop/', expectedText: 'Add to cart' },
+      { url: 'https://www.minton.test/contact/', expectedText: null },
+    ]);
+    // Left as they were when a save doesn't send them.
+    await post('/api/sites/minton.test/configure', {
+      expectedText: 'Minton',
+      backupExpectation: null,
+      notifications: 'normal',
+    });
+    expect((await detail('minton.test')).pages).toHaveLength(2);
+  });
+
+  it('refuses a page off the site, or not https, and saves nothing', async () => {
+    const { db, post, detail } = setup(reportOnly, () => ok(HELLO));
+    site(db);
+    for (const page of ['https://evil.test/', 'http://minton.test/shop/']) {
+      const refused = await post(
+        '/api/sites/minton.test/configure',
+        configure([
+          { page: '/shop/', expectedText: null },
+          { page, expectedText: null },
+        ]),
+      );
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'bad_page', page });
+    }
+    expect((await detail('minton.test')).pages).toEqual([]);
+    const six = Array.from({ length: 6 }, (_, i) => ({ page: `/p${i}/`, expectedText: null }));
+    expect((await post('/api/sites/minton.test/configure', configure(six))).status).toBe(400);
+  });
+
+  it('keeps none for a static site or an app: they have no updates', async () => {
+    const { db, post, detail } = setup(reportOnly, () => ok(HELLO));
+    site(db);
+    await post(
+      '/api/sites/minton.test/configure',
+      configure([{ page: '/shop/', expectedText: null }]),
+    );
+    await post(
+      '/api/sites/minton.test/configure',
+      configure([{ page: '/shop/', expectedText: null }], 'static'),
+    );
+    expect((await detail('minton.test')).pages).toEqual([]);
+  });
+});

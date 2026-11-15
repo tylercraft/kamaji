@@ -9,7 +9,7 @@
 // that site's items and raises an urgent issue. After a restart, an item left mid-way is
 // reconciled by asking the site, never assumed done or blindly retried.
 import { recordEvidence, type ExportAnswer } from '../backups/evidence.js';
-import { CareHello, CareReport, type Outcome } from '@kamaji/shared';
+import { CareHello, CareReport, type CheckPage, type Outcome } from '@kamaji/shared';
 import type { CareResult } from '../care/client.js';
 import type { SigningKey } from '../care/keys.js';
 import { checkOutsideNow, pushOutsideSites, type OutsideClient } from '../checks/outside.js';
@@ -21,6 +21,7 @@ import { recordEvent } from '../events.js';
 import { clearIssue, raiseIssue } from '../issues.js';
 import { storeReport } from '../inventory/report.js';
 import { recordObservation } from '../observations.js';
+import { readPages } from '../sites/pages.js';
 
 export type Send = (
   home: URL,
@@ -84,7 +85,8 @@ export interface RunSite {
   url: string;
   hostKind: string;
   expectedText: string | null;
-  importantPages: string[];
+  /** Pages to check after each update, each with its own expected text (sites/pages.ts). */
+  importantPages: CheckPage[];
 }
 
 interface Item {
@@ -187,15 +189,6 @@ async function runBatch(deps: UpdaterDeps, batchId: string, oneSiteFirst: boolea
   }
 }
 
-function importantPages(json: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
 function siteRow(db: Db, id: string): RunSite {
   const r = db
     .prepare(
@@ -203,7 +196,7 @@ function siteRow(db: Db, id: string): RunSite {
     )
     .get(id);
   if (!r) throw new Error('site not found');
-  const pages = importantPages(String(r.important_pages ?? '[]'));
+  const pages = readPages(String(r.important_pages ?? '[]'), String(r.url));
   return {
     id: String(r.id),
     name: String(r.name),
@@ -527,9 +520,8 @@ async function runChecks(
   const home: HomePageResult = await deps.homePage(site.url, site.expectedText, deps.signal);
   if (!home.ok) problems.push(`home page: ${home.problem ?? 'failed'}`);
   for (const page of site.importantPages) {
-    const url = new URL(page, site.url).href;
-    const result = await deps.homePage(url, null, deps.signal);
-    if (!result.ok) problems.push(`${new URL(url).pathname}: ${result.problem ?? 'failed'}`);
+    const result = await deps.homePage(page.url, page.expectedText, deps.signal);
+    if (!result.ok) problems.push(`${new URL(page.url).pathname}: ${result.problem ?? 'failed'}`);
   }
   const fresh = siteHealth.filter((h) => !siteHealthBefore.includes(h));
   if (fresh.length > 0) problems.push(`Site Health: ${fresh.join('; ')}`);

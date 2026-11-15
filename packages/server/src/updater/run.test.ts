@@ -374,6 +374,63 @@ describe('the updater', () => {
     });
   });
 
+  it('checks each page to check with its own text, and holds the run when a page lacks it', async () => {
+    const { db, deps } = setup();
+    db.prepare('UPDATE sites SET important_pages = ? WHERE id = ?').run(
+      JSON.stringify([
+        { url: 'https://one.test/shop/', expectedText: 'Add to cart' },
+        { url: 'https://one.test/contact/', expectedText: null },
+      ]),
+      SITE,
+    );
+    await approve(db);
+    const asked: [string, string | null][] = [];
+    const d = deps();
+    const home = d.homePage;
+    d.homePage = async (url, expected, signal) => {
+      asked.push([url, expected]);
+      // The shop page passes the check before updating, then loses its cart button in the update.
+      if (url.endsWith('/shop/') && asked.filter(([u]) => u === url).length > 1)
+        return {
+          ...(await home(url, expected, signal)),
+          ok: false,
+          expectedText: false,
+          problem: 'Expected text not found',
+        };
+      return home(url, expected, signal);
+    };
+    await runUpdater(d);
+    expect(asked.slice(0, 3)).toEqual([
+      ['https://one.test/', 'One'],
+      ['https://one.test/shop/', 'Add to cart'],
+      ['https://one.test/contact/', null],
+    ]);
+    expect(outcomes(db)).toEqual([
+      ['core', 'done', 'checks_failed'],
+      ['plugin', 'held', null],
+    ]);
+    expect(batchViews(db)[0]!.sites[0]!.heldReason).toMatch(/\/shop\/: Expected text not found/);
+  });
+
+  it('still checks pages saved in the first shape, a list of paths', async () => {
+    const { db, deps } = setup();
+    db.prepare('UPDATE sites SET important_pages = ? WHERE id = ?').run('["/shop/"]', SITE);
+    await approve(db);
+    const asked: string[] = [];
+    const d = deps();
+    const home = d.homePage;
+    d.homePage = async (url, expected, signal) => {
+      asked.push(url);
+      return home(url, expected, signal);
+    };
+    await runUpdater(d);
+    expect(asked).toContain('https://one.test/shop/');
+    expect(outcomes(db)).toEqual([
+      ['core', 'done', 'passed'],
+      ['plugin', 'done', 'passed'],
+    ]);
+  });
+
   it('names a failed job, and a version that changed', async () => {
     const failed = setup();
     failed.site.behave.failJob = true;
