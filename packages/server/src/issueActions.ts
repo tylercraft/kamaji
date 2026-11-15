@@ -40,6 +40,7 @@ export const ISSUE_FAMILIES = [
   'repo-pull',
   'macos-updates',
   'crash',
+  'molcajete-load',
   // Kamaji itself
   'offline',
   'stale',
@@ -149,6 +150,8 @@ const ACTIONS: Record<IssueFamily, (issue: Of) => IssueAction> = {
   restarted: look('Nothing to do if it was you; otherwise find out why molcajete restarted.'),
   'repo-pull': look('Check the repo-pull log on molcajete.', SERVERS),
   'macos-updates': look('Install them in System Settings on molcajete.', SERVERS),
+  // A fresh read with the load back under the core count counts towards clearing it.
+  'molcajete-load': checkNow,
   crash: (i) => ({
     type: 'look',
     text: 'See the stack on Servers.',

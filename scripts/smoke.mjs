@@ -450,8 +450,13 @@ db.prepare(
     if (file === TOOLS.docker && args[0] === 'ps') return out(f('docker-ps.jsonl'));
     if (file === TOOLS.tailscale) return out(f('tailscale-status.json'));
     if (file === TOOLS.sysctl) return out(f('boottime.txt'));
+    // Overloaded, with Docker's VM the busiest: ps's two reads in turn, then the containers.
+    if (file === TOOLS.vmStat) return out(f('vm_stat.txt'));
+    if (file === TOOLS.ps) return out(f(`ps-cputime-${(psReads++ % 2) + 1}.txt`));
+    if (file === TOOLS.docker && args[0] === 'stats') return out(f('docker-stats.jsonl'));
     return out('', 1);
   };
+  let psReads = 0;
   const fs = {
     exists: () => true,
     agentLabels: () => [],
@@ -464,6 +469,8 @@ db.prepare(
     fs,
     crashFiles: { path: join(mkdtempSync(join(tmpdir(), 'kamaji-smoke-')), 'crashes.jsonl') },
     repoPullLog: '/logs/calcifer-repo-pull.log',
+    system: { loadavg: () => [17.2, 16.4, 12.1], cpus: () => 10, totalmem: () => 32 * 1024 ** 3 },
+    wait: () => Promise.resolve(),
   });
 }
 
@@ -923,6 +930,25 @@ for (const view of VIEWS) {
     console.log(
       'ok   needs attention: a step on each; Dismiss signed, folded, undone; restore detail shown',
     );
+}
+
+// molcajete's load under Resources on Servers: the load, memory, and while it's high, the
+// busiest processes and Docker's containers.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/servers` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const text = await evaluate('document.body.innerText');
+  for (const want of [
+    'Load 17.20 · 16.40 over 5 min, on 10 cores',
+    'Overloaded',
+    'compressed, of 32 GB',
+    'Busiest: com.apple.Virtualization.VirtualMachine 26%',
+    'In Docker: ddev-kamaji-wp-db 2%',
+  ])
+    if (!text?.includes(want)) problems.push(`no “${want}”`);
+  if (problems.length) failures.push(`molcajete load: ${problems.join('; ')}`);
+  else console.log('ok   molcajete load: under Resources, with the busiest while it’s high');
 }
 
 // Site icons on the Sites page: the two stored ones load from Kamaji as images, served so nothing

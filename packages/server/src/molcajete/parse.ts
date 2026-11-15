@@ -395,3 +395,135 @@ function safeJson(text: string): unknown {
     return null;
   }
 }
+
+// Load: ps, vm_stat and docker stats. Captured on the laptop (the same macOS tools and Docker
+// Desktop as the mini), 2026-11-16: fixtures/ps-cputime-*.txt, vm_stat.txt, docker-stats.jsonl.
+
+export interface PsRow {
+  pid: number;
+  /** CPU time used so far, every thread together. */
+  cpuSeconds: number;
+  rssBytes: number;
+  /** The command's last path part: "com.apple.Virtualization.VirtualMachine", not its path. */
+  name: string;
+}
+
+/** ps's TIME: minutes:seconds.hundredths, with minutes past 60 left as minutes (2214:28.76). */
+export function parseCpuTime(text: string): number | null {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text);
+  if (!m) return null;
+  const [, days, hours, minutes, seconds] = m;
+  return (
+    Number(days ?? 0) * 86_400 + Number(hours ?? 0) * 3_600 + Number(minutes) * 60 + Number(seconds)
+  );
+}
+
+/** `ps -Ao pid,cputime,rss,comm`; null when the header isn't ps's. RSS is in KiB. */
+export function parsePs(text: string): PsRow[] | null {
+  const [header, ...lines] = text.split('\n');
+  if (!header || !/^\s*PID\s+TIME\s+RSS\s+COMM\s*$/.test(header)) return null;
+  const out: PsRow[] = [];
+  for (const line of lines) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (!m) continue;
+    const cpuSeconds = parseCpuTime(m[2]!);
+    const name = m[4]!.trim().split('/').pop() ?? '';
+    if (cpuSeconds === null || !name) continue;
+    out.push({ pid: Number(m[1]), cpuSeconds, rssBytes: Number(m[3]) * 1024, name });
+  }
+  return out;
+}
+
+export interface BusyProcess {
+  name: string;
+  /** Of one core: 776 is nearly eight cores' worth. */
+  cpuPercent: number;
+  rssBytes: number;
+}
+
+/** The busiest processes between two ps reads `seconds` apart: CPU time used, over the time. */
+export function busiest(
+  before: PsRow[],
+  after: PsRow[],
+  seconds: number,
+  count = 3,
+): BusyProcess[] {
+  const was = new Map(before.map((r) => [r.pid, r]));
+  const out: BusyProcess[] = [];
+  for (const r of after) {
+    const b = was.get(r.pid);
+    // A pid reused between the reads is another process.
+    if (!b || b.name !== r.name || r.cpuSeconds < b.cpuSeconds) continue;
+    out.push({
+      name: r.name,
+      cpuPercent: Math.round(((r.cpuSeconds - b.cpuSeconds) / seconds) * 100),
+      rssBytes: r.rssBytes,
+    });
+  }
+  return out.sort((a, b) => b.cpuPercent - a.cpuPercent).slice(0, count);
+}
+
+export interface VmStat {
+  freeBytes: number;
+  /** Memory the compressor holds: high when macOS is short of memory. */
+  compressedBytes: number;
+}
+
+/** `vm_stat`: pages free and occupied by the compressor, at its page size. */
+export function parseVmStat(text: string): VmStat | null {
+  const pageSize = /page size of (\d+) bytes/.exec(text)?.[1];
+  const pages = (label: string) => {
+    const m = new RegExp(`^${label}:\\s+(\\d+)\\.$`, 'm').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const free = pages('Pages free');
+  const compressed = pages('Pages occupied by compressor');
+  if (!pageSize || free === null || compressed === null) return null;
+  return { freeBytes: free * Number(pageSize), compressedBytes: compressed * Number(pageSize) };
+}
+
+export interface BusyContainer {
+  name: string;
+  /** Of one of Docker's cores, as docker stats says it. */
+  cpuPercent: number;
+  memoryBytes: number;
+}
+
+const DockerStatsLine = z.object({ Name: z.string(), CPUPerc: z.string(), MemUsage: z.string() });
+const UNITS: Record<string, number> = {
+  B: 1,
+  kB: 1e3,
+  KB: 1e3,
+  MB: 1e6,
+  GB: 1e9,
+  TB: 1e12,
+  KiB: 1024,
+  MiB: 1024 ** 2,
+  GiB: 1024 ** 3,
+  TiB: 1024 ** 4,
+};
+
+/** A size as docker prints it: "208.3MiB", "6.5MB", "0B". */
+export function parseDockerSize(text: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)\s*([A-Za-z]+)$/.exec(text.trim());
+  const unit = m ? UNITS[m[2]!] : undefined;
+  return m && unit !== undefined ? Math.round(Number(m[1]) * unit) : null;
+}
+
+/**
+ * `docker stats --no-stream --format json`, one object a line: only the name, CPU and memory in
+ * use are kept, busiest first.
+ */
+export function parseDockerStats(text: string, count = 3): BusyContainer[] {
+  const out: BusyContainer[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    const c = DockerStatsLine.safeParse(safeJson(line));
+    if (!c.success) continue;
+    const cpu = /^(\d+(?:\.\d+)?)%$/.exec(c.data.CPUPerc.trim());
+    const memory = parseDockerSize(c.data.MemUsage.split('/')[0] ?? '');
+    if (!cpu || memory === null) continue;
+    out.push({ name: c.data.Name, cpuPercent: Math.round(Number(cpu[1])), memoryBytes: memory });
+  }
+  return out.sort((a, b) => b.cpuPercent - a.cpuPercent).slice(0, count);
+}

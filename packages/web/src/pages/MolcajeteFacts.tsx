@@ -5,6 +5,7 @@ import {
   type CrashGroup,
   type Known,
   type MacHealth,
+  type MacLoad,
   type MacJob,
 } from '@kamaji/shared';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -62,6 +63,38 @@ export const gb = (bytes: number) =>
     ? `${(bytes / 1024 ** 4).toFixed(1)} TB`
     : `${(bytes / 1024 ** 3).toFixed(bytes < 10 * 1024 ** 3 ? 1 : 0)} GB`;
 
+/** Overloaded above 1.5× the cores over 5 minutes, as the check counts it (molcajete/read.ts). */
+const LOAD_HIGH = 1.5;
+const percents = (items: { name: string; cpuPercent: number }[]) =>
+  items.map((i) => `${i.name} ${i.cpuPercent}%`).join(', ');
+
+/** Load and memory under Resources; while it's overloaded, what's busiest, by CPU (100% is a core). */
+function Load({ load }: { load: MacLoad }) {
+  const high = load.five > load.cpus * LOAD_HIGH;
+  return (
+    <>
+      <Muted>
+        Memory:{' '}
+        {load.memory.known
+          ? `${gb(load.memory.value.freeBytes)} free · ${gb(load.memory.value.compressedBytes)} compressed, of ${gb(load.totalBytes)}`
+          : load.memory.reason}
+      </Muted>
+      <Muted>
+        Load {load.one.toFixed(2)} · {load.five.toFixed(2)} over 5 min, on {load.cpus} cores
+      </Muted>
+      {high && (
+        <div>
+          <Flag tone="amber">Overloaded</Flag>
+        </div>
+      )}
+      {load.busiest && load.busiest.length > 0 && <Muted>Busiest: {percents(load.busiest)}</Muted>}
+      {load.containers && load.containers.length > 0 && (
+        <Muted>In Docker: {percents(load.containers)}</Muted>
+      )}
+    </>
+  );
+}
+
 function KnownOr<T>({ value, children }: { value: Known<T>; children: (v: T) => ReactNode }) {
   return value.known ? <>{children(value.value)}</> : <Muted>{value.reason}</Muted>;
 }
@@ -118,6 +151,7 @@ export function MacFacts({ health }: { health: MacHealth }) {
               </div>
             ),
           )}
+          {health.load ? <Load load={health.load} /> : <Muted>Load: not read yet</Muted>}
         </Part>
         <Part title="Services">
           <Facts>

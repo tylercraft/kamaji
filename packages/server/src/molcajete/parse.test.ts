@@ -1,19 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  busiest,
   describeCalendar,
   fromLocal,
   parseCalendar,
   parseBoottime,
   parseDiskutil,
+  parseCpuTime,
   parseDockerPs,
+  parseDockerSize,
+  parseDockerStats,
   parseDockerVersion,
   parseLaunchctlList,
   parseLaunchctlPrint,
   parseMount,
+  parsePs,
   parseRepoPull,
   parseSoftwareUpdate,
   parseTailscale,
+  parseVmStat,
 } from './parse.js';
 
 const fixture = (name: string) =>
@@ -237,5 +243,64 @@ describe('repo-pull', () => {
     expect(new Date(fromLocal(2026, 6, 1, 12, 0, 0)).toISOString()).toBe(
       '2026-06-01T00:00:00.000Z',
     );
+  });
+});
+
+describe('load', () => {
+  it('reads ps’s CPU time, RSS and the command’s name, without its path', () => {
+    expect(parseCpuTime('0:27.95')).toBe(27.95);
+    expect(parseCpuTime('2214:28.76')).toBeCloseTo(2214 * 60 + 28.76);
+    expect(parseCpuTime('1:02:03.50')).toBeCloseTo(3723.5);
+    expect(parseCpuTime('-')).toBeNull();
+    const rows = parsePs(fixture('ps-cputime-1.txt'))!;
+    expect(rows).toHaveLength(12);
+    expect(rows[1]).toEqual({
+      pid: 68434,
+      cpuSeconds: 2126 * 60 + 54.26,
+      rssBytes: 1620464 * 1024,
+      name: 'com.apple.Virtualization.VirtualMachine',
+    });
+    // A name with spaces stays whole.
+    expect(rows.map((r) => r.name)).toContain('Google Chrome Helper (Renderer)');
+    expect(parsePs('not ps')).toBeNull();
+  });
+
+  it('takes the busiest from two reads: CPU time used between them, over the time', () => {
+    const before = parsePs(fixture('ps-cputime-1.txt'))!;
+    const after = parsePs(fixture('ps-cputime-2.txt'))!;
+    const top = busiest(before, after, 2);
+    expect(top.map((p) => [p.name, p.cpuPercent])).toEqual([
+      ['com.apple.Virtualization.VirtualMachine', 26],
+      // 0.33 s and 0.23 s over two seconds, a hair under the half once in floating point.
+      ['WindowServer', 16],
+      ['firefox', 11],
+    ]);
+    // A pid that's another process by the second read doesn't count.
+    const reused = after.map((r) => (r.pid === 68434 ? { ...r, name: 'other' } : r));
+    expect(busiest(before, reused, 2)[0]?.name).toBe('WindowServer');
+  });
+
+  it('reads vm_stat’s free and compressed pages at its page size', () => {
+    expect(parseVmStat(fixture('vm_stat.txt'))).toEqual({
+      freeBytes: 186507 * 16384,
+      compressedBytes: 643966 * 16384,
+    });
+    expect(parseVmStat('Pages free: 1.')).toBeNull();
+  });
+
+  it('keeps only names, CPU and memory from docker stats, busiest first', () => {
+    expect(parseDockerSize('208.3MiB')).toBe(Math.round(208.3 * 1024 ** 2));
+    expect(parseDockerSize('6.5MB')).toBe(6_500_000);
+    expect(parseDockerSize('0B')).toBe(0);
+    expect(parseDockerSize('lots')).toBeNull();
+    const stats = parseDockerStats(fixture('docker-stats.jsonl'));
+    expect(stats.map((c) => Object.keys(c))).toEqual(
+      Array(3).fill(['name', 'cpuPercent', 'memoryBytes']),
+    );
+    expect(stats.map((c) => [c.name, c.cpuPercent])).toEqual([
+      ['ddev-kamaji-wp-db', 2],
+      ['ddev-kamaji-wp-web', 1],
+      ['ddev-router', 0],
+    ]);
   });
 });

@@ -86,6 +86,7 @@ describe('every issue has a next step', () => {
       'tailscale',
       'tailscale-health',
       'unreadable:Docker',
+      'molcajete-load',
     ])
       expect(of('molcajete', kind), kind).toMatchObject(checkNow('molcajete'));
     // What a read doesn't clear: time does, or the six-hourly updates read, or a new release.
