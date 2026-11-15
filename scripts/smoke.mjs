@@ -882,10 +882,13 @@ for (const view of VIEWS) {
 
 // Needs attention: every issue shows its next step. Minton's end-of-life can't be checked again,
 // so it has a line and Dismiss, which takes the passkey; it folds into Dismissed (1), and Undo
-// brings it back. A failed restore check shows what the command said, on the site's Backups.
+// brings it back. Dismissed again within ten minutes, it takes no passkey (the window the first
+// signing opened). A failed restore check shows what the command said, on the site's Backups.
 {
   problems = [];
   const at = `http://localhost:${appPort}`;
+  // Start without a window from earlier steps' signings, so the first Dismiss signs.
+  await send('Network.clearBrowserCookies');
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const spent = () =>
     Number(
@@ -924,6 +927,18 @@ for (const view of VIEWS) {
   await wait(1500);
   if ((await evaluate(`${panel}.innerText`)).includes('Dismissed ('))
     problems.push('Undo didn’t bring it back');
+  const click = (label) =>
+    evaluate(
+      `(() => { const li = [...${panel}.querySelectorAll('li')].find((l) => l.textContent.includes('MySQL 5.7')); const b = [...(li?.querySelectorAll('button') ?? []), ...${panel}.querySelectorAll('button')].find((b) => b.textContent.trim() === '${label}'); b?.click(); return b ? 'clicked' : 'missing'; })()`,
+    );
+  const signedSoFar = spent();
+  if ((await click('Dismiss')) !== 'clicked') problems.push('no Dismiss the second time');
+  await wait(1500);
+  if (spent() !== signedSoFar) problems.push('Dismiss asked for a passkey inside the window');
+  if (!(await evaluate(`${panel}.innerText`)).includes('Dismissed (1)'))
+    problems.push('the second Dismiss didn’t go through');
+  await click('Undo');
+  await wait(1500);
 
   await send('Page.navigate', { url: `${at}/sites/${BAD}` });
   await wait(1500);
@@ -936,7 +951,7 @@ for (const view of VIEWS) {
   if (problems.length) failures.push(`needs attention: ${problems.join('; ')}`);
   else
     console.log(
-      'ok   needs attention: a step on each; Dismiss signed, folded, undone; restore detail shown',
+      'ok   needs attention: a step on each; Dismiss signed, folded, undone, then no passkey inside the window; restore detail shown',
     );
 }
 
