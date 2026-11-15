@@ -8,7 +8,8 @@ import { overview } from '../queries.js';
 import { testDb } from '../testing.js';
 import type { CareSend } from '../sites/setup.js';
 import { checkDirectory, lookupUrl, parseDirectory, parseLastUpdated } from './directory.js';
-import { checkReports, reportSite, siteInventory, updatesWaiting } from './report.js';
+import { careStatus, checkReports, reportSite, siteInventory, updatesWaiting } from './report.js';
+import { recordObservation } from '../observations.js';
 
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
@@ -305,5 +306,39 @@ describe('wordpress.org', () => {
     await reportSite(db, SITE, keys, plugin([() => good(report)]).send, () => T + 2 * HOUR);
     await checkDirectory(db, { now: () => T + 2 * HOUR, signal, fetch: fake });
     expect(issues()).toEqual([]);
+  });
+});
+
+describe('Craftish Care’s state on the Sites list', () => {
+  it('gives the last good report, and a failure only when it came after it', () => {
+    const db = testDb();
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES ('c.test', 'C', 'https://c.test/', 'other', 'connected', 'done', 0),
+              ('m.test', 'M', 'https://m.test/', 'other', 'monitoring', 'done', 0)`,
+    ).run();
+    const report = (at: number, value: Record<string, unknown>) =>
+      recordObservation(db, {
+        resourceType: 'site',
+        resourceId: 'c.test',
+        check: 'report',
+        source: 'plugin',
+        at,
+        ok: value.ok === true,
+        value,
+      });
+    expect(careStatus(db, { id: 'c.test', mode: 'connected' })).toEqual({
+      lastReportAt: null,
+      failure: null,
+    });
+    report(1_000, { ok: true });
+    report(2_000, { ok: false, problem: 'HTTP 500' });
+    expect(careStatus(db, { id: 'c.test', mode: 'connected' })).toEqual({
+      lastReportAt: new Date(1_000).toISOString(),
+      failure: { at: new Date(2_000).toISOString(), problem: 'HTTP 500' },
+    });
+    report(3_000, { ok: true });
+    expect(careStatus(db, { id: 'c.test', mode: 'connected' })?.failure).toBeNull();
+    expect(careStatus(db, { id: 'm.test', mode: 'monitoring' })).toBeNull();
   });
 });

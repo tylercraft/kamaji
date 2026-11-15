@@ -17,6 +17,7 @@ import {
 } from '../components/ui';
 import { useLink } from '../router';
 import {
+  careState,
   certificate,
   CURRENT_FOR,
   domain,
@@ -242,6 +243,37 @@ const MODES: Record<SiteSummary['mode'], string> = {
   monitoring: 'Monitoring only',
 };
 
+const TONE_COLOUR: Record<Tone, string> = {
+  green: 'var(--green)',
+  amber: 'var(--amber)',
+  red: 'var(--red)',
+  copper: 'var(--copper)',
+  neutral: 'var(--muted)',
+};
+
+/**
+ * How a site is watched, in its meta line. A connected site says whether Craftish Care is working:
+ * its last report came through and is current, or what's wrong (the reason on hover, and on the
+ * site's page).
+ */
+function Watched({ site, now }: { site: SiteSummary; now: number }) {
+  const care = careState(site, now);
+  if (!care) return <>{watched(site)}</>;
+  return (
+    <span
+      title={care.detail || undefined}
+      css={{
+        color:
+          care.tone === 'green' || care.tone === 'neutral' ? 'inherit' : TONE_COLOUR[care.tone],
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Dot css={{ color: TONE_COLOUR[care.tone], verticalAlign: 'middle', marginBottom: 1 }} />{' '}
+      {care.text}
+    </span>
+  );
+}
+
 /** How a site is watched, in its meta line: WordPress says how; the rest are what they are. */
 const watched = (site: SiteSummary) =>
   site.platform === 'wordpress'
@@ -318,7 +350,7 @@ function SiteCard({ site, now, reload }: { site: SiteSummary; now: number; reloa
         <a href={site.url} target="_blank" rel="noreferrer" css={{ color: 'inherit' }}>
           {new URL(site.url).host} ↗
         </a>{' '}
-        · {hostNames[site.hostKind]} · {watched(site)}
+        · {hostNames[site.hostKind]} · <Watched site={site} now={now} />
         {site.tailnetOnly ? ' · private' : ''}
       </Muted>
       <div css={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -588,7 +620,8 @@ export function SitesPage() {
                                         </a>
                                       </Muted>
                                       <Muted>
-                                        {hostNames[site.hostKind]} · {watched(site)}
+                                        {hostNames[site.hostKind]} ·{' '}
+                                        <Watched site={site} now={now} />
                                         {site.tailnetOnly ? ' · private' : ''}
                                       </Muted>
                                       <Findings site={site} reload={reloadSites} />

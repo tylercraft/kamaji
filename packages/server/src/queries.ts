@@ -36,7 +36,7 @@ import { CYCLE } from './cycle.js';
 import { renewalFor } from './checks/domains.js';
 import { HEALTH_STATE } from './molcajete/check.js';
 import { recentCrashGroups } from './molcajete/crashes.js';
-import { updatesWaiting } from './inventory/report.js';
+import { careStatus, updatesWaiting } from './inventory/report.js';
 import { readState } from './state.js';
 
 type Row = Record<string, unknown>;
@@ -152,6 +152,7 @@ export function siteSummaries(db: Db, workerOn = false): SiteSummary[] {
     outside: outside(db, site, workerOn),
     certificate: certificate(db, site),
     updates: updatesWaiting(db, site),
+    care: careStatus(db, site),
     updateWork: updateWork(db, site.id),
     renewal: renewalFor(db, site),
     findings: siteFindings(db, site.id),

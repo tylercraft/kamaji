@@ -179,6 +179,42 @@ export function domain(site: SiteSummary, now: number): StatusLine {
   return line(label, tone, state, detail, at);
 }
 
+/**
+ * Craftish Care at a glance, for the Sites list: working means its last report came through and is
+ * current; a failed report since, or none for longer than three report intervals, says so. Null
+ * when the site isn't connected (monitoring only, or not WordPress).
+ */
+export function careState(
+  site: Pick<SiteSummary, 'care' | 'pausedAt'>,
+  now: number,
+): { tone: Tone; text: string; detail: string } | null {
+  const c = site.care;
+  if (!c) return null;
+  if (site.pausedAt)
+    return { tone: 'neutral', text: 'Craftish Care, paused', detail: 'Not asked while paused.' };
+  if (c.failure)
+    return {
+      tone: 'red',
+      text: 'Craftish Care: report failed',
+      detail: `${c.failure.problem}.${c.lastReportAt ? '' : ' It hasn’t reported yet.'}`,
+    };
+  if (!c.lastReportAt)
+    return { tone: 'neutral', text: 'Craftish Care: first report pending', detail: '' };
+  if (isOutOfDate(c.lastReportAt, CURRENT_FOR.report, now)) {
+    const hours = Math.floor((now - Date.parse(c.lastReportAt)) / (60 * MIN));
+    return {
+      tone: 'amber',
+      text: `Craftish Care: no report for ${hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} days`}`,
+      detail: 'Kamaji asks every hour.',
+    };
+  }
+  return {
+    tone: 'green',
+    text: 'Craftish Care: reporting',
+    detail: 'Its last report came through.',
+  };
+}
+
 /** Security findings. "None known" only with vulnerability data and a report that's current. */
 export function security(detail: SiteDetailResponse, now: number): StatusLine {
   const label = 'Security';
