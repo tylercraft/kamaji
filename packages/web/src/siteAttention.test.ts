@@ -168,7 +168,14 @@ describe('Needs a look', () => {
           },
         ],
         restoreChecks: [
-          { startedAt: ago(DAY), seconds: 80, ok: false, failedStep: 'wordpress', problem: 'x' },
+          {
+            startedAt: ago(DAY),
+            seconds: 80,
+            ok: false,
+            failedStep: 'wordpress',
+            problem: 'x',
+            detail: null,
+          },
         ],
         pending: { backup: null, restore: null },
         repository: null,

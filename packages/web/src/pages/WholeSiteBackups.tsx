@@ -198,6 +198,7 @@ export function WholeSiteBackups({
                 {STEP_WORDS[check.failedStep ?? ''] ?? check.failedStep ?? 'at an unknown step'}:{' '}
                 {check.problem}
               </span>
+              {check.detail && <RestoreDetail detail={check.detail} />}
             </>
           )}
         </dd>
@@ -272,5 +273,32 @@ export function WholeSiteBackups({
         </div>
       </RememberedDetails>
     </>
+  );
+}
+
+/**
+ * What the failed command said last, scrubbed on the server: the reason behind "database.sql
+ * didn't import". Folded, since it's for working out why, not for every look at the panel.
+ */
+function RestoreDetail({ detail }: { detail: string }) {
+  return (
+    <details css={{ flexBasis: '100%', minWidth: 0 }}>
+      <summary css={{ fontSize: 12, cursor: 'pointer' }}>What it said</summary>
+      <pre
+        css={{
+          margin: '6px 0 0',
+          padding: '8px 10px',
+          background: 'var(--soft)',
+          borderRadius: 4,
+          font: '11px/1.5 var(--mono)',
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
+          maxHeight: 320,
+          overflow: 'auto',
+        }}
+      >
+        {detail}
+      </pre>
+    </details>
   );
 }

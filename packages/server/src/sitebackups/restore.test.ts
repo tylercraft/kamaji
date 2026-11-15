@@ -8,7 +8,10 @@ import { restoreCheck, type Exec, type RestoreDeps } from './restore.js';
 import { pullOf, SITE } from './testTar.js';
 
 /** Docker as a list of what it was asked, answering from `answer`; tar runs for real. */
-function setup(tar: Buffer, answer: (args: string[]) => { code: number; stdout?: string }) {
+function setup(
+  tar: Buffer,
+  answer: (args: string[]) => { code: number; stdout?: string; stderr?: string },
+) {
   const workDir = mkdtempSync(join(tmpdir(), 'kamaji-restore-'));
   const { restic } = fakeRestic(() => tar);
   // restic restore puts <site>.tar under the target, as it was backed up.
@@ -22,7 +25,7 @@ function setup(tar: Buffer, answer: (args: string[]) => { code: number; stdout?:
     if (command !== deps.docker) return tarExec(command, args, options);
     asked.push(args);
     const a = answer(args);
-    return { code: a.code, stdout: a.stdout ?? '' };
+    return { code: a.code, stdout: a.stdout ?? '', stderr: a.stderr ?? '' };
   };
   const deps: RestoreDeps = {
     restic,
@@ -71,6 +74,7 @@ describe('the restore check', () => {
       ok: false,
       step: 'docker',
       problem: 'Docker isn’t answering on the mini',
+      detail: null,
     });
     expect(down.asked).toHaveLength(1);
     const other = setup(pullOf('other.test'), () => ({ code: 0 }));
@@ -80,5 +84,37 @@ describe('the restore check', () => {
     });
     expect(existsSync(other.workDir)).toBe(true);
     expect(readdirSync(other.workDir)).toEqual([]);
+  });
+
+  it('keeps the end of what a failed import said, scrubbed, and still cleans up', async () => {
+    const said = [
+      ...Array.from({ length: 30 }, (_, i) => `noise ${i}`),
+      'mysql: [Warning] Using a password on the command line: --password hunter2',
+      `ERROR 1064 (42000) at line 2711: You have an error in your SQL syntax near '${'Client Ltd, 4021 Main St, invoice 1182 for 250000 NZD'}' at line 1`,
+      `auth_token=${'a1B2'.repeat(12)} and a bare ${'Zx9_'.repeat(10)}`,
+    ].join('\n');
+    const { deps, asked, workDir } = setup(pullOf(), (args) =>
+      args.includes('wordpress') && args.includes('-i') ? { code: 1, stderr: said } : { code: 0 },
+    );
+    const result = await restoreCheck(deps, site, 'a'.repeat(64));
+    expect(result).toMatchObject({
+      ok: false,
+      step: 'database',
+      problem: 'database.sql didn’t import',
+    });
+    const detail = (result as { detail: string }).detail;
+    const lines = detail.split('\n');
+    expect(lines).toHaveLength(20);
+    expect(lines[0]).toBe('noise 13');
+    expect(detail).not.toContain('hunter2');
+    expect(detail).toContain('--password [hidden]');
+    expect(detail).toContain('at line 2711');
+    // The dump's own text is cut to its first 40 characters.
+    expect(detail).toContain("near 'Client Ltd, 4021 Main St, invoice 1182 f…'");
+    expect(detail).not.toContain('250000');
+    expect(detail).not.toContain('a1B2a1B2');
+    expect(detail).not.toContain('Zx9_Zx9_');
+    expect(asked.at(-1)?.slice(0, 2)).toEqual(['network', 'rm']);
+    expect(readdirSync(workDir)).toEqual([]);
   });
 });

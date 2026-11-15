@@ -192,7 +192,14 @@ const whole = (over: Partial<WholeSiteBackups> = {}): WholeSiteBackups => ({
     },
   ],
   restoreChecks: [
-    { startedAt: ago(3 * DAY), seconds: 90, ok: true, failedStep: null, problem: null },
+    {
+      startedAt: ago(3 * DAY),
+      seconds: 90,
+      ok: true,
+      failedStep: null,
+      problem: null,
+      detail: null,
+    },
   ],
   pending: { backup: null, restore: null },
   repository: null,
@@ -255,7 +262,14 @@ describe('the backup lines', () => {
         lastGoodAt: ago(10 * DAY),
         snapshots: [],
         restoreChecks: [
-          { startedAt: ago(60 * DAY), seconds: 90, ok: true, failedStep: null, problem: null },
+          {
+            startedAt: ago(60 * DAY),
+            seconds: 90,
+            ok: true,
+            failedStep: null,
+            problem: null,
+            detail: null,
+          },
         ],
       }),
     });

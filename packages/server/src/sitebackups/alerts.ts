@@ -8,14 +8,14 @@ import { clearIssue, raiseIssue } from '../issues.js';
 import { eligible } from './eligible.js';
 
 const DAY = 24 * 60 * 60_000;
-export const BACKUP_FAILED = 'backup-failed';
-export const RESTORE_FAILED = 'restore-check-failed';
-export const BACKUP_OVERDUE = 'backup-overdue';
+export const BACKUP_FAILED = 'backup-failed' as const;
+export const RESTORE_FAILED = 'restore-check-failed' as const;
+export const BACKUP_OVERDUE = 'backup-overdue' as const;
 /** A week or a fortnight from the last good backup, then 2 days' grace. */
 export const SCHEDULE_DAYS = { weekly: 7, fortnightly: 14 } as const;
 export const OVERDUE_GRACE = 2 * DAY;
 
-const key = (siteId: string, kind: string) => ({
+const key = <K extends string>(siteId: string, kind: K) => ({
   resourceType: 'site' as const,
   resourceId: siteId,
   kind,
