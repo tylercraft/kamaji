@@ -41,8 +41,8 @@ function subscribe(listener: () => void) {
 export const iconLetter = (name: string | undefined) =>
   (name?.match(/[\p{L}\p{N}]/u)?.[0] ?? '').toUpperCase();
 
-/** A site's icon, `size` pixels square: 16 in lists, 24 on the site's own page. */
-export function SiteIcon({ id, size = 16 }: { id: string; size?: 16 | 24 }) {
+/** A site's icon, `size` pixels square: 16 in lists, 24 on the site's own page, 48 in Sites. */
+export function SiteIcon({ id, size = 16 }: { id: string; size?: 16 | 24 | 48 }) {
   const { icons, names } = useSyncExternalStore(
     subscribe,
     () => list,
@@ -62,7 +62,7 @@ export function SiteIcon({ id, size = 16 }: { id: string; size?: 16 | 24 }) {
         flex: 'none',
         width: size,
         height: size,
-        borderRadius: 3,
+        borderRadius: size === 48 ? 6 : 3,
         overflow: 'hidden',
         verticalAlign: 'middle',
         background: loaded ? 'transparent' : 'var(--soft)',

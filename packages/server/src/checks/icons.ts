@@ -25,8 +25,8 @@ const MAX_PAGE_BYTES = 512 * 1024;
 const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
 export const ICON_EVERY_MS = 24 * 60 * 60 * 1000;
-/** Largest icon size a list needs; 16px and 24px on the page, so 64 covers a 2x screen. */
-const LARGEST = 64;
+/** Largest icon worth fetching: the Sites table shows 48px, so 192 covers a 2x screen and more. */
+const LARGEST = 192;
 
 export interface IconLink {
   href: URL;
@@ -50,7 +50,7 @@ function attr(tag: string, name: string): string | null {
 }
 
 /**
- * A link's sizes attribute as one number: its largest size that fits (64px or under), or its
+ * A link's sizes attribute as one number: its largest size that fits (192px or under), or its
  * smallest when none does. "any", or no sizes at all, is null.
  */
 function linkSize(sizes: string | null): number | null {

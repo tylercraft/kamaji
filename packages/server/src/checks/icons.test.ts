@@ -54,7 +54,7 @@ const page = (head: string): Answer => ({
 });
 
 describe('picking the icon from the page', () => {
-  it('takes the largest that’s 64px or smaller, as WordPress lists its site icon', () => {
+  it('takes the largest that’s 192px or smaller, as WordPress lists its site icon', () => {
     const links = iconLinks(
       `<link rel="icon" href="/wp-content/uploads/cropped-mark-32x32.png" sizes="32x32" />
        <link rel="icon" href="/wp-content/uploads/cropped-mark-192x192.png" sizes="192x192" />
@@ -62,8 +62,16 @@ describe('picking the icon from the page', () => {
       SITE,
     );
     expect(pickIcon(links)?.href).toBe(
-      'https://example.test/wp-content/uploads/cropped-mark-32x32.png',
+      'https://example.test/wp-content/uploads/cropped-mark-192x192.png',
     );
+    expect(
+      pickIcon(
+        iconLinks(
+          `<link rel=icon sizes="32x32" href=small.png><link rel=icon sizes="512x512" href=big.png>`,
+          SITE,
+        ),
+      )?.href,
+    ).toBe('https://example.test/small.png');
     expect(
       pickIcon(
         iconLinks(

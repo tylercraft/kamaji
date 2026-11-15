@@ -34,7 +34,7 @@ import {
   type SiteFilters,
 } from '../sitesView';
 import { useResource } from '../useResource';
-import { WithIcon } from '../components/SiteIcon';
+import { SiteIcon, WithIcon } from '../components/SiteIcon';
 
 const hostNames: Record<SiteSummary['hostKind'], string> = {
   craftish: 'craftish',
@@ -156,11 +156,9 @@ function Findings({ site }: { site: SiteSummary }) {
 function SiteLink({ site }: { site: SiteSummary }) {
   const link = useLink(`/sites/${site.id}`);
   return (
-    <WithIcon id={site.id}>
-      <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
-        {site.name}
-      </a>
-    </WithIcon>
+    <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
+      {site.name}
+    </a>
   );
 }
 
@@ -252,7 +250,9 @@ function SiteCard({ site, now }: { site: SiteSummary; now: number }) {
         '&:first-of-type': { borderTop: 0 },
       }}
     >
-      <SiteLink site={site} />
+      <WithIcon id={site.id}>
+        <SiteLink site={site} />
+      </WithIcon>
       <Muted>
         <a href={site.url} target="_blank" rel="noreferrer" css={{ color: 'inherit' }}>
           {new URL(site.url).host} ↗
@@ -467,22 +467,35 @@ export function SitesPage() {
                           {sites.map((site) => (
                             <tr key={site.id}>
                               <td>
-                                <SiteLink site={site} />
-                                <Muted>
-                                  <a
-                                    href={site.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    css={{ color: 'inherit' }}
-                                  >
-                                    {new URL(site.url).host} ↗
-                                  </a>
-                                </Muted>
-                                <Muted>
-                                  {hostNames[site.hostKind]} · {MODES[site.mode]}
-                                  {site.tailnetOnly ? ' · private' : ''}
-                                </Muted>
-                                <Findings site={site} />
+                                {/* The icon is its own column, as tall as the three lines. */}
+                                <div
+                                  css={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '48px minmax(0, 1fr)',
+                                    columnGap: 10,
+                                    alignItems: 'start',
+                                  }}
+                                >
+                                  <SiteIcon id={site.id} size={48} />
+                                  <div css={{ minWidth: 0 }}>
+                                    <SiteLink site={site} />
+                                    <Muted>
+                                      <a
+                                        href={site.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        css={{ color: 'inherit' }}
+                                      >
+                                        {new URL(site.url).host} ↗
+                                      </a>
+                                    </Muted>
+                                    <Muted>
+                                      {hostNames[site.hostKind]} · {MODES[site.mode]}
+                                      {site.tailnetOnly ? ' · private' : ''}
+                                    </Muted>
+                                    <Findings site={site} />
+                                  </div>
+                                </div>
                               </td>
                               <td>
                                 <Availability site={site} now={now} />
