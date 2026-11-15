@@ -26,6 +26,7 @@ import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { groupIssues, recentOutcomes, siteNote, withoutName, type Outcome } from '../overviewView';
 import { useLink } from '../router';
 import { useResource, type Resource } from '../useResource';
+import { WithIcon } from '../components/SiteIcon';
 
 const Metrics = styled.dl`
   margin: 0;
@@ -91,13 +92,13 @@ function ResourceName({
 }) {
   const link = useLink(type === 'site' ? `/sites/${id}` : type === 'server' ? '/servers' : '/');
   const name = type === 'kamaji' ? 'Kamaji itself' : (names.get(`${type}:${id}`) ?? id);
-  return type === 'kamaji' ? (
-    <strong>{name}</strong>
-  ) : (
+  if (type === 'kamaji') return <strong>{name}</strong>;
+  const a = (
     <a {...link} css={{ color: 'inherit', fontWeight: 600 }}>
       {name}
     </a>
   );
+  return type === 'site' ? <WithIcon id={id}>{a}</WithIcon> : a;
 }
 
 /** Open issues grouped by site or server, each with when it started and was last seen. */
@@ -159,11 +160,12 @@ function Attention({
 
 function OutcomeLink({ o }: { o: Outcome }) {
   const link = useLink(o.href);
-  return (
+  const a = (
     <a {...link} css={{ color: 'inherit', fontWeight: 550 }}>
       {o.title}
     </a>
   );
+  return o.siteId ? <WithIcon id={o.siteId}>{a}</WithIcon> : a;
 }
 
 /** Finished runs, whole-site backups and restore checks, newest first, each linked to its record. */

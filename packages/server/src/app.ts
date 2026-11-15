@@ -14,6 +14,7 @@ import {
   RemoveSiteRequest,
   type PasskeysResponse,
   type RecheckAllResponse,
+  type SiteIconsResponse,
   type BackupExpectation,
   type UpdatesResponse,
 } from '@kamaji/shared';
@@ -25,6 +26,7 @@ import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
 import { reportAll, reportSite } from './inventory/report.js';
+import { iconVersions, siteNames, storedIcon } from './checks/icons.js';
 import { checkSites } from './checks/sites.js';
 import { latestObservations } from './observations.js';
 import { approveBatch, batchViews, carryOn } from './updates/batches.js';
@@ -75,6 +77,8 @@ export interface AppOptions {
   startBackups?: () => void;
   /** The passkeys writes need (TY-170). Without it, every guarded write is refused. */
   passkeys?: PasskeyConfig;
+  /** Where sites' icons are kept (checks/icons.ts). Without it, no site has one. */
+  iconsDir?: string;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -156,6 +160,7 @@ export function createApp({
   fetchExport,
   startBackups = () => {},
   passkeys = NO_PASSKEYS,
+  iconsDir,
   now = Date.now,
   log,
 }: AppOptions): Hono<{ Variables: { approval: string } }> {
@@ -238,6 +243,29 @@ export function createApp({
     if (!body) return c.json({ error: 'bad_request' }, 400);
     const result = createSite(db, body, now());
     return 'error' in result ? c.json(result, 409) : c.json(result, 201);
+  });
+  // Sites' icons, fetched by Kamaji (checks/icons.ts): which sites have one, then each one's
+  // bytes. Served as an image only, with nothing it could load or run, so an SVG stays a picture.
+  app.get('/api/site-icons', (c) => {
+    const body: SiteIconsResponse = {
+      icons: iconsDir ? iconVersions(db) : {},
+      names: siteNames(db),
+    };
+    return c.json(body);
+  });
+  app.get('/api/sites/:id/icon', (c) => {
+    const icon = iconsDir ? storedIcon(db, iconsDir, c.req.param('id')) : null;
+    if (!icon) return c.json({ error: 'not_found' }, 404);
+    const etag = `"${icon.sha256}"`;
+    const headers = {
+      'Content-Type': icon.type,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+      'Cache-Control': 'private, max-age=86400',
+      ETag: etag,
+    };
+    if (c.req.header('If-None-Match') === etag) return c.body(null, 304, headers);
+    return c.body(new Uint8Array(icon.bytes), 200, headers);
   });
   app.get('/api/sites/:id', (c) => {
     const detail = siteDetail(db, c.req.param('id'), { workerOn, canConnect: Boolean(care?.keys) });

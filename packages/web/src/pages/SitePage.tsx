@@ -46,6 +46,7 @@ import {
 } from './SiteSetup';
 import { SiteUpdatesPanel } from './SiteUpdatesPanel';
 import { RememberedDetails } from '../components/remembered';
+import { SiteIcon } from '../components/SiteIcon';
 
 function Recheck({ id, reload }: { id: string; reload: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -314,6 +315,7 @@ export function SitePage({ id }: { id: string }) {
             </nav>
             <PageHeading
               title={site.name}
+              icon={<SiteIcon id={site.id} size={24} />}
               purpose={
                 site.setup === 'done' ? (
                   <a href={site.url} target="_blank" rel="noreferrer">

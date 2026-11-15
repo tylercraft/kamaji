@@ -520,4 +520,22 @@ export const migrations: Migration[] = [
       ALTER TABLE batches ADD COLUMN approval TEXT;
     `,
   },
+  {
+    version: 19,
+    name: 'site icons',
+    // Each site's favicon, fetched by Kamaji once a day (checks/icons.ts) so the page never loads
+    // anything from a client site. The bytes are a file in the data dir named by their SHA-256;
+    // this row says which, and its type. checked_at moves on every try; a failed try keeps the
+    // last icon and says why in problem.
+    sql: `
+      CREATE TABLE site_icons (
+        site_id TEXT PRIMARY KEY,
+        sha256 TEXT,
+        content_type TEXT,
+        fetched_at INTEGER,
+        checked_at INTEGER NOT NULL,
+        problem TEXT
+      );
+    `,
+  },
 ];
