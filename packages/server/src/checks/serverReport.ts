@@ -330,10 +330,12 @@ export async function checkServers(
     keyPath: string;
     knownHostsPath: string;
     read?: (target: SshTarget, signal: AbortSignal) => Promise<ReportReading>;
+    /** Just these servers (Check now); every Linux server when left out. */
+    only?: string[];
   },
 ): Promise<number> {
   const read = options.read ?? readReport;
-  const servers = linuxServers(db);
+  const servers = linuxServers(db).filter((s) => !options.only || options.only.includes(s.id));
   for (const server of servers) {
     const reading = await read(
       { address: server.address, keyPath: options.keyPath, knownHostsPath: options.knownHostsPath },

@@ -172,6 +172,11 @@ const app = createApp({
   fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
   startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
   passkeys: passkeyConfig(process.env),
+  serverCheck: {
+    keyPath: config.sshKeyPath,
+    knownHostsPath: config.sshKnownHostsPath,
+    crashFiles: { path: config.crashLogPath },
+  },
   iconsDir: config.iconsDir,
   log,
   statusInput: () => ({

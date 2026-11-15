@@ -86,6 +86,14 @@ const backUpNow = (i: Of): IssueAction => ({
   body: { kind: 'backup' },
   asked: 'Backup started: this clears when it passes',
 });
+/** The cycle's read of this server, now: craftish's report, or molcajete's own readers. */
+const checkNow = (i: Of): IssueAction => ({
+  type: 'recheck',
+  label: 'Check now',
+  path: `/api/servers/${encodeURIComponent(i.resourceId)}/check`,
+  body: {},
+  asked: 'Checked now',
+});
 const look =
   (text: string, href: string | null = null) =>
   (): IssueAction => ({ type: 'look', text, href });
@@ -108,23 +116,36 @@ const ACTIONS: Record<IssueFamily, (issue: Of) => IssueAction> = {
     body: { kind: 'restore' },
     asked: 'Restore check started: this clears when it passes',
   }),
-  unreadable: look('See what Kamaji last read, and why it can’t now.', SERVERS),
-  'security-updates': look('Install the security updates on the server.', SERVERS),
-  reboot: look('Restart the server when nothing is running on it.', SERVERS),
-  'stale-updates': look('Install the waiting updates on the server.', SERVERS),
-  services: look('Restart the stopped services, or find out why they stopped.', SERVERS),
-  disk: look('Free up space on that drive.', SERVERS),
+  // Server kinds a fresh read clears once the thing is fixed get Check now.
+  unreadable: (i) =>
+    // macOS updates are read every six hours, not on every read (molcajete/check.ts), so Check
+    // now wouldn't clear this one.
+    i.kind === 'unreadable:software updates'
+      ? look(
+          'See what softwareupdate said on Servers. Kamaji tries again every six hours.',
+          SERVERS,
+        )()
+      : checkNow(i),
+  'security-updates': checkNow,
+  reboot: checkNow,
+  'stale-updates': checkNow,
+  services: checkNow,
+  disk: checkNow,
+  // Known months ahead and fixed by moving release: a line and Dismiss, not a button that can't
+  // clear it.
   'os-eol': look('Plan the move to a supported release.', SERVERS),
-  'job-missing': look('Load the job again, or remove it if it’s retired.', SERVERS),
-  'job-stopped': look('See the job’s log, then start it again.', SERVERS),
-  'job-failed': look('See the job’s log for why its last run failed.', SERVERS),
-  unmounted: look('Check the drive is plugged in and mounted on molcajete.', SERVERS),
-  smart: look('Back up the drive now and plan to replace it.', SERVERS),
-  'read-only': look('Check the drive on molcajete: it may need First Aid.', SERVERS),
-  docker: look('Open Docker Desktop on molcajete.', SERVERS),
-  containers: look('Check the containers in Docker Desktop on molcajete.', SERVERS),
-  tailscale: look('Check Tailscale on molcajete.', SERVERS),
-  'tailscale-health': look('See what Tailscale reports on molcajete.', SERVERS),
+  'job-missing': checkNow,
+  'job-stopped': checkNow,
+  'job-failed': checkNow,
+  unmounted: checkNow,
+  smart: checkNow,
+  'read-only': checkNow,
+  docker: checkNow,
+  containers: checkNow,
+  tailscale: checkNow,
+  'tailscale-health': checkNow,
+  // These clear with time, not with a read: a day after the restart, a quarter of an hour after
+  // repo-pull's last failure, and macOS updates on their six-hour read.
   restarted: look('Nothing to do if it was you; otherwise find out why molcajete restarted.'),
   'repo-pull': look('Check the repo-pull log on molcajete.', SERVERS),
   'macos-updates': look('Install them in System Settings on molcajete.', SERVERS),
