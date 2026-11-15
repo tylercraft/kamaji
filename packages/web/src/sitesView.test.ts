@@ -6,6 +6,7 @@ import {
   present,
   recheckable,
   recheckSummary,
+  refetchSummary,
   type SiteFilters,
 } from './sitesView';
 
@@ -90,6 +91,22 @@ describe('Recheck all', () => {
     ).toEqual({
       ok: false,
       message: 'Rechecked 2 sites. 1 site didn’t report: B (Couldn’t reach the site)',
+    });
+  });
+});
+
+describe('Refetch icons’ toast', () => {
+  it('says how many gave an icon, and names each that didn’t with why', () => {
+    const ok = (name: string) => ({ id: name, name, ok: true, problem: null });
+    expect(refetchSummary([ok('A'), ok('B')])).toEqual({
+      ok: true,
+      message: 'Fetched icons for 2 sites',
+    });
+    expect(
+      refetchSummary([ok('A'), { id: 'b', name: 'Ashbury', ok: false, problem: 'HTTP 404' }]),
+    ).toEqual({
+      ok: false,
+      message: 'Fetched icons for 1 of 2 sites. None from: Ashbury (HTTP 404)',
     });
   });
 });

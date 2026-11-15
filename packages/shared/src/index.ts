@@ -678,6 +678,14 @@ export const SiteIconsResponse = z.object({
 });
 export type SiteIconsResponse = z.infer<typeof SiteIconsResponse>;
 
+/** Refetch icons: each site that was tried, and why there's no new icon when there isn't. */
+export const IconRefetchResponse = z.object({
+  sites: z.array(
+    z.object({ id: z.string(), name: z.string(), ok: z.boolean(), problem: z.string().nullable() }),
+  ),
+});
+export type IconRefetchResponse = z.infer<typeof IconRefetchResponse>;
+
 /** Recheck all: each connected site that was asked, and whether it reported. */
 export const RecheckAllResponse = z.object({
   sites: z.array(

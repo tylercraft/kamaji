@@ -13,7 +13,8 @@ let list: SiteIconsResponse = { icons: {}, names: {} };
 const listeners = new Set<() => void>();
 let timer: number | undefined;
 
-async function load() {
+/** Asks for the list again now: after Refetch icons, so new icons show at once. */
+export async function load() {
   try {
     list = await getJson('/api/site-icons', SiteIconsResponse);
     listeners.forEach((l) => l());

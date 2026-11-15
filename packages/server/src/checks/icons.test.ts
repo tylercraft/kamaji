@@ -1,10 +1,11 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SiteIconsResponse } from '@kamaji/shared';
+import { IconRefetchResponse, SiteIconsResponse } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import type { Db } from '../db.js';
+import { testAuthenticator } from '../passkeys/testing.js';
 import { testDb } from '../testing.js';
 import {
   ICON_EVERY_MS,
@@ -198,6 +199,8 @@ function site(db: Db, id: string, url = `https://${id}/`) {
   ).run(id, id, url, T);
 }
 
+const fetched = (outcomes: { ok: boolean }[]) => outcomes.filter((o) => o.ok).length;
+
 describe('refreshing icons', () => {
   it('keeps the last icon when a fetch fails, and says why', async () => {
     const db = testDb();
@@ -207,16 +210,20 @@ describe('refreshing icons', () => {
       [SITE]: page('<link rel="icon" href="/icon.png" sizes="32x32">'),
       'https://example.test/icon.png': { type: 'image/png', body: PNG },
     });
-    expect(await refreshIcons(db, { dir, now: () => T, fetch: good.fetch })).toBe(1);
+    expect(fetched(await refreshIcons(db, { dir, now: () => T, fetch: good.fetch }))).toBe(1);
     const first = storedIcon(db, dir, 'example.test');
     expect(first).toMatchObject({ type: 'image/png' });
     // Not due again until a day has passed.
-    expect(await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch })).toBe(0);
+    expect(await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch })).toEqual([]);
+    // Unless it's every site, as Refetch icons asks.
+    expect(
+      await refreshIcons(db, { dir, now: () => T + 1000, fetch: good.fetch, all: true }),
+    ).toEqual([{ id: 'example.test', name: 'example.test', ok: true, problem: null }]);
     // The site is down: the page and /favicon.ico both refuse.
     const down = (async () => {
       throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
     }) as typeof fetch;
-    await refreshIcons(db, { dir, now: () => T + ICON_EVERY_MS, fetch: down });
+    await refreshIcons(db, { dir, now: () => T + 1000 + ICON_EVERY_MS, fetch: down });
     expect(storedIcon(db, dir, 'example.test')).toEqual(first);
     expect(
       db.prepare("SELECT problem FROM site_icons WHERE site_id = 'example.test'").get()?.problem,
@@ -237,7 +244,11 @@ describe('refreshing icons', () => {
         'https://b.test/favicon.ico': { type: 'image/png', body: icon },
         'https://c.test/favicon.ico': { type: 'image/x-icon', body: ICO },
       }).fetch;
-    expect(await refreshIcons(db, { dir, now: () => T, fetch: answers(PNG) })).toBe(2);
+    expect(await refreshIcons(db, { dir, now: () => T, fetch: answers(PNG) })).toEqual([
+      { id: 'a.test', name: 'a.test', ok: false, problem: 'HTTP 404' },
+      { id: 'b.test', name: 'b.test', ok: true, problem: null },
+      { id: 'c.test', name: 'c.test', ok: true, problem: null },
+    ]);
     const before = storedIcon(db, dir, 'b.test')!;
     await refreshIcons(db, { dir, now: () => T + ICON_EVERY_MS, fetch: answers(PNG2) });
     const after = storedIcon(db, dir, 'b.test')!;
@@ -248,20 +259,20 @@ describe('refreshing icons', () => {
   });
 });
 
-describe('the cycle’s part', () => {
-  it('starts a refresh without waiting for it, one at a time, and logs only that one failed', async () => {
+describe('one refresh at a time', () => {
+  it('starts the cycle’s without waiting for it, once, and logs only that one failed', async () => {
     let calls = 0;
     let finish: () => void = () => {};
     const logged: string[] = [];
-    const start = iconRefresher(
+    const icons = iconRefresher(
       () => {
         calls += 1;
-        return new Promise<void>((resolve) => (finish = resolve));
+        return new Promise((resolve) => (finish = () => resolve([])));
       },
       (m) => logged.push(m),
     );
-    expect(start()).toBeUndefined();
-    start();
+    expect(icons.start()).toBeUndefined();
+    icons.start();
     expect(calls).toBe(1);
     finish();
     await new Promise((r) => setTimeout(r, 0));
@@ -269,11 +280,33 @@ describe('the cycle’s part', () => {
       () => Promise.reject(new Error('/secret/path')),
       (m) => logged.push(m),
     );
-    failing();
+    failing.start();
     await new Promise((r) => setTimeout(r, 0));
-    start();
+    icons.start();
     expect(calls).toBe(2);
     expect(logged).toEqual(['icons: the refresh failed']);
+  });
+
+  it('runs Refetch icons after the refresh already going, for every site', async () => {
+    const runs: string[] = [];
+    let finish: () => void = () => {};
+    const icons = iconRefresher(
+      (all) => {
+        runs.push(all ? 'all' : 'due');
+        if (all) return Promise.resolve([{ id: 'a', name: 'A', ok: true, problem: null }]);
+        return new Promise((resolve) => (finish = () => resolve([])));
+      },
+      () => {},
+    );
+    icons.start();
+    const refetched = icons.all();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runs).toEqual(['due']);
+    // The cycle can't start another while Refetch icons waits.
+    icons.start();
+    finish();
+    expect(await refetched).toEqual([{ id: 'a', name: 'A', ok: true, problem: null }]);
+    expect(runs).toEqual(['due', 'all']);
   });
 });
 
@@ -293,6 +326,8 @@ describe('the icon routes', () => {
       login: 'tylercraft@github',
       webDist: mkdtempSync(join(tmpdir(), 'kamaji-web-')),
       iconsDir: dir,
+      refetchIcons: () => refreshIcons(db, { dir, now: () => T + 1000, fetch, all: true }),
+      passkeys: testAuthenticator().config,
       now: () => T,
       statusInput: () => ({
         version: '0.1.0',
@@ -306,7 +341,19 @@ describe('the icon routes', () => {
     });
     const get = (path: string, headers: Record<string, string> = {}) =>
       app.request(path, { headers: { 'Tailscale-User-Login': 'tylercraft@github', ...headers } });
-    return { get };
+    // No Kamaji-Passkey header: Refetch icons goes without one, as the page sends it.
+    const refetch = (origin = 'https://kamaji.test') =>
+      app.request('/api/site-icons/refetch', {
+        method: 'POST',
+        headers: {
+          'Tailscale-User-Login': 'tylercraft@github',
+          Host: 'kamaji.test',
+          Origin: origin,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+    return { get, refetch };
   }
 
   it('serves the icon as an image that can’t load or run anything, cached for a day', async () => {
@@ -332,5 +379,16 @@ describe('the icon routes', () => {
     const list = SiteIconsResponse.parse(await (await get('/api/site-icons')).json());
     expect(Object.keys(list.icons)).toEqual(['example.test']);
     expect(Object.keys(list.names).sort()).toEqual(['bare.test', 'example.test']);
+  });
+
+  it('refetches every site’s icon without a passkey, saying which have none', async () => {
+    const { refetch } = await setup();
+    const res = await refetch();
+    expect(res.status).toBe(200);
+    expect(IconRefetchResponse.parse(await res.json()).sites).toEqual([
+      { id: 'bare.test', name: 'bare.test', ok: false, problem: 'HTTP 404' },
+      { id: 'example.test', name: 'example.test', ok: true, problem: null },
+    ]);
+    expect((await refetch('https://evil.example')).status).toBe(403);
   });
 });

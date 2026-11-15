@@ -1,6 +1,6 @@
 // The Sites page's filter: a site matches when its name, domain or client contains what's typed,
 // ignoring case and the spaces around it. Nothing typed matches every site.
-import type { RecheckAllResponse, Site } from '@kamaji/shared';
+import type { IconRefetchResponse, RecheckAllResponse, Site } from '@kamaji/shared';
 
 export function matchesSite(
   site: Pick<Site, 'name' | 'url' | 'clientSlug'>,
@@ -59,4 +59,19 @@ export function recheckSummary(results: RecheckAllResponse['sites']): {
   if (failed.length === 0) return { ok: true, message: done };
   const named = failed.map((r) => `${r.name} (${r.problem ?? 'no report'})`).join(', ');
   return { ok: false, message: `${done}. ${plural(failed.length)} didn’t report: ${named}` };
+}
+
+/** Refetch icons' toast: how many sites gave one, and each that didn't, with why. */
+export function refetchSummary(results: IconRefetchResponse['sites']): {
+  ok: boolean;
+  message: string;
+} {
+  const missing = results.filter((r) => !r.ok);
+  if (missing.length === 0)
+    return { ok: true, message: `Fetched icons for ${plural(results.length)}` };
+  const named = missing.map((r) => `${r.name} (${r.problem ?? 'no icon'})`).join(', ');
+  return {
+    ok: false,
+    message: `Fetched icons for ${results.length - missing.length} of ${plural(results.length)}. None from: ${named}`,
+  };
 }
