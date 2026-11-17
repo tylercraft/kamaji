@@ -30,6 +30,7 @@ import { notifyNow, sendDigest, type NotifyOptions } from './notify.js';
 import { backupConfig, craftishBackup } from './updater/backup.js';
 import { craftishFetch } from './backups/download.js';
 import { checkBackupsOverdue } from './sitebackups/alerts.js';
+import { requestsWaiting } from './sitebackups/run.js';
 
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 
@@ -71,6 +72,7 @@ const localMac = () =>
   db.prepare("SELECT 1 FROM servers WHERE kind = 'local-mac' AND removed_at IS NULL").get() !==
   undefined;
 const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
+const startBackups = backupsLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 // Domains' renewal dates, once a day each: never waited on (checks/domains.ts).
@@ -105,6 +107,8 @@ const runChecks = async (signal: AbortSignal) => {
     await steps.step('backups overdue', () => checkBackupsOverdue(db, Date.now()));
     // A batch with work left and no updater (the mini restarted mid-run): start it to reconcile.
     if (pendingWork(db)) startUpdater();
+    // A backup asked for and not yet taken (the updater's, before an update): start the process.
+    if (requestsWaiting(db)) startBackups();
     const servers = await steps.step('servers', () =>
       checkServers(db, {
         now: Date.now,
@@ -181,7 +185,7 @@ const app = createApp({
   // Settings read each time, so craftish added as a server later needs no restart.
   backup: (site) => craftishBackup(backupConfig(db, process.env))(site),
   fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
-  startBackups: backupsLauncher(process.env.KAMAJI_UPDATER, log),
+  startBackups,
   passkeys: passkeyConfig(process.env),
   serverCheck: {
     keyPath: config.sshKeyPath,

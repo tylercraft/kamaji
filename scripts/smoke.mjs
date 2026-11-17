@@ -357,6 +357,30 @@ bitem.run(
   now - 5 * H,
 );
 batch.run('held', now - 10 * MIN, 'smoke@localhost', 0, 'running', null);
+// Before updates: an export in one run and a whole-site snapshot in another, each named as such.
+db.prepare(
+  `INSERT INTO backup_evidence (site_id, batch_id, recorded_at, ok, exported_at, bytes,
+  sha256, words, kind) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+).run(
+  OK,
+  'earlier',
+  now - 3 * DAY,
+  '20261110T000000Z',
+  2.3e6,
+  'e'.repeat(64),
+  'Database export before update: Kamaji exported the database on craftish',
+  'export',
+);
+db.prepare(
+  `INSERT INTO backup_evidence (site_id, batch_id, recorded_at, ok, bytes, words, kind)
+  VALUES (?, ?, ?, 1, ?, ?, 'snapshot')`,
+).run(
+  OK,
+  'recent',
+  now - 4 * H,
+  185e6,
+  'Whole-site backup before update: snapshot cccccccc, 176.4 MB, read back whole',
+);
 bsite.run(
   'held',
   BAD,
@@ -1146,6 +1170,32 @@ for (const view of VIEWS) {
   if (problems.length) failures.push(`ready to update: ${problems.join('; ')}`);
   else
     console.log('ok   ready to update: on Overview, failed backup first; Settings shows the time');
+}
+
+// Before-update backups: the Backups panel names which one ran, a whole-site snapshot or the
+// database export, in the latest line and the history.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/${OK}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  await evaluate(
+    `(() => { for (const d of document.querySelectorAll('#backups details')) d.setAttribute('open', ''); })()`,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  const text = await evaluate(`document.getElementById('backups')?.textContent ?? ''`);
+  if (!text.includes('Before-update backups')) problems.push('the part isn’t named for both');
+  if (!text.includes('Whole-site backup before update'))
+    problems.push('no “Whole-site backup before update”');
+  if (!text.includes('Database export before update'))
+    problems.push('no “Database export before update”');
+  if (SHOTS) {
+    await evaluate(`document.getElementById('before-update')?.scrollIntoView({ block: 'start' })`);
+    await new Promise((r) => setTimeout(r, 300));
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'before-update.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`before-update backups: ${problems.join('; ')}`);
+  else console.log('ok   before-update backups: the panel names which one ran');
 }
 
 // Pages to check: under the home page's line in Check details, each with its text, both shapes;

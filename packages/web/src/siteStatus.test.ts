@@ -179,6 +179,7 @@ const entry = (over: Partial<BackupEntry>): BackupEntry => ({
   bytes: 1000,
   sha256: 'abc',
   words: 'Exported',
+  kind: 'export',
   ...over,
 });
 

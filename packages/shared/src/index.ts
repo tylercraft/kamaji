@@ -1095,6 +1095,11 @@ export const BackupEntry = z.object({
   bytes: z.number().int().nullable(),
   sha256: z.string().nullable(),
   words: z.string(),
+  /**
+   * What Kamaji made: a whole-site snapshot (before an update, when the last was over a day old)
+   * or a database export. Null for a run's recorded words where Kamaji made neither.
+   */
+  kind: z.enum(['export', 'snapshot']).nullable(),
 });
 export type BackupEntry = z.infer<typeof BackupEntry>;
 

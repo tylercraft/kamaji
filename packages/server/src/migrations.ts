@@ -589,4 +589,18 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 23,
+    name: 'whole-site backups before updates',
+    // Before an update, a site with whole-site backups on whose latest good snapshot is over a day
+    // old gets a fresh one instead of the database export (backups/beforeUpdate.ts). The updater
+    // asks the backups process for it through site_backup_requests, naming its batch, and the
+    // snapshot keeps that batch. backup_evidence says which one ran; every row so far is an export.
+    sql: `
+      ALTER TABLE backup_evidence ADD COLUMN kind TEXT NOT NULL DEFAULT 'export'
+        CHECK (kind IN ('export', 'snapshot'));
+      ALTER TABLE site_backup_requests ADD COLUMN batch_id TEXT;
+      ALTER TABLE site_snapshots ADD COLUMN batch_id TEXT;
+    `,
+  },
 ];
