@@ -952,7 +952,7 @@ export const SeenPage = z.enum(['overview', 'sites', 'updates']);
 export type SeenPage = z.infer<typeof SeenPage>;
 export const SeenRequest = z.object({ page: SeenPage });
 
-/** A run that finished, in the words Discord got: for the toast. */
+/** A run that finished, for the toast: Discord's lines, with what changed by name. */
 export const FinishedRunView = z.object({
   id: z.string(),
   approvedBy: z.string(),

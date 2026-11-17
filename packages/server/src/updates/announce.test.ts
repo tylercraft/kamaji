@@ -84,6 +84,33 @@ function outbox(ok = true) {
 }
 
 describe('a finished run, in words', () => {
+  it('for Discord, counts instead of names', () => {
+    const db = testDb();
+    site(db, 'a.test', 'Aleya Hoerlein');
+    site(db, 'p.test', 'Photogravure');
+    run(db, 'b1', [
+      {
+        id: 'a.test',
+        state: 'done',
+        items: [{ name: 'Admin Menu Editor', from: '1.15.2', to: '1.15.3' }],
+      },
+      {
+        id: 'p.test',
+        state: 'held',
+        held: 'Held: the checks failed after an update.',
+        items: [
+          { name: 'Yoast SEO', from: '25.1', to: '25.2' },
+          { name: 'Akismet', from: '5.3', to: '5.3.1' },
+          { name: 'WooCommerce', from: '9.9.1', to: '10.0.0', state: 'held', outcome: null },
+        ],
+      },
+    ]);
+    expect(runLines(db, 'b1')).toEqual([
+      '✅ Updated Aleya Hoerlein: 1 update, checks passed (database export first)',
+      '⚠️ **Needs you:** Photogravure is held: the checks failed after an update. Updated before the hold: 2 updates.',
+    ]);
+  });
+
   it('a site that went through: what changed, checks passed, which backup came first', () => {
     const db = testDb();
     site(db, 'aleyahoerlein.com', 'Aleya Hoerlein');
@@ -94,7 +121,7 @@ describe('a finished run, in words', () => {
         items: [{ name: 'Admin Menu Editor', from: '1.15.2', to: '1.15.3' }],
       },
     ]);
-    expect(runLines(db, 'b1')).toEqual([
+    expect(runLines(db, 'b1', null, true)).toEqual([
       '✅ Updated Aleya Hoerlein: Admin Menu Editor 1.15.2 → 1.15.3, checks passed (database export first)',
     ]);
   });
@@ -124,7 +151,7 @@ describe('a finished run, in words', () => {
         ],
       },
     ]);
-    expect(runLines(db, 'b1')).toEqual([
+    expect(runLines(db, 'b1', null, true)).toEqual([
       '✅ Updated Aleya Hoerlein: Admin Menu Editor 1.15.2 → 1.15.3, Akismet 5.3 → 5.3.1, checks passed (whole-site backup first)',
       '⚠️ **Needs you:** Photogravure is held: the home page didn’t contain “Photogravure” after WooCommerce 10.0.0. Updated before the hold: Yoast SEO 25.1 → 25.2.',
     ]);
@@ -145,7 +172,7 @@ describe('a finished run, in words', () => {
     }
     expect(
       ['host.test', 'client.test', 'tyler.test', 'carried.test'].map(
-        (id) => /\((.+)\)$/.exec(runLines(db, `run-${id}`)[0]!)?.[1],
+        (id) => /\((.+)\)$/.exec(runLines(db, `run-${id}`, null, true)[0]!)?.[1],
       ),
     ).toEqual([
       'the host’s backups',
@@ -172,12 +199,12 @@ describe('telling Discord', () => {
     expect(await announceRuns(db, T + 12 * MIN, discord, 'https://kamaji.test/')).toBe(0);
     expect(sent).toEqual([
       [
-        '✅ Updated Aleya Hoerlein: Akismet 5.3 → 5.3.1, checks passed (database export first)',
-        '✅ Updated Photogravure: Akismet 5.3 → 5.3.1, checks passed (database export first)',
+        '✅ Updated Aleya Hoerlein: 1 update, checks passed (database export first)',
+        '✅ Updated Photogravure: 1 update, checks passed (database export first)',
         '<https://kamaji.test/updates#run-b1-a-test>',
       ].join('\n'),
       [
-        '✅ Updated Photogravure: Akismet 5.3 → 5.3.1, checks passed (database export first)',
+        '✅ Updated Photogravure: 1 update, checks passed (database export first)',
         '<https://kamaji.test/updates#run-b2-p-test>',
       ].join('\n'),
     ]);
@@ -225,7 +252,7 @@ describe('telling Discord', () => {
     );
     await announceRuns(db, T + 22 * MIN, discord, 'https://k');
     expect(sent[1]?.split('\n')[0]).toBe(
-      '✅ Updated Photogravure: Akismet 5.3 → 5.3.1, checks passed (carried on without a fresh backup)',
+      '✅ Updated Photogravure: 1 update, checks passed (carried on without a fresh backup)',
     );
     expect(sent[1]?.split('\n')).toHaveLength(2);
   });
@@ -238,6 +265,9 @@ describe('telling Discord', () => {
     db.prepare("UPDATE batches SET announced_at = finished_at WHERE id = 'old'").run();
     expect(unannounced(db)).toEqual([]);
     // The toast's list still has it, while it's recent.
-    expect(recentRuns(db, T + MIN, 6 * 60 * MIN).map((r) => r.id)).toEqual(['old']);
+    // …by name.
+    expect(recentRuns(db, T + MIN, 6 * 60 * MIN)).toMatchObject([
+      { id: 'old', lines: ['✅ Updated A: X 1 → 2, checks passed (database export first)'] },
+    ]);
   });
 });

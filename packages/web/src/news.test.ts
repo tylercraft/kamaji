@@ -25,7 +25,7 @@ describe('run toasts', () => {
     ).toEqual(['mine']);
   });
 
-  it('Discord’s words, without its bold', () => {
+  it('the run’s lines by name, without Discord’s bold', () => {
     expect(runToast(run('x'))).toEqual([
       '✅ Updated Aleya Hoerlein: Admin Menu Editor 1.15.2 → 1.15.3, checks passed (database export first)',
       '⚠️ Needs you: Photogravure is held: no backup evidence.',

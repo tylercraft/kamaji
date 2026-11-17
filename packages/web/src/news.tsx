@@ -13,7 +13,7 @@ const NewsContext = createContext<{ news: NewsResponse | null; reload: () => voi
   reload: () => {},
 });
 
-/** The toast's words: Discord's, without its bold. */
+/** The toast's words: Discord's lines, with what changed by name, without the bold. */
 export const runToast = (run: FinishedRunView) => run.lines.map((l) => l.replace(/\*\*/g, ''));
 
 /** New runs this viewer approved, not seen at the first load: each toasted once. */

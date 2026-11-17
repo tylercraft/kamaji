@@ -1,12 +1,12 @@
-// A finished run, in words (Tyler, 2026-11-18): one line per site, the same in Discord and in the
-// toast on whatever page Tyler has open. A site that went through says what changed, that the
-// checks passed, and which backup came first; a held one leads with ⚠️ and the reason, marked as
-// needing Tyler. The app's cycle sends each finished run once (announced_at); a run carried on
-// after a hold finishes again, and that time only the sites it finished are told.
+// A finished run, in words (Tyler, 2026-11-18): one line per site, in Discord and in the toast on
+// whatever page Tyler has open. A site that went through says what changed, that the checks
+// passed, and which backup came first; a held one leads with ⚠️ and the reason, marked as needing
+// Tyler. The app's cycle sends each finished run once (announced_at); a run carried on after a
+// hold finishes again, and that time only the sites it finished are told.
 //
-// These lines carry component names and versions to Discord, which the rest of Kamaji's messages
-// don't: Tyler asked for them here. Never error text from a site beyond the held reason Kamaji
-// itself wrote.
+// Discord is a third party, so its lines give counts ("1 update"), never component names: those
+// stay in the toast and on Updates (`names`). The held reason is the one Kamaji wrote, as the
+// held issue's alert already sends it.
 import type { Db } from '../db.js';
 import type { Discord } from '../discord.js';
 
@@ -27,8 +27,19 @@ const items = (rows: Row[]) =>
     .map((i) => `${String(i.name)} ${String(i.from_version)} → ${String(i.to_version)}`)
     .join(', ');
 
-/** One line per site the run finished after `since` (every site when null), in run order. */
-export function runLines(db: Db, batchId: string, since: number | null = null): string[] {
+const count = (rows: Row[]) => `${rows.length} ${rows.length === 1 ? 'update' : 'updates'}`;
+
+/**
+ * One line per site the run finished after `since` (every site when null), in run order. With
+ * `names`, what changed by name and version (the toast); without, a count (Discord).
+ */
+export function runLines(
+  db: Db,
+  batchId: string,
+  since: number | null = null,
+  names = false,
+): string[] {
+  const what = names ? items : count;
   const sites = db
     .prepare(
       `SELECT bs.*, s.name FROM batch_sites bs JOIN sites s ON s.id = bs.site_id
@@ -45,12 +56,12 @@ export function runLines(db: Db, batchId: string, since: number | null = null): 
     const updated = done.all(batchId, String(s.site_id));
     if (s.state === 'held') {
       const why = String(s.held_reason ?? 'held').replace(/^Held: /, '');
-      const first = updated.length > 0 ? ` Updated before the hold: ${items(updated)}.` : '';
+      const first = updated.length > 0 ? ` Updated before the hold: ${what(updated)}.` : '';
       return `⚠️ **Needs you:** ${name} is held: ${why}${/[.!?]$/.test(why) ? '' : '.'}${first}`;
     }
     const backup = backupFirst(String(s.backup_kind), s.backup === null ? null : String(s.backup));
     return updated.length > 0
-      ? `✅ Updated ${name}: ${items(updated)}, checks passed (${backup})`
+      ? `✅ Updated ${name}: ${what(updated)}, checks passed (${backup})`
       : `✅ ${name}: nothing left to update (${backup})`;
   });
 }
@@ -90,7 +101,7 @@ export function unannounced(db: Db): FinishedRun[] {
     .filter((r) => r.lines.length > 0);
 }
 
-/** Runs that finished in the last `withinMs`, for the toast: every site, as Discord had them. */
+/** Runs that finished in the last `withinMs`, for the toast: every site, by name. */
 export function recentRuns(db: Db, now: number, withinMs: number): FinishedRun[] {
   return db
     .prepare(
@@ -102,7 +113,7 @@ export function recentRuns(db: Db, now: number, withinMs: number): FinishedRun[]
       id: String(b.id),
       approvedBy: String(b.approved_by),
       finishedAt: Number(b.finished_at),
-      lines: runLines(db, String(b.id)),
+      lines: runLines(db, String(b.id), null, true),
       anchor: anchorFor(db, String(b.id)),
     }));
 }
