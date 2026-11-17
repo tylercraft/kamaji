@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from '../db.js';
 import { readState } from '../state.js';
 import { testDb } from '../testing.js';
-import { fakeRestic } from './fakeRestic.js';
+import { fakeRestic, kept } from './fakeRestic.js';
 import type { RestoreResult } from './restore.js';
 import {
   backUpSite,
@@ -453,6 +453,66 @@ describe('a restore check after each scheduled backup', () => {
         summary:
           'one.test’s restore check failed at “home page”: the test copy’s home page gave HTTP 500',
       },
+    ]);
+  });
+});
+
+describe('retention keeps the rollback point', () => {
+  // Wednesday 18 November 2026, before an update; then Thursday, the same ISO week.
+  const WEDNESDAY = Date.UTC(2026, 10, 18, 6, 0);
+  const THURSDAY = WEDNESDAY + DAY;
+
+  function moving(db: Db) {
+    const clock = { now: WEDNESDAY };
+    const fake = fakeRestic(
+      (s) => pullOf(s),
+      () => clock.now,
+    );
+    const d: BackupsDeps = { ...deps(db).d, restic: fake.restic, now: () => clock.now };
+    return { d, clock, fake };
+  }
+
+  it('a before-update snapshot and a manual one the next day: both kept', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    const { d, clock, fake } = moving(db);
+    expect(await backUpSite(d, 'one.test', 'batch-1')).toBe(true);
+    clock.now = THURSDAY;
+    expect(await backUpSite(d, 'one.test')).toBe(true);
+    expect(fake.snapshots.size).toBe(2);
+    expect(
+      rows(db, 'SELECT batch_id, forgotten_at FROM site_snapshots WHERE ok = 1 ORDER BY id'),
+    ).toEqual([
+      { batch_id: 'batch-1', forgotten_at: null },
+      { batch_id: null, forgotten_at: null },
+    ]);
+  });
+
+  it('weekly alone would have let the before-update one go', () => {
+    const both = [
+      { id: 'before-update', at: WEDNESDAY },
+      { id: 'manual', at: THURSDAY },
+    ];
+    expect(kept(both, ['--keep-weekly', '4', '--keep-monthly', '6'])).toEqual(new Set(['manual']));
+    expect(kept(both)).toEqual(new Set(['before-update', 'manual']));
+  });
+
+  it('after 14 days, the week’s newest is the one kept', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    const { d, clock, fake } = moving(db);
+    await backUpSite(d, 'one.test', 'batch-1');
+    clock.now = THURSDAY;
+    await backUpSite(d, 'one.test');
+    clock.now = THURSDAY + 15 * DAY;
+    await backUpSite(d, 'one.test');
+    expect(fake.snapshots.size).toBe(2);
+    expect(
+      rows(db, 'SELECT batch_id, forgotten_at FROM site_snapshots WHERE ok = 1 ORDER BY id'),
+    ).toEqual([
+      { batch_id: 'batch-1', forgotten_at: THURSDAY + 15 * DAY },
+      { batch_id: null, forgotten_at: null },
+      { batch_id: null, forgotten_at: null },
     ]);
   });
 });
