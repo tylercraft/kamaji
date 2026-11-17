@@ -534,8 +534,9 @@ function WholeSiteChoices({
     <Choices>
       <legend>Whole-site backups</legend>
       <Muted>
-        Files and a fresh database from craftish, kept encrypted with restic on molcajete: 4 weekly
-        and 6 monthly. Arq copies that encrypted repository off-site; Kamaji doesn’t check Arq.
+        Files and a fresh database from craftish, kept encrypted with restic on molcajete: all from
+        the last 14 days, then 4 weekly and 6 monthly. Arq copies that encrypted repository
+        off-site; Kamaji doesn’t check Arq.
       </Muted>
       {(Object.entries(SCHEDULES) as [SiteBackupSchedule, string][]).map(([value, label]) => (
         <label key={value}>

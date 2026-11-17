@@ -172,7 +172,7 @@ export async function backUpSite(
   return true;
 }
 
-/** 4 weekly, 6 monthly; then marks what restic no longer has as forgotten. */
+/** 14 days, 4 weekly, 6 monthly (KEEP); then marks what restic no longer has as forgotten. */
 async function applyRetention(deps: BackupsDeps, siteId: string): Promise<void> {
   const kept = await deps.restic.keep(siteId);
   if (!kept.ok) deps.log(`backups: retention for ${siteId} failed: ${kept.problem}`);

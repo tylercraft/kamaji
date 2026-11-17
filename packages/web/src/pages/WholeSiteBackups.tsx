@@ -262,7 +262,7 @@ export function WholeSiteBackups({
               )}
             </dd>
             <dt>Kept</dt>
-            <dd>4 weekly and 6 monthly snapshots</dd>
+            <dd>Every snapshot from the last 14 days, then 4 weekly and 6 monthly</dd>
             <dt>Where</dt>
             <dd>
               Encrypted with restic on molcajete. Arq copies that repository off-site; Kamaji

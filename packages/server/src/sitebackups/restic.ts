@@ -24,7 +24,7 @@ export interface Restic {
     signal?: AbortSignal,
   ): Promise<Result<{ value: T }>>;
   forget(snapshotIds: string[]): Promise<Result>;
-  /** Retention for one site: 4 weekly, 6 monthly. */
+  /** Retention for one site: everything from the last 14 days, then 4 weekly and 6 monthly. */
   keep(site: string): Promise<Result>;
   snapshots(site: string): Promise<Result<{ ids: string[] }>>;
   prune(): Promise<Result>;
@@ -34,7 +34,12 @@ export interface Restic {
   restore(snapshotId: string, target: string, signal?: AbortSignal): Promise<Result>;
 }
 
-export const KEEP = ['--keep-weekly', '4', '--keep-monthly', '6'];
+/**
+ * Everything within 14 days of the newest snapshot, so a before-update snapshot stays the rollback
+ * point even when a newer one lands in the same week; then the newest of each of 4 weeks and 6
+ * months. (restic's --keep-within counts back from the newest snapshot, not from now.)
+ */
+export const KEEP = ['--keep-within', '14d', '--keep-weekly', '4', '--keep-monthly', '6'];
 
 /** The pull's own refusal (server-pull/), which ssh passes through on stderr. */
 const PULL_PROBLEM = /\{"format":1,"ok":false,"problem":"([^"\\]{1,200})"\}/;
