@@ -14,6 +14,7 @@ import {
   Empty,
   Grid,
   Muted,
+  NewDot,
   PageHeading,
   Panel,
   PanelHead,
@@ -29,6 +30,7 @@ import { useResource, type Resource } from '../useResource';
 import { IssueStep, UndoDismiss } from '../components/IssueStep';
 import { WithIcon } from '../components/SiteIcon';
 import { ReadyToUpdate } from './ReadyToUpdate';
+import { useFresh } from '../news';
 
 const Metrics = styled.dl`
   margin: 0;
@@ -112,11 +114,14 @@ function Attention({
   dismissed,
   names,
   reload,
+  fresh,
 }: {
   attention: OverviewResponse['attention'];
   dismissed: OverviewResponse['dismissed'];
   names: Map<string, string>;
   reload: () => void;
+  /** Issues that started since this viewer last opened Overview. */
+  fresh: Set<string>;
 }) {
   if (!attention.known)
     return (
@@ -158,6 +163,7 @@ function Attention({
               >
                 <span css={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
                   <span css={{ fontWeight: 550 }}>
+                    {fresh.has(issue.id) && <NewDot />}
                     {withoutName(issue.summary, names.get(`${g.type}:${g.id}`) ?? g.id)}
                   </span>
                   <Pill tone={issue.severity === 'urgent' ? 'red' : 'amber'}>
@@ -469,6 +475,7 @@ function Coverage({ overview }: { overview: Resource<OverviewResponse> }) {
 }
 
 export function OverviewPage() {
+  const fresh = useFresh('overview');
   const overview = useResource('/api/overview', OverviewResponse, { pollMs: 60_000 });
   const sites = useResource('/api/sites', SitesResponse, { pollMs: 60_000 });
   const servers = useResource('/api/servers', ServersResponse, { pollMs: 60_000 });
@@ -538,6 +545,7 @@ export function OverviewPage() {
                   dismissed={o.dismissed}
                   names={names}
                   reload={overview.state === 'ready' ? overview.reload : () => {}}
+                  fresh={fresh}
                 />
               )}
             </ResourceView>

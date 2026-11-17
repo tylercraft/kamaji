@@ -1,12 +1,14 @@
 import { RecheckAllResponse, SitesResponse, type SiteSummary } from '@kamaji/shared';
 import { postJson } from '../api';
 import { failed, reason, saved } from '../components/toast';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
+import { useFresh } from '../news';
 import {
   Button,
   Dot,
   Empty,
   Muted,
+  NewDot,
   PageHeading,
   Panel,
   Pill,
@@ -179,12 +181,19 @@ function GroupHeading({ label, count }: { label: string; count: number }) {
   );
 }
 
+/** Sites added, or with a problem that started, since this viewer last opened Sites. */
+const FreshSites = createContext<Set<string>>(new Set());
+
 function SiteLink({ site }: { site: SiteSummary }) {
   const link = useLink(`/sites/${site.id}`);
+  const fresh = useContext(FreshSites).has(site.id);
   return (
-    <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
-      {site.name}
-    </a>
+    <>
+      <a {...link} css={{ fontWeight: 600, color: 'inherit' }}>
+        {site.name}
+      </a>
+      {fresh && <NewDot />}
+    </>
   );
 }
 
@@ -506,8 +515,9 @@ export function SitesPage() {
     saveGroupBy(g);
   };
   const now = sites.state === 'ready' ? sites.loadedAt : 0;
+  const fresh = useFresh('sites');
   return (
-    <>
+    <FreshSites.Provider value={fresh}>
       <PageHeading
         title="Sites"
         purpose="Reachability, maintenance findings and monitoring coverage."
@@ -657,6 +667,6 @@ export function SitesPage() {
           }}
         </ResourceView>
       </Panel>
-    </>
+    </FreshSites.Provider>
   );
 }

@@ -7,6 +7,10 @@
 // list itself is on Overview. Like notify.ts, the message is marked sent only once Discord takes
 // it, and a failed send is retried each cycle for 3 hours after the update time. The recheck
 // runs once.
+//
+// Overview shows it live (liveReady, Tyler, 2026-11-18): worked out on each load from the update
+// time until the next, each site's backup as it is now and the updates still waiting; a site with
+// nothing left drops off, and one updated since shows when. The stored message is Discord's.
 import type { ReadyBackup, ReadySite, ReadyToUpdate } from '@kamaji/shared';
 import type { Db } from './db.js';
 import type { Discord } from './discord.js';
@@ -21,8 +25,6 @@ const HOUR = 60 * 60_000;
 const WEEK = 7 * 24 * HOUR;
 /** Kamaji down over the update time sends it late, up to this long after; not the next morning. */
 export const READY_WINDOW = 3 * HOUR;
-/** How long Overview shows it. */
-export const SHOWN_FOR = 24 * HOUR;
 const KEY = 'ready-to-update';
 
 interface Stored {
@@ -151,6 +153,7 @@ export function readyToUpdate(
     note: unreachable.has(s.id)
       ? `Recheck all couldn’t reach it (${unreachable.get(s.id)}): its updates are from the last report`
       : s.blocked,
+    updatedAt: null,
   }));
   sites.sort(
     (a, b) =>
@@ -232,10 +235,32 @@ export function readyMessage(ready: ReadyToUpdate, kamajiUrl: string): string {
   ].join('\n');
 }
 
-export function readReady(db: Db, now: number): ReadyToUpdate | null {
+/**
+ * Overview's Ready to update, worked out now: from the update time it was sent for until the next
+ * one. Each site with updates still waiting, with its backup as it stands; a site updated since
+ * the update time shows when ("updated Tue 20:14") even with nothing left. Null outside that
+ * stretch, or when nothing is left to say.
+ */
+export function liveReady(db: Db, now: number): ReadyToUpdate | null {
+  const update = updateTimes(now, readUpdateTime(db)).last;
   const stored = readState<Stored>(db, KEY);
-  if (!stored) return null;
-  return now - Date.parse(stored.ready.sentAt) < SHOWN_FOR ? stored.ready : null;
+  if (!stored || stored.ready.for !== iso(update)) return null;
+  const updated = new Map(
+    db
+      .prepare(
+        `SELECT site_id, MAX(finished_at) AS at FROM batch_sites
+         WHERE state = 'done' AND finished_at >= ? GROUP BY site_id`,
+      )
+      .all(update)
+      .map((r) => [String(r.site_id), iso(Number(r.at))] as const),
+  );
+  const live = readyToUpdate(db, now, update);
+  const sites = live.sites
+    .map((s) => ({ ...s, updatedAt: updated.get(s.siteId) ?? null }))
+    .filter((s) => s.updates.length > 0 || s.updatedAt !== null);
+  if (sites.length === 0) return null;
+  // When it was rechecked is the stored message's: the reports since are the hourly ones.
+  return { ...live, sentAt: stored.ready.sentAt, sites };
 }
 
 export interface ReadyDeps {

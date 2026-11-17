@@ -29,7 +29,7 @@ import { actionFor } from './issueActions.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
-import { readReady } from './ready.js';
+import { liveReady } from './ready.js';
 import { readDiscord } from './discord.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
@@ -367,7 +367,7 @@ export function overview(db: Db, now = Date.now()): OverviewResponse {
       live.filter((s) => s.mode === 'connected'),
       connected,
     ),
-    ready: readReady(db, now),
+    ready: liveReady(db, now),
   };
 }
 

@@ -24,6 +24,7 @@ import {
   type UpdatesResponse,
   type SettingsResponse,
   UpdateTime,
+  SeenRequest,
 } from '@kamaji/shared';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -52,6 +53,7 @@ import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
 import { readUpdateTime, writeUpdateTime } from './settings.js';
+import { markSeen, news } from './viewers.js';
 import { recordEvent } from './events.js';
 import { updateTimes } from './sitebackups/schedule.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
@@ -148,6 +150,8 @@ const PASSKEY_FREE = new Set([
   'POST /api/sites/report',
   // Add site's look at a home page: the plain GET the icon fetch makes.
   'POST /api/sites/detect',
+  // Opening a page: when this viewer last looked, for "new" dots. Nothing on any site.
+  'POST /api/me/seen',
 ]);
 // Refetch icon: the plain GETs of the home page and its icon, as when the site was added.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
@@ -329,6 +333,15 @@ export function createApp({
     };
   };
   app.get('/api/settings', (c) => c.json(settings()));
+
+  // What's new for this viewer (viewers.ts): the shell polls it for tab dots and run toasts.
+  app.get('/api/me/news', (c) => c.json(news(db, login, now())));
+  app.post('/api/me/seen', async (c) => {
+    const body = await readJson(c, SeenRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    markSeen(db, login, body.page, now());
+    return c.json({ ok: true });
+  });
   app.post('/api/settings/update-time', async (c) => {
     const body = await readJson(c, UpdateTime);
     if (!body) return c.json({ error: 'bad_request' }, 400);

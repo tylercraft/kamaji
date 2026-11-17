@@ -139,11 +139,14 @@ export function storeReport(
     db.prepare('SELECT 1 FROM components WHERE site_id = ? LIMIT 1').get(site.id) === undefined;
   const upsert = db.prepare(
     `INSERT INTO components (site_id, type, item, slug, name, version, active, auto_update, parent,
-       offer_version, offer_package, first_seen_at, last_seen_at, gone_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       offer_version, offer_package, first_seen_at, last_seen_at, gone_at, offer_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
      ON CONFLICT (site_id, type, item) DO UPDATE SET slug = excluded.slug, name = excluded.name,
        version = excluded.version, active = excluded.active, auto_update = excluded.auto_update,
-       parent = excluded.parent, offer_version = excluded.offer_version,
+       parent = excluded.parent,
+       offer_seen_at = CASE WHEN excluded.offer_version IS components.offer_version
+         THEN components.offer_seen_at ELSE excluded.offer_seen_at END,
+       offer_version = excluded.offer_version,
        offer_package = excluded.offer_package, last_seen_at = excluded.last_seen_at, gone_at = NULL`,
   );
   const event = (summary: string, detail: Record<string, unknown>) =>
@@ -174,6 +177,8 @@ export function storeReport(
       bool(c.offerPackage),
       now,
       now,
+      // When this offer was first seen, for Updates' "new" dots; kept while it stays the same.
+      c.offerVersion === null ? null : now,
     );
     if (first) continue;
     const detail = { type: c.type, item: c.item };

@@ -89,7 +89,7 @@ export function queue(
     const known = matches(db, site.id).filter((m) => !m.vulnerability.informational);
     const offers = db
       .prepare(
-        `SELECT type, item, name, version, offer_version FROM components
+        `SELECT type, item, name, version, offer_version, offer_seen_at FROM components
          WHERE site_id = ? AND gone_at IS NULL AND offer_version IS NOT NULL
          AND offer_package = 1 AND type IN ('core', 'plugin', 'theme')`,
       )
@@ -114,6 +114,8 @@ export function queue(
         fixes: fixed,
         findings: own.length,
         major: isMajor(type, from, to),
+        offerSeenAt:
+          o.offer_seen_at === null ? null : new Date(Number(o.offer_seen_at)).toISOString(),
       });
     }
   }

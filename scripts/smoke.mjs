@@ -1236,6 +1236,74 @@ for (const view of VIEWS) {
   else console.log('ok   site reload: a Configure save shows in Backups at once, no page load');
 }
 
+// A run finishing while a page is open: a toast in Discord's words, with a link to the run. And
+// "new since you last looked": a problem that starts after Overview was opened puts a dot on the
+// Overview tab, and on the problem itself once it's opened; opening it clears the tab's dot.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const at = Date.now();
+  db.prepare(
+    `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state, finished_at, announced_at)
+     VALUES ('smoke-run', ?, ?, 0, 'finished', ?, NULL)`,
+  ).run(at - 10 * MIN, LOGIN, at);
+  db.prepare(
+    `INSERT INTO batch_sites (batch_id, site_id, position, backup_kind, backup, state, finished_at)
+     VALUES ('smoke-run', ?, 0, 'kamaji', 'Database export before update: exported', 'done', ?)`,
+  ).run(OK, at);
+  db.prepare(
+    `INSERT INTO batch_items (id, batch_id, site_id, position, type, item, name, from_version,
+       to_version, state, outcome)
+     VALUES ('smoke-run-1', 'smoke-run', ?, 0, 'plugin', 'admin-menu-editor/menu-editor.php',
+       'Admin Menu Editor', '1.15.2', '1.15.3', 'done', 'passed')`,
+  ).run(OK);
+  db.prepare(
+    `INSERT INTO issues (id, resource_type, resource_id, kind, severity, summary, first_seen_at,
+       last_seen_at)
+     VALUES ('smoke-new', 'site', 'photogravure.com', 'down', 'urgent',
+       'Photogravure is down: HTTP 503', ?, ?)`,
+  ).run(at, at);
+  // The page asks again when the window regains focus, as it does every 30 s.
+  await evaluate(`window.dispatchEvent(new Event('focus'))`);
+  let toastText = '';
+  for (let i = 0; i < 20 && !toastText.includes('Admin Menu Editor'); i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    toastText = await evaluate(
+      `[...document.querySelectorAll('[data-sonner-toast]')].map((t) => t.textContent).join(' | ')`,
+    );
+  }
+  if (
+    !toastText.includes(
+      '✅ Updated Aleya Hoerlein: Admin Menu Editor 1.15.2 → 1.15.3, checks passed (database export first)',
+    )
+  )
+    problems.push(`no run toast (saw “${toastText}”)`);
+  if (!toastText.includes('See the run')) problems.push('the toast has no link to the run');
+  const tabNew = () =>
+    // The logo links to Overview too; any link to it carrying a dot counts.
+    evaluate(
+      `[...document.querySelectorAll('header a[href="/"]')].some((a) => a.textContent.includes('new'))`,
+    );
+  if (!(await tabNew())) problems.push('no dot on the Overview tab');
+  await send('Page.navigate', { url: `http://localhost:${appPort}/` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const issueNew = await evaluate(`(() => {
+    const li = [...document.querySelectorAll('[aria-labelledby="attention"] li')].find((l) =>
+      l.textContent.includes('HTTP 503'));
+    return li ? li.textContent.includes('new') : null;
+  })()`);
+  if (issueNew !== true) problems.push(`the new problem has no dot (${issueNew})`);
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites` });
+  await new Promise((r) => setTimeout(r, 1500));
+  if (await tabNew()) problems.push('the Overview tab’s dot didn’t clear once it was opened');
+  if (problems.length) failures.push(`run feedback: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   run feedback: a toast when a run finishes; new problems dotted, then cleared',
+    );
+}
+
 // Pages to check: under the home page's line in Check details, each with its text, both shapes;
 // and in Configure, one row each, ready to change.
 {

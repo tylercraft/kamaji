@@ -603,4 +603,24 @@ export const migrations: Migration[] = [
       ALTER TABLE site_snapshots ADD COLUMN batch_id TEXT;
     `,
   },
+  {
+    version: 24,
+    name: 'run messages and what’s new',
+    // A finished run goes to Discord once (updates/announce.ts): announced_at is when, and a run
+    // carried on after a hold is announced again for the sites it finishes. Runs that finished
+    // before this count as announced. offer_seen_at is when WordPress first offered a component's
+    // current update, for Updates' "new" dots; offers from before this aren't new. viewer_seen:
+    // when each login last opened Overview, Sites and Updates.
+    sql: `
+      ALTER TABLE batches ADD COLUMN announced_at INTEGER;
+      UPDATE batches SET announced_at = finished_at WHERE finished_at IS NOT NULL;
+      ALTER TABLE components ADD COLUMN offer_seen_at INTEGER;
+      CREATE TABLE viewer_seen (
+        login TEXT NOT NULL,
+        page TEXT NOT NULL CHECK (page IN ('overview', 'sites', 'updates')),
+        seen_at INTEGER NOT NULL,
+        PRIMARY KEY (login, page)
+      );
+    `,
+  },
 ];
