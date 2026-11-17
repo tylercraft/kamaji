@@ -35,8 +35,12 @@ interface Stored {
 const HOSTS: Record<string, string> = { kinsta: 'Kinsta', wpengine: 'WP Engine' };
 const iso = (ms: number) => new Date(ms).toISOString();
 
-/** This update's whole-site backup: a good snapshot since its night, or why there isn't one. */
-function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
+/**
+ * This update's whole-site backup: the latest good snapshot from its night up to `upTo`, or why
+ * there isn't one. The message sent at the update time looks up to then; Overview's live card up
+ * to now, so a failure fixed after the update time (Back up site now) clears.
+ */
+function wholeSite(db: Db, siteId: string, update: number, upTo: number): ReadyBackup {
   const row = db
     .prepare('SELECT time_zone, site_backup_schedule FROM sites WHERE id = ?')
     .get(siteId);
@@ -49,7 +53,7 @@ function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
        WHERE site_id = ? AND ok = 1 AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC, id DESC LIMIT 1`,
     )
-    .get(siteId, since, update);
+    .get(siteId, since, upTo);
   if (good) {
     // The scheduled backup's own restore check (sitebackups/run.ts), of this very snapshot.
     const check = db
@@ -77,7 +81,7 @@ function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
        WHERE site_id = ? AND ok = 0 AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC LIMIT 1`,
     )
-    .get(siteId, since, update);
+    .get(siteId, since, upTo);
   return failed
     ? {
         state: 'failed',
@@ -92,8 +96,9 @@ function backupFor(
   db: Db,
   site: { id: string; hostKind: string; backupKind: string | null },
   update: number,
+  upTo: number,
 ): ReadyBackup {
-  if (eligible(db, site.id)) return wholeSite(db, site.id, update);
+  if (eligible(db, site.id)) return wholeSite(db, site.id, update, upTo);
   switch (site.backupKind) {
     case 'host':
       return { state: 'host', host: HOSTS[site.hostKind] ?? 'the host' };
@@ -108,12 +113,16 @@ function backupFor(
   }
 }
 
-/** The message's content: every site Kamaji can update, and any with whole-site backups on. */
+/**
+ * The message's content: every site Kamaji can update, and any with whole-site backups on. Backups
+ * count up to `upTo`: the update time for the message, now for Overview's live card.
+ */
 export function readyToUpdate(
   db: Db,
   now: number,
   update: number,
   unreachable: Map<string, string> = new Map(),
+  upTo: number = update,
 ): ReadyToUpdate {
   const { items } = queue(db);
   const updatable = updatableSites(db);
@@ -146,7 +155,7 @@ export function readyToUpdate(
   ].map((s) => ({
     siteId: s.id,
     siteName: s.name,
-    backup: backupFor(db, s, update),
+    backup: backupFor(db, s, update, upTo),
     updates: items
       .filter((i) => i.siteId === s.id)
       .map((i) => ({ name: i.name, from: i.from, to: i.to, major: i.major, security: i.security })),
@@ -237,9 +246,10 @@ export function readyMessage(ready: ReadyToUpdate, kamajiUrl: string): string {
 
 /**
  * Overview's Ready to update, worked out now: from the update time it was sent for until the next
- * one. Each site with updates still waiting, with its backup as it stands; a site updated since
- * the update time shows when ("updated Tue 20:14") even with nothing left. Null outside that
- * stretch, or when nothing is left to say.
+ * one. Each site with updates still waiting, with its backup as it stands now (a snapshot after
+ * the update time counts), a failed one first; then each site updated since with nothing left,
+ * which shows only when it was updated ("Updated Wed 10:50") and never counts as failed
+ * (web ReadyToUpdate.tsx). Null outside that stretch, or when nothing is left to say.
  */
 export function liveReady(db: Db, now: number): ReadyToUpdate | null {
   const update = updateTimes(now, readUpdateTime(db)).last;
@@ -254,10 +264,18 @@ export function liveReady(db: Db, now: number): ReadyToUpdate | null {
       .all(update)
       .map((r) => [String(r.site_id), iso(Number(r.at))] as const),
   );
-  const live = readyToUpdate(db, now, update);
+  const live = readyToUpdate(db, now, update, new Map(), now);
+  const done = (s: ReadySite) => s.updates.length === 0;
+  const failed = (s: ReadySite) => !done(s) && s.backup.state === 'failed';
   const sites = live.sites
     .map((s) => ({ ...s, updatedAt: updated.get(s.siteId) ?? null }))
-    .filter((s) => s.updates.length > 0 || s.updatedAt !== null);
+    .filter((s) => !done(s) || s.updatedAt !== null)
+    .sort(
+      (a, b) =>
+        Number(done(a)) - Number(done(b)) ||
+        Number(failed(b)) - Number(failed(a)) ||
+        a.siteName.localeCompare(b.siteName),
+    );
   if (sites.length === 0) return null;
   // When it was rechecked is the stored message's: the reports since are the hourly ones.
   return { ...live, sentAt: stored.ready.sentAt, sites };

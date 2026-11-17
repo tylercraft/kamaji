@@ -331,6 +331,43 @@ describe('Ready to update on Overview, live', () => {
     expect(liveReady(db, UPDATE + 7 * 24 * HOUR - HOUR)?.sites).toHaveLength(2);
   });
 
+  it('a failure fixed after the update time clears: the newer good snapshot counts', async () => {
+    const db = sites();
+    await sent(db);
+    // broken.test failed in its night; Back up site now worked Wednesday 09:25, restore-checked.
+    const wed = UPDATE + 14 * HOUR + 25 * 60_000;
+    snapshot(db, 'broken.test', wed, true);
+    db.prepare(
+      `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok)
+       VALUES ('broken.test', ?, ?, ?, 1)`,
+    ).run('a'.repeat(64), wed + 60_000, wed + 4 * 60_000);
+    const live = liveReady(db, wed + HOUR)!;
+    expect(live.sites.find((s) => s.siteId === 'broken.test')?.backup).toEqual({
+      state: 'fresh',
+      at: new Date(wed).toISOString(),
+      restoredAt: new Date(wed + 4 * 60_000).toISOString(),
+    });
+    expect(live.sites.some((s) => s.backup.state === 'failed')).toBe(false);
+    // Discord's message stays as it was at the update time.
+    expect(readyToUpdate(db, UPDATE, UPDATE).sites[0]).toMatchObject({
+      siteId: 'broken.test',
+      backup: { state: 'failed' },
+    });
+  });
+
+  it('a site updated since, with an old failure: listed last, after the sites still waiting', async () => {
+    const db = sites();
+    await sent(db);
+    finishRun(db, 'broken.test', UPDATE + 15 * HOUR);
+    db.prepare("UPDATE components SET offer_version = NULL WHERE site_id = 'broken.test'").run();
+    const live = liveReady(db, UPDATE + 16 * HOUR)!;
+    expect(live.sites.map((s) => [s.siteId, s.updates.length])).toEqual([
+      ['export.test', 1],
+      ['fresh.test', 2],
+      ['broken.test', 0],
+    ]);
+  });
+
   it('gone once nothing is left', async () => {
     const db = sites();
     await sent(db);
