@@ -22,7 +22,11 @@ export type Resource<T> =
 export function useResource<S extends z.ZodType>(
   path: string,
   schema: S,
-  options: { pollMs?: number | ((last: z.infer<S> | null) => number) } = {},
+  options: {
+    pollMs?: number | ((last: z.infer<S> | null) => number);
+    /** Refetches whenever this changes: a page's shared reload (siteReload.tsx). */
+    version?: number;
+  } = {},
 ): Resource<z.infer<S>> {
   type T = z.infer<S>;
   const [data, setData] = useState<{ value: T; at: number } | null>(null);
@@ -46,7 +50,7 @@ export function useResource<S extends z.ZodType>(
       },
     );
     return () => controller.abort();
-  }, [path, nonce]);
+  }, [path, nonce, options.version]);
 
   useEffect(() => {
     const onFocus = () => reload();

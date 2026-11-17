@@ -34,6 +34,7 @@ import {
 } from '../siteStatus';
 import { backupLooks, capabilityProblems, siteLooks } from '../siteAttention';
 import { useResource, type Resource } from '../useResource';
+import { SiteReloadProvider, useSiteReload } from '../siteReload';
 import { InventoryPanel } from './InventoryPanel';
 import { SiteBackupsPanel } from './SiteBackupsPanel';
 import { Attention, CheckDetails, HealthTiles } from './SiteHealth';
@@ -283,17 +284,27 @@ function Freshness({ detail, now }: { detail: SiteDetailResponse; now: number })
 }
 
 export function SitePage({ id }: { id: string }) {
-  const detail = useResource(`/api/sites/${id}`, SiteDetailResponse, { pollMs: 60_000 });
+  return (
+    <SiteReloadProvider>
+      <SiteView id={id} />
+    </SiteReloadProvider>
+  );
+}
+
+function SiteView({ id }: { id: string }) {
+  // A save anywhere on the page reloads every part of it (siteReload.tsx).
+  const { version, reloadSite } = useSiteReload();
+  const detail = useResource(`/api/sites/${id}`, SiteDetailResponse, { pollMs: 60_000, version });
   const backupsResource = useResource(
     `/api/sites/${encodeURIComponent(id)}/backups`,
     SiteBackupsResponse,
-    { pollMs: 15_000 },
+    { pollMs: 15_000, version },
   );
   const back = useLink('/sites');
   return (
     <ResourceView resource={detail} label="the site">
       {(d) => {
-        const reload = detail.state === 'ready' ? detail.reload : () => {};
+        const reload = reloadSite;
         const now = detail.state === 'ready' ? detail.loadedAt : 0;
         const { site } = d;
         const connected = site.mode === 'connected';

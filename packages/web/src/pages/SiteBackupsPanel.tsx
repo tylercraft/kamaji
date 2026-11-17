@@ -28,6 +28,7 @@ import {
   type Tone,
 } from '../components/ui';
 import type { Resource } from '../useResource';
+import { useSiteReload } from '../siteReload';
 import { BACKUPS } from './SiteSetup';
 import { WholeSiteBackups } from './WholeSiteBackups';
 import { RememberedDetails } from '../components/remembered';
@@ -198,7 +199,9 @@ export function SiteBackupsPanel({
   const [downloading, setDownloading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const reload = () => {
+  const { reloadSite: reload } = useSiteReload();
+  /** Only this panel, while an export runs: the rest of the page reloads once it's done. */
+  const reloadBackups = () => {
     if (backups.state === 'ready') backups.reload();
   };
 
@@ -219,7 +222,7 @@ export function SiteBackupsPanel({
     do {
       await new Promise((resolve) => window.setTimeout(resolve, 3_000));
       now = await getJson(path, SiteBackupsResponse).catch(() => null);
-      if (now?.exporting !== null) reload();
+      if (now?.exporting !== null) reloadBackups();
     } while (!now || now.exporting !== null);
     setBusy(false);
     reload();
