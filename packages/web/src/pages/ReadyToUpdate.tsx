@@ -9,9 +9,15 @@ import { useLink } from '../router';
 export function backupLine(b: ReadyBackup): { tone: 'green' | 'red' | 'neutral'; words: string } {
   switch (b.state) {
     case 'fresh':
-      return { tone: 'green', words: 'Backed up' };
+      return { tone: 'green', words: b.restoredAt ? 'Backed up and restore-checked' : 'Backed up' };
     case 'failed':
-      return { tone: 'red', words: `Backup failed: ${b.problem}. Fix it before updating.` };
+      return {
+        tone: 'red',
+        words:
+          b.step === 'restore'
+            ? `Backed up, but the restore check failed ${b.problem}. Fix it before updating.`
+            : `Backup failed: ${b.problem}. Fix it before updating.`,
+      };
     case 'host':
       return { tone: 'neutral', words: `${b.host}’s backups` };
     case 'export':
@@ -76,7 +82,21 @@ function SiteRow({ site }: { site: ReadySite }) {
 
 export function ReadyToUpdate({ ready }: { ready: Data }) {
   const updates = useLink('/updates');
-  const failed = ready.sites.filter((s) => s.backup.state === 'failed').length;
+  const failedSites = ready.sites.filter((s) => s.backup.state === 'failed');
+  const failed = failedSites.length;
+  const restores = failedSites.filter(
+    (s) => s.backup.state === 'failed' && s.backup.step === 'restore',
+  ).length;
+  const what =
+    restores === failed
+      ? failed === 1
+        ? 'A restore check'
+        : `${failed} restore checks`
+      : restores === 0
+        ? failed === 1
+          ? 'A whole-site backup'
+          : `${failed} whole-site backups`
+        : `${failed} backups or restore checks`;
   const waiting = ready.sites.reduce((n, s) => n + s.updates.length, 0);
   return (
     <Panel aria-labelledby="ready" css={failed > 0 ? { borderColor: 'var(--red)' } : undefined}>
@@ -86,8 +106,7 @@ export function ReadyToUpdate({ ready }: { ready: Data }) {
       <p css={{ margin: '4px 0 6px' }}>
         {failed > 0 ? (
           <strong>
-            {failed === 1 ? 'A whole-site backup' : `${failed} whole-site backups`} failed: fix{' '}
-            {failed === 1 ? 'it' : 'them'} before updating.{' '}
+            {what} failed: fix {failed === 1 ? 'it' : 'them'} before updating.{' '}
           </strong>
         ) : null}
         {waiting} update{waiting === 1 ? '' : 's'} waiting, rechecked <Time iso={ready.sentAt} />.

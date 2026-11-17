@@ -794,10 +794,25 @@ export type SettingsResponse = z.infer<typeof SettingsResponse>;
 
 /** How a site stands for the update time: its whole-site backup, or what backs it up instead. */
 export const ReadyBackup = z.discriminatedUnion('state', [
-  /** A good whole-site snapshot for this update, and when it was taken. */
-  z.object({ state: z.literal('fresh'), at: Timestamp }),
-  /** Whole-site backups are on, and this update's didn't happen: why, in plain words. */
-  z.object({ state: z.literal('failed'), problem: z.string(), at: Timestamp.nullable() }),
+  /**
+   * A good whole-site snapshot for this update, and when it was taken; and when a restore check
+   * of that snapshot passed, if one has. (Defaults: a message stored before restore checks were.)
+   */
+  z.object({
+    state: z.literal('fresh'),
+    at: Timestamp,
+    restoredAt: Timestamp.nullable().default(null),
+  }),
+  /**
+   * Whole-site backups are on, and this update's didn't happen, or its snapshot didn't pass its
+   * restore check (`step`): why, in plain words.
+   */
+  z.object({
+    state: z.literal('failed'),
+    problem: z.string(),
+    at: Timestamp.nullable(),
+    step: z.enum(['backup', 'restore']).default('backup'),
+  }),
   /** The host's own backups (Kinsta, WP Engine). */
   z.object({ state: z.literal('host'), host: z.string() }),
   /** Only the database export the updater takes before it starts. */

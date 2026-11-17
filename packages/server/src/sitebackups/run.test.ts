@@ -54,19 +54,21 @@ function deps(
 ) {
   const fake = fakeRestic(pull);
   const restored: string[] = [];
+  const restoredSnapshots: string[] = [];
   const result: { value: RestoreResult } = { value: { ok: true } };
   const d: BackupsDeps = {
     db,
     restic: fake.restic,
-    restore: async (s) => {
+    restore: async (s, snapshotId) => {
       restored.push(s.id);
+      restoredSnapshots.push(snapshotId);
       return result.value;
     },
     pullCommand: (id) => ['/usr/bin/ssh', id],
     now: () => now,
     log: () => {},
   };
-  return { d, ...fake, restored, result };
+  return { d, ...fake, restored, restoredSnapshots, result };
 }
 
 const rows = (db: Db, sql: string) => db.prepare(sql).all();
@@ -188,8 +190,9 @@ describe('a night’s run', () => {
       'backup due.test',
       'keep due.test',
     ]);
-    // The requested check stands in for the nightly one.
-    expect(restored).toEqual(['asked.test']);
+    // The asked-for check, and the scheduled backup's own; the asked-for one stands in for the
+    // night's fallback.
+    expect(restored).toEqual(['asked.test', 'due.test']);
     expect(
       rows(db, 'SELECT COUNT(*) AS n FROM site_backup_requests WHERE taken_at IS NULL'),
     ).toEqual([{ n: 0 }]);
@@ -343,9 +346,79 @@ describe('before an update', () => {
       rows(db, "SELECT batch_id FROM site_snapshots WHERE site_id = 'updating.test' AND ok = 1"),
     ).toEqual([{ batch_id: null }, { batch_id: 'batch-1' }]);
     expect(
-      rows(db, "SELECT summary FROM events WHERE resource_id = 'updating.test'").map(
-        (e) => e.summary,
-      ),
+      rows(
+        db,
+        "SELECT summary FROM events WHERE resource_id = 'updating.test' AND kind = 'site.backup'",
+      ).map((e) => e.summary),
     ).toEqual([expect.stringMatching(/^Whole-site backup of updating.test before update: /)]);
+  });
+});
+
+describe('a restore check after each scheduled backup', () => {
+  const HOUR = 60 * 60_000;
+  // Tuesday 17 November 2026, 04:15 NZDT: an hour after the night's own run, so not the 03:15
+  // one that does the 30-day fallback.
+  const LATE = Date.UTC(2026, 10, 16, 15, 15);
+
+  it('checks each scheduled backup straight away, that snapshot, as many as there are', async () => {
+    const db = testDb();
+    site(db, 'a.test');
+    site(db, 'b.test');
+    const { d, restored, restoredSnapshots } = deps(db, undefined, LATE);
+    await runBackups(d);
+    expect(restored).toEqual(['a.test', 'b.test']);
+    const made = rows(db, 'SELECT snapshot_id FROM site_snapshots WHERE ok = 1 ORDER BY id').map(
+      (r) => String(r.snapshot_id),
+    );
+    expect(restoredSnapshots).toEqual(made);
+    expect(rows(db, 'SELECT site_id, snapshot_id, ok FROM restore_checks ORDER BY id')).toEqual([
+      { site_id: 'a.test', snapshot_id: made[0], ok: 1 },
+      { site_id: 'b.test', snapshot_id: made[1], ok: 1 },
+    ]);
+  });
+
+  it('a failed backup gets no check', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    snapshot(db, 'one.test', LATE - 8 * 24 * HOUR);
+    const { d, restored } = deps(db, () => ({ problem: 'craftish: not on the allowlist' }), LATE);
+    await runBackups(d);
+    expect(restored).toEqual([]);
+  });
+
+  it('a snapshot made before an update gets no check: the update shouldn’t wait', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    snapshot(db, 'one.test', LATE - HOUR);
+    db.prepare(
+      `INSERT INTO site_backup_requests (site_id, kind, requested_at, requested_by, batch_id)
+       VALUES ('one.test', 'backup', ?, 'updater', 'batch-1')`,
+    ).run(LATE);
+    const { d, calls, restored } = deps(db, undefined, LATE);
+    await runBackups(d);
+    expect(calls).toContain('backup one.test');
+    expect(restored).toEqual([]);
+  });
+
+  it('a check that fails raises the usual issue', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    const { d, result } = deps(db, undefined, LATE);
+    result.value = {
+      ok: false,
+      step: 'home page',
+      problem: 'the test copy’s home page gave HTTP 500',
+    };
+    await runBackups(d);
+    expect(
+      rows(db, 'SELECT kind, severity, summary FROM issues WHERE resolved_at IS NULL'),
+    ).toEqual([
+      {
+        kind: 'restore-check-failed',
+        severity: 'urgent',
+        summary:
+          'one.test’s restore check failed at “home page”: the test copy’s home page gave HTTP 500',
+      },
+    ]);
   });
 });
