@@ -526,6 +526,11 @@ const freePort = () =>
   // Aleya's backup for this update, a quarter of an hour before it; First & Last's is days old.
   const before = now - (nz.minute + 15) * MIN;
   snap.run(OK, before, before + MIN, 1, 'd'.repeat(64), 185e6, 1e6, 9.3e6, '7.1.4', null, null);
+  // …restore-checked straight after, as the backups process does.
+  db.prepare(
+    `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok)
+     VALUES (?, ?, ?, ?, 1)`,
+  ).run(OK, 'd'.repeat(64), before + 2 * MIN, before + 5 * MIN);
   writeUpdateTime(db, { weekday: nz.weekday, hour: nz.hour }, now - DAY, 'smoke@localhost');
   await checkReady(db, now, {
     discord: { configured: false, send: async () => false },
@@ -1151,7 +1156,8 @@ for (const view of VIEWS) {
     `document.querySelector('[aria-labelledby="ready"] ul > li a')?.textContent`,
   );
   if (first !== 'First & Last Records') problems.push(`first row: ${first}`);
-  if (!/Aleya Hoerlein.*Backed up/.test(text)) problems.push('Aleya’s fresh backup isn’t shown');
+  if (!/Aleya Hoerlein.*Backed up and restore-checked/.test(text))
+    problems.push('Aleya’s backup isn’t shown as backed up and restore-checked');
   if (!text.includes('Nothing is approved until you approve it'))
     problems.push('doesn’t say nothing is approved');
   if (SHOTS) {

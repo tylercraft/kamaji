@@ -1,3 +1,4 @@
+import { ReadyToUpdate } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import type { Db } from './db.js';
 import type { Discord } from './discord.js';
@@ -96,6 +97,7 @@ describe('ready to update', () => {
     ]);
     expect(ready.sites[0]!.backup).toEqual({
       state: 'failed',
+      step: 'backup',
       problem: 'craftish: not on the allowlist',
       at: new Date(NIGHT + 15 * 60_000).toISOString(),
     });
@@ -125,6 +127,7 @@ describe('ready to update', () => {
     snapshot(db, 'quiet.test', NIGHT - 7 * 24 * HOUR, true);
     expect(readyToUpdate(db, UPDATE, UPDATE).sites[0]!.backup).toEqual({
       state: 'failed',
+      step: 'backup',
       problem: 'no backup ran for this update',
       at: null,
     });
@@ -192,5 +195,88 @@ describe('ready to update', () => {
     await checkReady(db, UPDATE, { discord: discord().d, kamajiUrl: 'https://k', recheck: null });
     expect(db.prepare('SELECT COUNT(*) AS n FROM batches').get()).toEqual({ n: 0 });
     expect(db.prepare('SELECT COUNT(*) AS n FROM proposals').get()).toEqual({ n: 0 });
+  });
+});
+
+describe('ready to update, with the backup’s restore check', () => {
+  /** A site backed up at its night, and its snapshot restore-checked once, passing or not. */
+  function checked(ok: boolean) {
+    const db = testDb();
+    site(db, 'checked.test', { backups: 'weekly' });
+    snapshot(db, 'checked.test', NIGHT + 4 * 60_000, true);
+    db.prepare(
+      `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok, failed_step,
+         problem)
+       VALUES ('checked.test', ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'a'.repeat(64),
+      NIGHT + 6 * 60_000,
+      NIGHT + 9 * 60_000,
+      ok ? 1 : 0,
+      ok ? null : 'home page',
+      ok ? null : 'the test copy’s home page gave HTTP 500',
+    );
+    return readyToUpdate(db, UPDATE, UPDATE);
+  }
+
+  it('both passed: backed up and restore-checked, with the day and time', () => {
+    const ready = checked(true);
+    expect(ready.sites[0]!.backup).toEqual({
+      state: 'fresh',
+      at: new Date(NIGHT + 4 * 60_000).toISOString(),
+      restoredAt: new Date(NIGHT + 9 * 60_000).toISOString(),
+    });
+    expect(readyMessage(ready, 'https://k').split('\n').slice(0, 3)).toEqual([
+      '**Kamaji: ready to update.**',
+      '0 updates waiting. Nothing is approved until you approve it.',
+      '- checked.test: backed up and restore-checked Tue 03:04 · nothing waiting',
+    ]);
+  });
+
+  it('the restore check failed: it leads, named, with what to do', () => {
+    const ready = checked(false);
+    expect(ready.sites[0]!.backup).toMatchObject({ state: 'failed', step: 'restore' });
+    expect(readyMessage(ready, 'https://k').split('\n').slice(0, 3)).toEqual([
+      '**Kamaji: a restore check failed before the update time.** Fix it before updating.',
+      '0 updates waiting. Nothing is approved until you approve it.',
+      '- checked.test: backed up Tue 03:04, but the restore check failed at “home page”: the test copy’s home page gave HTTP 500. Fix it before updating · nothing waiting',
+    ]);
+  });
+
+  it('a snapshot not checked yet says only that it’s backed up', () => {
+    const db = testDb();
+    site(db, 'unchecked.test', { backups: 'weekly' });
+    snapshot(db, 'unchecked.test', NIGHT + 4 * 60_000, true);
+    expect(readyMessage(readyToUpdate(db, UPDATE, UPDATE), 'https://k')).toContain(
+      '- unchecked.test: backed up Tue 03:04 · nothing waiting',
+    );
+  });
+
+  it('reads a message stored before restore checks were part of it', () => {
+    const stored = {
+      for: new Date(UPDATE).toISOString(),
+      sentAt: new Date(UPDATE).toISOString(),
+      sites: [
+        {
+          siteId: 'old.test',
+          siteName: 'old.test',
+          backup: { state: 'fresh', at: new Date(NIGHT).toISOString() },
+          updates: [],
+          note: null,
+        },
+        {
+          siteId: 'older.test',
+          siteName: 'older.test',
+          backup: { state: 'failed', problem: 'x', at: null },
+          updates: [],
+          note: null,
+        },
+      ],
+    };
+    const parsed = ReadyToUpdate.parse(stored);
+    expect(parsed.sites.map((s) => s.backup)).toEqual([
+      { state: 'fresh', at: new Date(NIGHT).toISOString(), restoredAt: null },
+      { state: 'failed', problem: 'x', at: null, step: 'backup' },
+    ]);
   });
 });

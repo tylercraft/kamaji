@@ -1,8 +1,8 @@
 // The backups process's work (ops/backups-plan.md, "The process and the schedule"), hourly at :15:
-// the Backups panel's requests, then each site that's due by the update time (schedule.ts), then,
-// in the 03:15 run only, at most one restore check and the repository's upkeep; then its size. One
-// site at a time. Everything it does is recorded in
-// site_snapshots, restore_checks and Activity; failures say why in plain words.
+// the Backups panel's requests, then each site that's due by the update time (schedule.ts), each
+// restore-checked once it's backed up; then, in the 03:15 run only, the 30-day fallback restore
+// check and the repository's upkeep; then its size. One site at a time. Everything it does is
+// recorded in site_snapshots, restore_checks and Activity; failures say why in plain words.
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
 import { ELIGIBLE, eligible } from './eligible.js';
@@ -188,10 +188,15 @@ async function applyRetention(deps: BackupsDeps, siteId: string): Promise<void> 
   for (const r of rows) if (!ids.has(String(r.snapshot_id))) forget.run(deps.now(), Number(r.id));
 }
 
-export async function checkRestore(deps: BackupsDeps, siteId: string): Promise<boolean> {
+/** A restore check of `snapshotId`, or of the site's latest snapshot. */
+export async function checkRestore(
+  deps: BackupsDeps,
+  siteId: string,
+  snapshot: string | null = null,
+): Promise<boolean> {
   const { db, now } = deps;
   const startedAt = now();
-  const snapshotId = latestSnapshot(db, siteId);
+  const snapshotId = snapshot ?? latestSnapshot(db, siteId);
   const row = db.prepare('SELECT name, expected_text FROM sites WHERE id = ?').get(siteId);
   const result: RestoreResult = snapshotId
     ? await deps.restore(
@@ -291,26 +296,47 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   const { db, now } = deps;
   const stopped = () => deps.signal?.aborted === true;
   const backedUp = new Set<string>();
-  const checked = new Set<string>();
+  /** Restore checks asked for from the panel: one stands in for the night's fallback. */
+  const asked = new Set<string>();
   // Requests first, and again after each scheduled site: an update waiting on its backup
   // shouldn't wait for the whole night's list.
   const requests = async () => {
+    // Back up site now is restore-checked straight after, like a scheduled backup; a snapshot
+    // the updater asked for isn't. The checks wait until every backup taken here is done, so an
+    // update waiting on its own backup isn't held behind one.
+    const toCheck: { siteId: string; snapshotId: string | null }[] = [];
     for (const request of takeRequests(db, now())) {
       if (stopped()) return;
       if (!eligible(db, request.siteId)) continue;
       if (request.kind === 'backup') {
-        await backUpSite(deps, request.siteId, request.batchId);
+        const ok = await backUpSite(deps, request.siteId, request.batchId);
         backedUp.add(request.siteId);
+        if (ok && request.batchId === null)
+          toCheck.push({ siteId: request.siteId, snapshotId: latestSnapshot(db, request.siteId) });
       } else {
         await checkRestore(deps, request.siteId);
-        checked.add(request.siteId);
+        asked.add(request.siteId);
       }
+    }
+    for (const check of toCheck) {
+      if (stopped()) return;
+      // A check asked for in the same run already covers it.
+      if (asked.has(check.siteId)) continue;
+      await checkRestore(deps, check.siteId, check.snapshotId);
     }
   };
   await requests();
+  // Each scheduled backup that works is restore-checked straight away, that snapshot, in this
+  // run. An update waiting on its own backup goes first; a before-update snapshot isn't checked
+  // (its read-back covers it, and the update shouldn't wait).
   for (const siteId of dueSites(db, now())) {
     if (stopped()) return;
-    if (!backedUp.has(siteId)) await backUpSite(deps, siteId);
+    if (!backedUp.has(siteId) && (await backUpSite(deps, siteId))) {
+      const made = latestSnapshot(db, siteId);
+      await requests();
+      if (stopped()) return;
+      await checkRestore(deps, siteId, made);
+    }
     await requests();
   }
   if (stopped()) return;
@@ -318,9 +344,11 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   const upkeep =
     readState<{ pruned?: string; checked?: string; restored?: string }>(db, UPKEEP) ?? {};
   const today = night.day;
-  // At most one restore check a night, in the 03:15 run, and none after one asked for.
+  // The fallback, for sites whose snapshots were made some other way (before an update, or
+  // before this check came in): one a night, in the 03:15 run, for a site unchecked for 30 days; none after one
+  // asked for.
   if (night.hour === NIGHTLY_HOUR && upkeep.restored !== today) {
-    const restore = checked.size === 0 ? restoreDue(db, now()) : null;
+    const restore = asked.size === 0 ? restoreDue(db, now()) : null;
     if (restore) await checkRestore(deps, restore);
     upkeep.restored = today;
     if (stopped()) return;

@@ -43,11 +43,32 @@ function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
   const since = (row?.site_backup_schedule === 'fortnightly' ? night - WEEK : night) - HOUR;
   const good = db
     .prepare(
-      `SELECT MAX(started_at) AS at FROM site_snapshots
-       WHERE site_id = ? AND ok = 1 AND started_at >= ? AND started_at < ?`,
+      `SELECT started_at, snapshot_id FROM site_snapshots
+       WHERE site_id = ? AND ok = 1 AND started_at >= ? AND started_at < ?
+       ORDER BY started_at DESC, id DESC LIMIT 1`,
     )
-    .get(siteId, since, update)?.at;
-  if (good !== null && good !== undefined) return { state: 'fresh', at: iso(Number(good)) };
+    .get(siteId, since, update);
+  if (good) {
+    // The scheduled backup's own restore check (sitebackups/run.ts), of this very snapshot.
+    const check = db
+      .prepare(
+        `SELECT ok, failed_step, problem, finished_at FROM restore_checks
+         WHERE site_id = ? AND snapshot_id = ? ORDER BY started_at DESC, id DESC LIMIT 1`,
+      )
+      .get(siteId, String(good.snapshot_id));
+    if (check && Number(check.ok) !== 1)
+      return {
+        state: 'failed',
+        step: 'restore',
+        problem: `at “${String(check.failed_step)}”: ${String(check.problem ?? 'it failed')}`,
+        at: iso(Number(good.started_at)),
+      };
+    return {
+      state: 'fresh',
+      at: iso(Number(good.started_at)),
+      restoredAt: check ? iso(Number(check.finished_at)) : null,
+    };
+  }
   const failed = db
     .prepare(
       `SELECT started_at, problem FROM site_snapshots
@@ -58,10 +79,11 @@ function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
   return failed
     ? {
         state: 'failed',
+        step: 'backup',
         problem: String(failed.problem ?? 'the backup failed'),
         at: iso(Number(failed.started_at)),
       }
-    : { state: 'failed', problem: 'no backup ran for this update', at: null };
+    : { state: 'failed', step: 'backup', problem: 'no backup ran for this update', at: null };
 }
 
 function backupFor(
@@ -150,9 +172,13 @@ const clock = (at: string) =>
 export function backupWords(b: ReadyBackup): string {
   switch (b.state) {
     case 'fresh':
-      return `backed up ${clock(b.at)}`;
+      return b.restoredAt
+        ? `backed up and restore-checked ${clock(b.at)}`
+        : `backed up ${clock(b.at)}`;
     case 'failed':
-      return `backup failed: ${b.problem}. Fix it before updating`;
+      return b.step === 'restore'
+        ? `backed up ${b.at ? clock(b.at) : ''}, but the restore check failed ${b.problem}. Fix it before updating`
+        : `backup failed: ${b.problem}. Fix it before updating`;
     case 'host':
       return `${b.host}’s backups`;
     case 'export':
@@ -177,13 +203,22 @@ function updateWords(site: ReadySite): string {
   return `${n} update${n === 1 ? '' : 's'}${extra ? ` (${extra})` : ''}`;
 }
 
+/** "a backup", "2 restore checks", "3 backups or restore checks": whatever failed, named. */
+function failedWhat(failed: ReadySite[]): string {
+  const restores = failed.filter((s) => s.backup.state === 'failed' && s.backup.step === 'restore');
+  const n = failed.length;
+  if (restores.length === n) return n === 1 ? 'a restore check' : `${n} restore checks`;
+  if (restores.length === 0) return n === 1 ? 'a backup' : `${n} backups`;
+  return `${n} backups or restore checks`;
+}
+
 /** Labels and counts only: no plugin names leave for Discord. */
 export function readyMessage(ready: ReadyToUpdate, kamajiUrl: string): string {
   const failed = ready.sites.filter((s) => s.backup.state === 'failed');
   const waiting = ready.sites.reduce((n, s) => n + s.updates.length, 0);
   const head =
     failed.length > 0
-      ? `**Kamaji: ${failed.length === 1 ? 'a backup' : `${failed.length} backups`} failed before the update time.** Fix ${failed.length === 1 ? 'it' : 'them'} before updating.`
+      ? `**Kamaji: ${failedWhat(failed)} failed before the update time.** Fix ${failed.length === 1 ? 'it' : 'them'} before updating.`
       : '**Kamaji: ready to update.**';
   const lines = ready.sites.map(
     (s) =>
