@@ -1198,6 +1198,38 @@ for (const view of VIEWS) {
   else console.log('ok   before-update backups: the panel names which one ran');
 }
 
+// One save, the whole page: Configure on First & Last turns its whole-site backups from weekly to
+// fortnightly, and the Backups panel says so at once, with no page load (siteReload.tsx).
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/${BAD}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const schedule = () =>
+    evaluate(
+      `(document.getElementById('backups')?.textContent.match(/(Weekly|Fortnightly), at 03:00/) ?? [])[1] ?? null`,
+    );
+  if ((await schedule()) !== 'Weekly') problems.push(`the panel started at ${await schedule()}`);
+  await evaluate(`window.__samePage = true`);
+  const asked = await evaluate(`(() => {
+    const radio = document.querySelector('input[name="siteBackups"][value="fortnightly"]');
+    if (!radio) return 'no radio';
+    radio.click();
+    radio.form.requestSubmit();
+    return 'saved';
+  })()`);
+  if (asked !== 'saved') problems.push(`Configure: ${asked}`);
+  let now = null;
+  for (let i = 0; i < 20 && now !== 'Fortnightly'; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    now = await schedule();
+  }
+  if (now !== 'Fortnightly') problems.push(`the Backups panel still says ${now} after the save`);
+  if ((await evaluate('window.__samePage === true')) !== true)
+    problems.push('the page loaded again');
+  if (problems.length) failures.push(`site reload: ${problems.join('; ')}`);
+  else console.log('ok   site reload: a Configure save shows in Backups at once, no page load');
+}
+
 // Pages to check: under the home page's line in Check details, each with its text, both shapes;
 // and in Configure, one row each, ready to change.
 {

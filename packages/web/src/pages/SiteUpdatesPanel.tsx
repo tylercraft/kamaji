@@ -9,6 +9,7 @@ import { runOutcome, updatesPollMs } from '../runHistory';
 import { workTone, workWords } from '../siteStatus';
 import { itemKey as key } from '../updatesView';
 import { useResource } from '../useResource';
+import { useSiteReload } from '../siteReload';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
 import { RememberedDetails } from '../components/remembered';
 
@@ -34,8 +35,10 @@ export function SiteUpdatesPanel({
   /** Where this site's offers stand, from its summary: the same words as Sites and Overview. */
   work: Known<SiteSummary['updateWork']>;
 }) {
+  const { version, reloadSite } = useSiteReload();
   const updates = useResource(`/api/updates?site=${encodeURIComponent(siteId)}`, UpdatesResponse, {
     pollMs: updatesPollMs,
+    version,
   });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState(false);
@@ -62,7 +65,7 @@ export function SiteUpdatesPanel({
       </PanelHead>
       <ResourceView resource={updates} label="this site’s updates">
         {(data) => {
-          const reload = updates.state === 'ready' ? updates.reload : () => {};
+          const reload = reloadSite;
           const site = data.sites[0];
           const latest = data.batches[0];
           const run = latest?.sites[0];
