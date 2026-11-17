@@ -50,6 +50,9 @@ const { queue } = await imp('updates/queue.js');
 const { proposeBatch } = await imp('updates/proposals.js');
 const { loadPasskeys } = await imp('passkeys/store.js');
 const { storeIcon } = await imp('checks/icons.js');
+const { checkReady } = await imp('ready.js');
+const { writeUpdateTime } = await imp('settings.js');
+const { wallClock } = await imp('sitebackups/schedule.js');
 const { CareReport } = await import('@kamaji/shared');
 
 const fixture = (path) => readFileSync(join(SRC, path), 'utf8');
@@ -492,6 +495,21 @@ const freePort = () =>
       s.close(() => resolve(port));
     });
   });
+// "Ready to update": the update time set to this hour in NZ, so it went just now, after the
+// backups and reports above (First & Last's backup is days old, so it leads as failed).
+{
+  const nz = wallClock('Pacific/Auckland', now);
+  // Aleya's backup for this update, a quarter of an hour before it; First & Last's is days old.
+  const before = now - (nz.minute + 15) * MIN;
+  snap.run(OK, before, before + MIN, 1, 'd'.repeat(64), 185e6, 1e6, 9.3e6, '7.1.4', null, null);
+  writeUpdateTime(db, { weekday: nz.weekday, hour: nz.hour }, now - DAY, 'smoke@localhost');
+  await checkReady(db, now, {
+    discord: { configured: false, send: async () => false },
+    kamajiUrl: 'http://127.0.0.1',
+    recheck: null,
+  });
+}
+
 const LOGIN = 'smoke@localhost';
 // Passkeys: a file of the smoke's own, filled from the Passkeys page by Chrome's virtual
 // authenticator. A passkey can't belong to an IP address, so that part runs on localhost.
@@ -599,6 +617,7 @@ const PAGES = [
   '/rules',
   '/sites/new',
   '/passkeys',
+  '/settings',
 ];
 const VIEWS = [
   { name: 'desktop', width: 1300, mobile: false, scheme: 'light' },
@@ -1092,6 +1111,41 @@ for (const view of VIEWS) {
     console.log(
       'ok   platforms: grouped, remembered, renewals shown, static has no WordPress parts',
     );
+}
+
+// Ready to update, at the top of Overview: the failed backup first, with what to do; the updates
+// by name, majors marked. And Settings, with the update time.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const text = await evaluate('document.body.textContent');
+  if (!text.includes('Ready to update')) problems.push('no Ready to update on Overview');
+  if (!/A whole-site backup failed: fix it before updating/.test(text))
+    problems.push('the failed backup doesn’t lead');
+  const first = await evaluate(
+    `document.querySelector('[aria-labelledby="ready"] ul > li a')?.textContent`,
+  );
+  if (first !== 'First & Last Records') problems.push(`first row: ${first}`);
+  if (!/Aleya Hoerlein.*Backed up/.test(text)) problems.push('Aleya’s fresh backup isn’t shown');
+  if (!text.includes('Nothing is approved until you approve it'))
+    problems.push('doesn’t say nothing is approved');
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'ready-to-update.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  await send('Page.navigate', { url: `http://localhost:${appPort}/settings` });
+  await new Promise((r) => setTimeout(r, 1000));
+  const settings = await evaluate('document.body.textContent');
+  if (!settings.includes('Update time') || !/Next: /.test(settings))
+    problems.push('Settings has no update time');
+  if (SHOTS) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'settings.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`ready to update: ${problems.join('; ')}`);
+  else
+    console.log('ok   ready to update: on Overview, failed backup first; Settings shows the time');
 }
 
 // Pages to check: under the home page's line in Check details, each with its text, both shapes;

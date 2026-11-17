@@ -11,7 +11,8 @@ import { readOutside, syncOutside, workerFresh } from './checks/outside.js';
 import { checkServers } from './checks/serverReport.js';
 import { checkSites } from './checks/sites.js';
 import { checkDirectory } from './inventory/directory.js';
-import { checkReports } from './inventory/report.js';
+import { checkReports, reportAll } from './inventory/report.js';
+import { checkReady } from './ready.js';
 import { checkWordfence } from './wordfence/feed.js';
 import { checkEndOfLife } from './endOfLife/check.js';
 import { backupsLauncher, updaterLauncher } from './updates/launcher.js';
@@ -133,6 +134,18 @@ const runChecks = async (signal: AbortSignal) => {
       digestAt: config.digestAt,
       signal,
     };
+    // At the weekly update time: Recheck all, then "Ready to update". It approves nothing.
+    const care = config.care;
+    await steps.step('ready to update', () =>
+      checkReady(db, Date.now(), {
+        discord,
+        kamajiUrl: config.kamajiUrl,
+        recheck: care
+          ? () => reportAll(db, { keys: care, send: careRequest, now: Date.now })
+          : null,
+        signal,
+      }),
+    );
     await steps.step('notifications', async () => {
       await notifyNow(db, Date.now(), discord, notify);
       await sendDigest(db, Date.now(), discord, notify);

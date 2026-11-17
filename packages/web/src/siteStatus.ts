@@ -421,7 +421,7 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
         lines.push(
           newest && !newest.ok
             ? line(label, 'red', 'Failed', newest.problem ?? 'The backup failed.', newest.startedAt)
-            : line(label, 'neutral', 'None yet', 'The first runs tonight at 03:15.'),
+            : line(label, 'neutral', 'None yet', 'The first runs within the hour.'),
         );
       else if (newest && !newest.ok)
         lines.push(

@@ -22,6 +22,8 @@ import {
   type SiteIconsResponse,
   type BackupExpectation,
   type UpdatesResponse,
+  type SettingsResponse,
+  UpdateTime,
 } from '@kamaji/shared';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -49,6 +51,9 @@ import { challengeFor } from './passkeys/webauthn.js';
 import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
 import type { Db } from './db.js';
+import { readUpdateTime, writeUpdateTime } from './settings.js';
+import { recordEvent } from './events.js';
+import { updateTimes } from './sitebackups/schedule.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
   activity,
@@ -127,6 +132,7 @@ function sameOrigin(c: Context): boolean {
  * local caller gets beyond reading.
  */
 const ORIGINLESS_WRITES = new Set(['POST /api/proposals']);
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /**
  * Writes that don't need a passkey (TY-170): a proposal (it starts nothing), asking for a
@@ -311,7 +317,30 @@ export function createApp({
       ids: loaded.passkeys.map((p) => p.id),
     });
   });
-  app.get('/api/overview', (c) => c.json(overview(db)));
+  app.get('/api/overview', (c) => c.json(overview(db, now())));
+
+  // Settings: the weekly update time. Changing it moves every site's backup night, so it's a
+  // write like any other, behind a passkey.
+  const settings = (): SettingsResponse => {
+    const updateTime = readUpdateTime(db);
+    return {
+      updateTime,
+      nextUpdateAt: new Date(updateTimes(now(), updateTime).next).toISOString(),
+    };
+  };
+  app.get('/api/settings', (c) => c.json(settings()));
+  app.post('/api/settings/update-time', async (c) => {
+    const body = await readJson(c, UpdateTime);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const before = readUpdateTime(db);
+    writeUpdateTime(db, body, now(), login);
+    if (before.weekday !== body.weekday || before.hour !== body.hour)
+      recordEvent(db, now(), {
+        kind: 'kamaji.update-time',
+        summary: `Update time set to ${WEEKDAYS[body.weekday]} ${String(body.hour).padStart(2, '0')}:00 NZ time (by ${login})`,
+      });
+    return c.json(settings());
+  });
   app.get('/api/sites', (c) => c.json({ sites: siteSummaries(db, workerOn) }));
   // Add site and Remove (sites/setup.ts).
   app.post('/api/sites', async (c) => {
@@ -441,6 +470,7 @@ export function createApp({
               : (String(row.backup_expectation) as BackupExpectation),
         },
         exporting.get(id),
+        now(),
       ),
     );
   });
@@ -589,6 +619,7 @@ export function createApp({
     if (result === 'not-craftish') return c.json({ error: 'not_craftish' }, 400);
     if (result === 'no-consent') return c.json({ error: 'no_consent' }, 400);
     if (result === 'connected') return c.json({ error: 'connected' }, 409);
+    if (result === 'bad-zone') return c.json({ error: 'bad_zone' }, 400);
     if (typeof result === 'object') return c.json({ error: 'bad_page', page: result.refused }, 400);
     return c.json({ ok: true });
   });

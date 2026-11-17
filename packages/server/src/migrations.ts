@@ -573,4 +573,20 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 22,
+    name: 'update time and site time zones',
+    // One weekly update time (sitebackups/schedule.ts), set on Settings: whole-site backups run at
+    // 03:00 in each site's own time zone on the last night before it, and "Ready to update" goes
+    // at it. Every site starts in NZ time; weekly and fortnightly schedules carry over as they are.
+    sql: `
+      ALTER TABLE sites ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'Pacific/Auckland';
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT
+      );
+    `,
+  },
 ];

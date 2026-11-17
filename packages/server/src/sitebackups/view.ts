@@ -4,14 +4,16 @@
 import type { RestoreCheck, SiteSnapshot, WholeSiteBackups } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { readState } from '../state.js';
-import { eligible, INTERVAL, REPOSITORY } from './run.js';
+import { readUpdateTime } from '../settings.js';
+import { eligible, REPOSITORY } from './run.js';
+import { nextNight } from './schedule.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const isoOrNull = (v: unknown) => (v === null || v === undefined ? null : iso(Number(v)));
 const intOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 const strOrNull = (v: unknown) => (v === null || v === undefined ? null : String(v));
 
-export function wholeSiteView(db: Db, siteId: string): WholeSiteBackups | null {
+export function wholeSiteView(db: Db, siteId: string, now = Date.now()): WholeSiteBackups | null {
   const site = db.prepare('SELECT * FROM sites WHERE id = ? AND removed_at IS NULL').get(siteId);
   if (!site || site.host_kind !== 'craftish') return null;
   const schedule = String(site.site_backup_schedule) as WholeSiteBackups['schedule'];
@@ -74,10 +76,15 @@ export function wholeSiteView(db: Db, siteId: string): WholeSiteBackups | null {
     lastGoodAt: isoOrNull(lastGood),
     nextDueAt:
       active && schedule !== 'off'
-        ? lastGood === null || lastGood === undefined
-          ? null
-          : iso(Number(lastGood) + INTERVAL[schedule])
+        ? iso(
+            nextNight(now, readUpdateTime(db), {
+              zone: String(site.time_zone),
+              schedule,
+              lastGood: lastGood === null || lastGood === undefined ? null : Number(lastGood),
+            }),
+          )
         : null,
+    timeZone: String(site.time_zone),
     snapshots,
     restoreChecks,
     pending: {
@@ -97,7 +104,7 @@ export function requestWholeSite(
   now: number,
 ): 'queued' | 'not-active' | 'already' {
   if (!eligible(db, siteId)) return 'not-active';
-  const view = wholeSiteView(db, siteId);
+  const view = wholeSiteView(db, siteId, now);
   if (view?.pending[kind]) return 'already';
   db.prepare(
     `INSERT INTO site_backup_requests (site_id, kind, requested_at, requested_by) VALUES (?, ?, ?, ?)`,

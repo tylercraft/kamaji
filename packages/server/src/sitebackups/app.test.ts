@@ -117,7 +117,8 @@ describe('whole-site backups in a site’s Backups', () => {
     expect((await backups('one.test')).wholeSite).toMatchObject({
       pending: { backup: null },
       lastGoodAt: new Date(T).toISOString(),
-      nextDueAt: new Date(T + 6.5 * 24 * 60 * 60_000).toISOString(),
+      // Tuesday 17 November, 03:00 NZ: the night before the default update time.
+      nextDueAt: new Date(Date.UTC(2026, 10, 16, 14, 0)).toISOString(),
     });
   });
 });

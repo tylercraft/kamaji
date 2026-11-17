@@ -8,6 +8,7 @@ import { AddSitePage } from './pages/AddSitePage';
 import { RulesPage } from './pages/RulesPage';
 import { SitePage } from './pages/SitePage';
 import { ServersPage } from './pages/ServersPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SitesPage } from './pages/SitesPage';
 import { UpdatesPage } from './pages/UpdatesPage';
 import { RouterProvider, useRoute } from './router';
@@ -21,6 +22,7 @@ const pages: Record<string, ComponentType> = {
   '/activity': ActivityPage,
   '/rules': RulesPage,
   '/passkeys': PasskeysPage,
+  '/settings': SettingsPage,
 };
 
 function Page() {

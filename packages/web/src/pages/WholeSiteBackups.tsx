@@ -20,35 +20,41 @@ const WORDS: Record<string, string> = {
   already_requested: 'it’s already asked for',
 };
 
-/** The night a backup due at this time runs: the first 03:15 on or after it. */
-function nextNight(iso: string): string {
-  const due = new Date(iso);
-  const night = new Date(due);
-  night.setHours(3, 15, 0, 0);
-  if (night < due) night.setDate(night.getDate() + 1);
-  return night.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-}
-
 const day = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 
-/** When the next nightly run takes this site, or since when it's been overdue. */
+/** A night's start, in this browser's time and, when it differs, the site's own. */
+function nightWords(iso: string, zone: string): string {
+  const at = new Date(iso);
+  const here = at.toLocaleString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const own = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (own === zone) return here;
+  return `${here} (03:00 in ${zone.replace(/_/g, ' ')})`;
+}
+
+/** When this site's next backup night starts, or since when it's been due or overdue. */
 function NextRun({ data, now }: { data: Data; now: number }) {
-  if (data.schedule === 'off') return null;
-  if (!data.lastGoodAt || !data.nextDueAt) return <>Tonight at 03:15</>;
+  if (data.schedule === 'off' || !data.nextDueAt) return null;
   const due = Date.parse(data.nextDueAt);
-  if (due >= now) return <>{nextNight(data.nextDueAt)}, 03:15</>;
-  const overdueAt =
-    Date.parse(data.lastGoodAt) + SCHEDULE_DAYS[data.schedule] * 86_400_000 + OVERDUE_GRACE;
-  return now > overdueAt ? (
+  if (due > now) return <>{nightWords(data.nextDueAt, data.timeZone)}</>;
+  const overdueAt = data.lastGoodAt
+    ? Date.parse(data.lastGoodAt) + SCHEDULE_DAYS[data.schedule] * 86_400_000 + OVERDUE_GRACE
+    : null;
+  return overdueAt !== null && now > overdueAt ? (
     <>
       <Pill tone="amber">
         <Dot /> Overdue
       </Pill>
-      since {day(overdueAt)}; each night at 03:15 tries again
+      since {day(overdueAt)}; the hourly run tries again
     </>
   ) : (
-    <>Due since {nextNight(data.nextDueAt)}; each night at 03:15 tries again</>
+    <>Due now: the next hourly run, at a quarter past, takes it</>
   );
 }
 
@@ -239,7 +245,10 @@ export function WholeSiteBackups({
         <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
           <Rows>
             <dt>Schedule</dt>
-            <dd>{SCHEDULES[data.schedule]}, nightly at 03:15 when due</dd>
+            <dd>
+              {SCHEDULES[data.schedule]}, at 03:00 {data.timeZone.replace(/_/g, ' ')} time on the
+              night before the update time (Settings)
+            </dd>
             <dt>Agreement</dt>
             <dd>
               {data.own ? (

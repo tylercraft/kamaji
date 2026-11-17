@@ -1,4 +1,4 @@
-// The backups process (ops/backups-plan.md, ops/README.md "Whole-site backups"): nightly from
+// The backups process (ops/backups-plan.md, ops/README.md "Whole-site backups"): hourly from
 // its LaunchAgent, dev.craftish.kamaji-backups, and when the Backups panel asks. It holds the pull
 // key and the restic password, which the app never does: its Doppler config is `backup`, scoped
 // to ~/.kamaji-backups. One at a time: a second start while one runs exits at once.

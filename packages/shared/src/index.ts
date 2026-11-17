@@ -444,6 +444,8 @@ export const ConfigureSiteRequest = z.object({
   siteBackups: SiteBackupSchedule.optional(),
   /** Ticked: the client agreed to whole-site backups. Needed to turn them on for a client's site. */
   clientAgreed: z.boolean().optional(),
+  /** The site's IANA time zone, for its backups' quiet hour; left as it was when absent. */
+  timeZone: z.string().trim().min(1).max(64).optional(),
 });
 export type ConfigureSiteRequest = z.infer<typeof ConfigureSiteRequest>;
 
@@ -489,6 +491,8 @@ export const SiteDetailResponse = z.object({
   }),
   /** Its icon (checks/icons.ts); null until Kamaji has tried. */
   icon: SiteIconStatus.nullable(),
+  /** IANA time zone: whole-site backups run at 03:00 there. */
+  timeZone: z.string(),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 
@@ -774,6 +778,64 @@ export const StatusResponse = z.object({
 });
 export type StatusResponse = z.infer<typeof StatusResponse>;
 
+/** The weekly update time, in NZ time: weekday 0 is Sunday. */
+export const UpdateTime = z.object({
+  weekday: z.number().int().min(0).max(6),
+  hour: z.number().int().min(0).max(23),
+});
+export type UpdateTime = z.infer<typeof UpdateTime>;
+
+export const SettingsResponse = z.object({
+  updateTime: UpdateTime,
+  /** The next update time, from now. */
+  nextUpdateAt: Timestamp,
+});
+export type SettingsResponse = z.infer<typeof SettingsResponse>;
+
+/** How a site stands for the update time: its whole-site backup, or what backs it up instead. */
+export const ReadyBackup = z.discriminatedUnion('state', [
+  /** A good whole-site snapshot for this update, and when it was taken. */
+  z.object({ state: z.literal('fresh'), at: Timestamp }),
+  /** Whole-site backups are on, and this update's didn't happen: why, in plain words. */
+  z.object({ state: z.literal('failed'), problem: z.string(), at: Timestamp.nullable() }),
+  /** The host's own backups (Kinsta, WP Engine). */
+  z.object({ state: z.literal('host'), host: z.string() }),
+  /** Only the database export the updater takes before it starts. */
+  z.object({ state: z.literal('export') }),
+  z.object({ state: z.literal('client') }),
+  z.object({ state: z.literal('tyler') }),
+  z.object({ state: z.literal('unknown') }),
+]);
+export type ReadyBackup = z.infer<typeof ReadyBackup>;
+
+export const ReadySite = z.object({
+  siteId: z.string(),
+  siteName: z.string(),
+  backup: ReadyBackup,
+  updates: z.array(
+    z.object({
+      name: z.string(),
+      from: z.string(),
+      to: z.string(),
+      major: z.boolean(),
+      security: z.boolean(),
+    }),
+  ),
+  /** Why its updates can't be queued now, or that Recheck all couldn't reach it; null when fine. */
+  note: z.string().nullable(),
+});
+export type ReadySite = z.infer<typeof ReadySite>;
+
+/** "Ready to update", as sent at the update time. Kamaji approves nothing itself. */
+export const ReadyToUpdate = z.object({
+  /** The update time it's for. */
+  for: Timestamp,
+  sentAt: Timestamp,
+  /** Failed backups first. */
+  sites: z.array(ReadySite),
+});
+export type ReadyToUpdate = z.infer<typeof ReadyToUpdate>;
+
 export const OverviewResponse = z.object({
   sites: z.object({
     total: z.number().int(),
@@ -792,6 +854,8 @@ export const OverviewResponse = z.object({
   dismissed: z.array(Issue),
   /** Pending updates. Unknown until a connected site has reported its inventory. */
   updatesWaiting: known(z.number().int()),
+  /** The last "Ready to update", for a day after it went; null otherwise. */
+  ready: ReadyToUpdate.nullable(),
 });
 export type OverviewResponse = z.infer<typeof OverviewResponse>;
 
@@ -1069,8 +1133,10 @@ export const WholeSiteBackups = z.object({
   /** Switched on, with the agreement it needs: what the process will back up. */
   active: z.boolean(),
   lastGoodAt: Timestamp.nullable(),
-  /** When the nightly run next takes it; null while switched off. */
+  /** When its next backup night starts (now, while one is due); null while switched off. */
   nextDueAt: Timestamp.nullable(),
+  /** The site's IANA time zone: its backups run at 03:00 there. */
+  timeZone: z.string(),
   /** Newest first. */
   snapshots: z.array(SiteSnapshot),
   /** Newest first. */

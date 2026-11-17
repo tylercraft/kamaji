@@ -1,0 +1,247 @@
+// "Ready to update" (Tyler, 2026-11-17): at the weekly update time, a fresh report from every
+// connected site (Recheck all), then one message, to Discord and the top of Overview: each site's
+// backup for this update and the updates waiting on it, majors marked. A failed backup leads.
+// Kamaji approves nothing itself: the message links to Updates, where Tyler does.
+//
+// Discord is a third party, so it gets labels and counts, never plugin names (discord.ts); the
+// list itself is on Overview. Like notify.ts, the message is marked sent only once Discord takes
+// it, and a failed send is retried each cycle for 3 hours after the update time. The recheck
+// runs once.
+import type { ReadyBackup, ReadySite, ReadyToUpdate } from '@kamaji/shared';
+import type { Db } from './db.js';
+import type { Discord } from './discord.js';
+import { recordEvent } from './events.js';
+import { readUpdateTime } from './settings.js';
+import { eligible } from './sitebackups/eligible.js';
+import { backupNight, KAMAJI_ZONE, updateTimes } from './sitebackups/schedule.js';
+import { readState, writeState } from './state.js';
+import { queue, updatableSites } from './updates/queue.js';
+
+const HOUR = 60 * 60_000;
+const WEEK = 7 * 24 * HOUR;
+/** Kamaji down over the update time sends it late, up to this long after; not the next morning. */
+export const READY_WINDOW = 3 * HOUR;
+/** How long Overview shows it. */
+export const SHOWN_FOR = 24 * HOUR;
+const KEY = 'ready-to-update';
+
+interface Stored {
+  ready: ReadyToUpdate;
+  sent: boolean;
+}
+
+const HOSTS: Record<string, string> = { kinsta: 'Kinsta', wpengine: 'WP Engine' };
+const iso = (ms: number) => new Date(ms).toISOString();
+
+/** This update's whole-site backup: a good snapshot since its night, or why there isn't one. */
+function wholeSite(db: Db, siteId: string, update: number): ReadyBackup {
+  const row = db
+    .prepare('SELECT time_zone, site_backup_schedule FROM sites WHERE id = ?')
+    .get(siteId);
+  const night = backupNight(update, String(row?.time_zone));
+  // A fortnightly site's off week rests on last week's snapshot. An hour's slack, as schedule.ts.
+  const since = (row?.site_backup_schedule === 'fortnightly' ? night - WEEK : night) - HOUR;
+  const good = db
+    .prepare(
+      `SELECT MAX(started_at) AS at FROM site_snapshots
+       WHERE site_id = ? AND ok = 1 AND started_at >= ? AND started_at < ?`,
+    )
+    .get(siteId, since, update)?.at;
+  if (good !== null && good !== undefined) return { state: 'fresh', at: iso(Number(good)) };
+  const failed = db
+    .prepare(
+      `SELECT started_at, problem FROM site_snapshots
+       WHERE site_id = ? AND ok = 0 AND started_at >= ? AND started_at < ?
+       ORDER BY started_at DESC LIMIT 1`,
+    )
+    .get(siteId, since, update);
+  return failed
+    ? {
+        state: 'failed',
+        problem: String(failed.problem ?? 'the backup failed'),
+        at: iso(Number(failed.started_at)),
+      }
+    : { state: 'failed', problem: 'no backup ran for this update', at: null };
+}
+
+function backupFor(
+  db: Db,
+  site: { id: string; hostKind: string; backupKind: string | null },
+  update: number,
+): ReadyBackup {
+  if (eligible(db, site.id)) return wholeSite(db, site.id, update);
+  switch (site.backupKind) {
+    case 'host':
+      return { state: 'host', host: HOSTS[site.hostKind] ?? 'the host' };
+    case 'kamaji':
+      return { state: 'export' };
+    case 'client':
+      return { state: 'client' };
+    case 'tyler':
+      return { state: 'tyler' };
+    default:
+      return { state: 'unknown' };
+  }
+}
+
+/** The message's content: every site Kamaji can update, and any with whole-site backups on. */
+export function readyToUpdate(
+  db: Db,
+  now: number,
+  update: number,
+  unreachable: Map<string, string> = new Map(),
+): ReadyToUpdate {
+  const { items } = queue(db);
+  const updatable = updatableSites(db);
+  const known = new Set(updatable.map((s) => s.id));
+  const backedUp = db
+    .prepare(
+      `SELECT id, name, host_kind, backup_expectation FROM sites WHERE removed_at IS NULL
+       ORDER BY name COLLATE NOCASE`,
+    )
+    .all()
+    .filter((r) => !known.has(String(r.id)) && eligible(db, String(r.id)))
+    .map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      hostKind: String(r.host_kind),
+      backupKind: r.backup_expectation === null ? null : String(r.backup_expectation),
+      blocked: null as string | null,
+    }));
+  const rows = db
+    .prepare('SELECT id, backup_expectation FROM sites WHERE removed_at IS NULL')
+    .all()
+    .map((r) => [
+      String(r.id),
+      r.backup_expectation === null ? null : String(r.backup_expectation),
+    ]);
+  const expectation = new Map(rows as [string, string | null][]);
+  const sites: ReadySite[] = [
+    ...updatable.map((s) => ({ ...s, backupKind: expectation.get(s.id) ?? null })),
+    ...backedUp,
+  ].map((s) => ({
+    siteId: s.id,
+    siteName: s.name,
+    backup: backupFor(db, s, update),
+    updates: items
+      .filter((i) => i.siteId === s.id)
+      .map((i) => ({ name: i.name, from: i.from, to: i.to, major: i.major, security: i.security })),
+    note: unreachable.has(s.id)
+      ? `Recheck all couldn’t reach it (${unreachable.get(s.id)}): its updates are from the last report`
+      : s.blocked,
+  }));
+  sites.sort(
+    (a, b) =>
+      Number(b.backup.state === 'failed') - Number(a.backup.state === 'failed') ||
+      a.siteName.localeCompare(b.siteName),
+  );
+  return { for: iso(update), sentAt: iso(now), sites };
+}
+
+const clock = (at: string) =>
+  new Intl.DateTimeFormat('en-NZ', {
+    timeZone: KAMAJI_ZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(at));
+
+export function backupWords(b: ReadyBackup): string {
+  switch (b.state) {
+    case 'fresh':
+      return `backed up ${clock(b.at)}`;
+    case 'failed':
+      return `backup failed: ${b.problem}. Fix it before updating`;
+    case 'host':
+      return `${b.host}’s backups`;
+    case 'export':
+      return 'pre-update export only';
+    case 'client':
+      return 'the client’s backups';
+    case 'tyler':
+      return 'your own backup, confirmed when you approve';
+    case 'unknown':
+      return 'backups not decided: set them under Configure';
+  }
+}
+
+function updateWords(site: ReadySite): string {
+  const n = site.updates.length;
+  if (n === 0) return 'nothing waiting';
+  const majors = site.updates.filter((u) => u.major).length;
+  const security = site.updates.filter((u) => u.security).length;
+  const extra = [majors > 0 && `${majors} major`, security > 0 && `${security} security`]
+    .filter(Boolean)
+    .join(', ');
+  return `${n} update${n === 1 ? '' : 's'}${extra ? ` (${extra})` : ''}`;
+}
+
+/** Labels and counts only: no plugin names leave for Discord. */
+export function readyMessage(ready: ReadyToUpdate, kamajiUrl: string): string {
+  const failed = ready.sites.filter((s) => s.backup.state === 'failed');
+  const waiting = ready.sites.reduce((n, s) => n + s.updates.length, 0);
+  const head =
+    failed.length > 0
+      ? `**Kamaji: ${failed.length === 1 ? 'a backup' : `${failed.length} backups`} failed before the update time.** Fix ${failed.length === 1 ? 'it' : 'them'} before updating.`
+      : '**Kamaji: ready to update.**';
+  const lines = ready.sites.map(
+    (s) =>
+      `- ${s.siteName}: ${backupWords(s.backup)} · ${updateWords(s)}${s.note && s.backup.state !== 'failed' ? ' · not rechecked' : ''}`,
+  );
+  return [
+    head,
+    `${waiting} update${waiting === 1 ? '' : 's'} waiting. Nothing is approved until you approve it.`,
+    ...lines,
+    `<${kamajiUrl.replace(/\/$/, '')}/updates>`,
+  ].join('\n');
+}
+
+export function readReady(db: Db, now: number): ReadyToUpdate | null {
+  const stored = readState<Stored>(db, KEY);
+  if (!stored) return null;
+  return now - Date.parse(stored.ready.sentAt) < SHOWN_FOR ? stored.ready : null;
+}
+
+export interface ReadyDeps {
+  discord: Discord;
+  kamajiUrl: string;
+  /** Recheck all: a fresh report from each connected site, with why any didn't answer. */
+  recheck: (() => Promise<{ id: string; ok: boolean; problem: string | null }[]>) | null;
+  signal?: AbortSignal;
+}
+
+/** The cycle's part: at the update time, once. Returns whether it composed one this cycle. */
+export async function checkReady(db: Db, now: number, deps: ReadyDeps): Promise<boolean> {
+  const update = updateTimes(now, readUpdateTime(db)).last;
+  if (now - update > READY_WINDOW) return false;
+  const stored = readState<Stored>(db, KEY);
+  if (stored && stored.ready.for === iso(update)) {
+    if (stored.sent || !deps.discord.configured) return false;
+    if (await deps.discord.send(readyMessage(stored.ready, deps.kamajiUrl), deps.signal))
+      writeState(db, KEY, { ...stored, sent: true }, now);
+    return false;
+  }
+  const unreachable = new Map<string, string>();
+  if (deps.recheck)
+    for (const r of await deps.recheck())
+      if (!r.ok) unreachable.set(r.id, r.problem ?? 'no report');
+  const ready = readyToUpdate(db, now, update, unreachable);
+  const failed = ready.sites.filter((s) => s.backup.state === 'failed').length;
+  const waiting = ready.sites.reduce((n, s) => n + s.updates.length, 0);
+  recordEvent(db, now, {
+    kind: 'kamaji.ready-to-update',
+    summary:
+      failed > 0
+        ? `Ready to update, with ${failed} failed backup${failed === 1 ? '' : 's'} to fix first: ${waiting} updates waiting`
+        : `Ready to update: ${waiting} updates waiting, no backup failed`,
+  });
+  // Written before the send, so the recheck isn't repeated if Discord is down.
+  writeState(db, KEY, { ready, sent: false } satisfies Stored, now);
+  if (
+    deps.discord.configured &&
+    (await deps.discord.send(readyMessage(ready, deps.kamajiUrl), deps.signal))
+  )
+    writeState(db, KEY, { ready, sent: true } satisfies Stored, now);
+  return true;
+}

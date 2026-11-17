@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Kamaji's whole-site backups on molcajete (ops/backups-plan.md): nightly at 03:15, and when
-     the app kickstarts it for a request from a site's Backups panel. It runs what's due, then
-     exits. Doppler's scope for ~/.kamaji-backups holds the backup config's service token, so this
+<!-- Kamaji's whole-site backups on molcajete (ops/backups-plan.md): hourly at a quarter past,
+     and when the app kickstarts it for a request from a site's Backups panel. It backs up each site
+     whose backup night (03:00 its own time, before the update time) has begun, does the night's
+     restore check in the 03:15 run only, then exits. Doppler's scope for ~/.kamaji-backups holds the backup config's service token, so this
      process, and only this one, gets the restic password. Runbook: ops/README.md, "Whole-site
      backups". -->
 <plist version="1.0">
@@ -30,10 +31,9 @@
     <key>RESTIC_REPOSITORY</key>
     <string>/Users/tylercraft/kamaji-backups/restic</string>
   </dict>
+  <!-- Minute alone: every hour at :15. -->
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Hour</key>
-    <integer>3</integer>
     <key>Minute</key>
     <integer>15</integer>
   </dict>
