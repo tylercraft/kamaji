@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from './db.js';
 import { createDiscord, parseWebhookUrl, readDiscord, type Discord } from './discord.js';
 import { clearIssue, raiseIssue } from './issues.js';
-import { localParts, notifyNow, REMINDER_MS, sendDigest, type NotifyOptions } from './notify.js';
+import {
+  localParts,
+  notifyNow,
+  recoveryLine,
+  REMINDER_MS,
+  sendDigest,
+  type NotifyOptions,
+} from './notify.js';
 import { testDb } from './testing.js';
 
 const T0 = Date.UTC(2026, 10, 9, 0, 0); // 13:00 in Christchurch
@@ -36,6 +43,66 @@ function addSite(db: Db, id: string, tailnetOnly = false) {
 const down = (id: string) =>
   ({ resourceType: 'site', resourceId: id, kind: 'down', severity: 'urgent' }) as const;
 
+describe('a fixed issue’s line', () => {
+  const fixed = (kind: string, summary: string, name: string | null = 'Aleya Hoerlein') =>
+    recoveryLine({
+      kind,
+      summary,
+      resource_type: name === null ? 'server' : 'site',
+      site_name: name,
+      first_seen_at: T0,
+      resolved_at: T0 + 16 * 60 * MIN,
+    });
+
+  it('leads with the good news, and puts the old problem last', () => {
+    expect(
+      fixed(
+        'backup-failed',
+        'Whole-site backup of Aleya Hoerlein failed: craftish: not on the allowlist',
+      ),
+    ).toBe(
+      '✅ **Fixed:** Aleya Hoerlein’s whole-site backups work again (failed for 16 h: craftish: not on the allowlist)',
+    );
+    expect(
+      fixed(
+        'backup-failed',
+        'Whole-site backup of Aleya Hoerlein before update failed: the pull timed out',
+      ),
+    ).toBe(
+      '✅ **Fixed:** Aleya Hoerlein’s whole-site backups work again (failed for 16 h: the pull timed out)',
+    );
+    expect(fixed('down', 'Aleya Hoerlein is down: HTTP 503')).toBe(
+      '✅ **Fixed:** Aleya Hoerlein is back up (down for 16 h: HTTP 503)',
+    );
+    expect(fixed('certificate', 'Aleya Hoerlein’s certificate expires in 5 days')).toBe(
+      '✅ **Fixed:** Aleya Hoerlein’s certificate was renewed (open for 16 h: certificate expires in 5 days)',
+    );
+    expect(
+      fixed(
+        'restore-check-failed',
+        'Aleya Hoerlein’s restore check failed at “home page”: HTTP 500',
+      ),
+    ).toBe(
+      '✅ **Fixed:** Aleya Hoerlein restores again (failed for 16 h: at “home page”: HTTP 500)',
+    );
+  });
+
+  it('says fixed after how long for every other kind', () => {
+    expect(fixed('stale-updates', 'Aleya Hoerlein has updates waiting over 30 days')).toBe(
+      '✅ **Fixed** after 16 h: Aleya Hoerlein has updates waiting over 30 days',
+    );
+    expect(fixed('down', 'craftish isn’t answering SSH', null)).toBe(
+      '✅ **Fixed** after 16 h: craftish isn’t answering SSH',
+    );
+  });
+
+  it('keeps the whole summary when it isn’t worded as expected', () => {
+    expect(fixed('down', 'Something else went wrong')).toBe(
+      '✅ **Fixed:** Aleya Hoerlein is back up (down for 16 h: Something else went wrong)',
+    );
+  });
+});
+
 describe('notifyNow', () => {
   it('sends one alert, one recovery, and nothing in between', async () => {
     const db = testDb();
@@ -52,7 +119,7 @@ describe('notifyNow', () => {
 
     expect(sent).toEqual([
       '**Kamaji**\n- a.test is down: HTTP 503\n<https://kamaji.test>',
-      '**Kamaji**\n- Resolved: a.test is down: HTTP 502 (after 25 min)\n<https://kamaji.test>',
+      '**Kamaji**\n- ✅ **Fixed:** a.test is back up (down for 25 min: HTTP 502)\n<https://kamaji.test>',
     ]);
   });
 
@@ -88,7 +155,9 @@ describe('notifyNow', () => {
     await notifyNow(db, T0 + REMINDER_MS - MIN, discord, options);
     await notifyNow(db, T0 + REMINDER_MS, discord, options);
     await notifyNow(db, T0 + REMINDER_MS + 5 * MIN, discord, options);
-    expect(sent[1]).toBe('**Kamaji**\n- Still open after 24 h: a down\n<https://kamaji.test>');
+    expect(sent[1]).toBe(
+      '**Kamaji**\n- ⚠️ **Still open** after 24 h: a down\n<https://kamaji.test>',
+    );
     expect(sent).toHaveLength(2);
   });
 
