@@ -377,6 +377,40 @@ describe('a restore check after each scheduled backup', () => {
     ]);
   });
 
+  it('Back up site now is checked straight after too, once the backups taken with it are done', async () => {
+    const db = testDb();
+    site(db, 'asked.test');
+    site(db, 'updating.test');
+    // Neither is due: both backed up since their night.
+    snapshot(db, 'asked.test', LATE - HOUR);
+    snapshot(db, 'updating.test', LATE - HOUR);
+    const ask = db.prepare(
+      `INSERT INTO site_backup_requests (site_id, kind, requested_at, requested_by, batch_id)
+       VALUES (?, 'backup', ?, ?, ?)`,
+    );
+    ask.run('asked.test', LATE, 'tylercraft@github', null);
+    ask.run('updating.test', LATE, 'updater', 'batch-1');
+    const { d, calls, restored, restoredSnapshots } = deps(db, undefined, LATE);
+    let order: string[] = [];
+    const restore = d.restore;
+    d.restore = async (s, id) => {
+      order = [...calls];
+      return restore(s, id);
+    };
+    await runBackups(d);
+    // Only the panel's backup is checked, and after the updater's backup.
+    expect(restored).toEqual(['asked.test']);
+    expect(order.filter((c) => c.startsWith('backup '))).toEqual([
+      'backup asked.test',
+      'backup updating.test',
+    ]);
+    const made = rows(
+      db,
+      "SELECT snapshot_id FROM site_snapshots WHERE site_id = 'asked.test' ORDER BY id DESC LIMIT 1",
+    )[0]!.snapshot_id;
+    expect(restoredSnapshots).toEqual([made]);
+  });
+
   it('a failed backup gets no check', async () => {
     const db = testDb();
     site(db, 'one.test');

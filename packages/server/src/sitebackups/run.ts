@@ -301,16 +301,28 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   // Requests first, and again after each scheduled site: an update waiting on its backup
   // shouldn't wait for the whole night's list.
   const requests = async () => {
+    // Back up site now is restore-checked straight after, like a scheduled backup; a snapshot
+    // the updater asked for isn't. The checks wait until every backup taken here is done, so an
+    // update waiting on its own backup isn't held behind one.
+    const toCheck: { siteId: string; snapshotId: string | null }[] = [];
     for (const request of takeRequests(db, now())) {
       if (stopped()) return;
       if (!eligible(db, request.siteId)) continue;
       if (request.kind === 'backup') {
-        await backUpSite(deps, request.siteId, request.batchId);
+        const ok = await backUpSite(deps, request.siteId, request.batchId);
         backedUp.add(request.siteId);
+        if (ok && request.batchId === null)
+          toCheck.push({ siteId: request.siteId, snapshotId: latestSnapshot(db, request.siteId) });
       } else {
         await checkRestore(deps, request.siteId);
         asked.add(request.siteId);
       }
+    }
+    for (const check of toCheck) {
+      if (stopped()) return;
+      // A check asked for in the same run already covers it.
+      if (asked.has(check.siteId)) continue;
+      await checkRestore(deps, check.siteId, check.snapshotId);
     }
   };
   await requests();
@@ -332,8 +344,8 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   const upkeep =
     readState<{ pruned?: string; checked?: string; restored?: string }>(db, UPKEEP) ?? {};
   const today = night.day;
-  // The fallback, for sites whose snapshots were made some other way (Back up site now, before an
-  // update): one a night, in the 03:15 run, for a site unchecked for 30 days; none after one
+  // The fallback, for sites whose snapshots were made some other way (before an update, or
+  // before this check came in): one a night, in the 03:15 run, for a site unchecked for 30 days; none after one
   // asked for.
   if (night.hour === NIGHTLY_HOUR && upkeep.restored !== today) {
     const restore = asked.size === 0 ? restoreDue(db, now()) : null;
