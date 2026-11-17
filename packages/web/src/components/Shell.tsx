@@ -17,7 +17,9 @@ import { alertsHealth, cycleHealth, heartbeatHealth } from '../kamajiHealth';
 import { useLink, useRoute } from '../router';
 import { useResource } from '../useResource';
 import { Toasts } from './toast';
-import { Dot, Pill } from './ui';
+import { Dot, NewDot, Pill } from './ui';
+import { useNews } from '../news';
+import type { SeenPage } from '@kamaji/shared';
 
 export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
@@ -330,18 +332,26 @@ const SkipLink = styled.a`
   }
 `;
 
+/** The tabs that remember when they were last opened, and their page's name for it. */
+const SEEN: Record<string, SeenPage> = {
+  '/': 'overview',
+  '/sites': 'sites',
+  '/updates': 'updates',
+};
+
 function Tab({ path, label, icon: Icon }: (typeof tabs)[number]) {
   const { path: current } = useRoute();
   const link = useLink(path);
+  const { news } = useNews();
+  const here = current === path || (path !== '/' && current.startsWith(`${path}/`));
+  const page = SEEN[path];
+  // Not on the page you're on: it's marked seen as it opens.
+  const fresh = !here && page && news ? news.fresh[page].length : 0;
   return (
-    <a
-      {...link}
-      aria-current={
-        current === path || (path !== '/' && current.startsWith(`${path}/`)) ? 'page' : undefined
-      }
-    >
+    <a {...link} aria-current={here ? 'page' : undefined}>
       <Icon size={15} aria-hidden="true" />
       {label}
+      {fresh > 0 && <NewDot label={`${fresh} new`} />}
     </a>
   );
 }

@@ -838,6 +838,8 @@ export const ReadySite = z.object({
   ),
   /** Why its updates can't be queued now, or that Recheck all couldn't reach it; null when fine. */
   note: z.string().nullable(),
+  /** On Overview: when a run since the update time finished updating it. */
+  updatedAt: Timestamp.nullable().default(null),
 });
 export type ReadySite = z.infer<typeof ReadySite>;
 
@@ -940,8 +942,53 @@ export const QueueItem = z.object({
   findings: z.number().int(),
   /** A major version: never in "all routine". */
   major: z.boolean(),
+  /** When WordPress first offered this version, for the "new" dot; null for older offers. */
+  offerSeenAt: Timestamp.nullable().optional(),
 });
 export type QueueItem = z.infer<typeof QueueItem>;
+
+/** The pages that remember when each viewer last opened them, for "new" dots. */
+export const SeenPage = z.enum(['overview', 'sites', 'updates']);
+export type SeenPage = z.infer<typeof SeenPage>;
+export const SeenRequest = z.object({ page: SeenPage });
+
+/** A run that finished, in the words Discord got: for the toast. */
+export const FinishedRunView = z.object({
+  id: z.string(),
+  approvedBy: z.string(),
+  finishedAt: Timestamp,
+  lines: z.array(z.string()),
+  /** Its first site's place on Updates: /updates#<anchor>. */
+  anchor: z.string(),
+});
+export type FinishedRunView = z.infer<typeof FinishedRunView>;
+
+/** What's new for this viewer: polled by the shell. */
+export const NewsResponse = z.object({
+  login: z.string(),
+  /** When this viewer last opened each page; null if never. */
+  seen: z.object({
+    overview: Timestamp.nullable(),
+    sites: Timestamp.nullable(),
+    updates: Timestamp.nullable(),
+  }),
+  /**
+   * What appeared on each page since this viewer last opened it: the tab's dot, and a dot on each
+   * item. Overview: issue ids. Sites: site ids. Updates: offerKey()s and `run:<id>`s.
+   */
+  fresh: z.object({
+    overview: z.array(z.string()),
+    sites: z.array(z.string()),
+    updates: z.array(z.string()),
+  }),
+  /** Runs finished in the last 6 hours, for the toast. */
+  runs: z.array(FinishedRunView),
+});
+export type NewsResponse = z.infer<typeof NewsResponse>;
+
+/** An offer's key in NewsResponse.fresh.updates. */
+export const offerKey = (i: { siteId: string; type: string; item: string }) =>
+  `offer:${i.siteId}:${i.type}:${i.item}`;
 
 export const QueueSite = z.object({
   siteId: z.string(),

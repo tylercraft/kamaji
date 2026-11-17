@@ -13,6 +13,7 @@ import { SitesPage } from './pages/SitesPage';
 import { UpdatesPage } from './pages/UpdatesPage';
 import { RouterProvider, useRoute } from './router';
 import { GlobalStyles } from './theme';
+import { NewsProvider } from './news';
 
 const pages: Record<string, ComponentType> = {
   '/': OverviewPage,
@@ -38,9 +39,11 @@ export function App() {
   return (
     <RouterProvider>
       <GlobalStyles />
-      <Shell>
-        <Page />
-      </Shell>
+      <NewsProvider>
+        <Shell>
+          <Page />
+        </Shell>
+      </NewsProvider>
     </RouterProvider>
   );
 }

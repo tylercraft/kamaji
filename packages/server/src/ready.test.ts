@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from './db.js';
 import type { Discord } from './discord.js';
 import { recordObservation } from './observations.js';
-import { checkReady, readReady, readyMessage, readyToUpdate } from './ready.js';
+import { checkReady, liveReady, readyMessage, readyToUpdate } from './ready.js';
 import { testDb } from './testing.js';
 
 const HOUR = 60 * 60_000;
@@ -133,7 +133,7 @@ describe('ready to update', () => {
     });
   });
 
-  it('at the update time: rechecks every site first, sends once, and shows on Overview a day', async () => {
+  it('at the update time: rechecks every site first, sends once', async () => {
     const db = sites();
     const { d, sent } = discord();
     const order: string[] = [];
@@ -149,11 +149,6 @@ describe('ready to update', () => {
     expect(order).toEqual(['recheck']);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('kinsta.test: Kinsta’s backups · nothing waiting · not rechecked');
-    const shown = readReady(db, UPDATE + 23 * HOUR);
-    expect(shown?.sites.find((s) => s.siteId === 'kinsta.test')?.note).toMatch(
-      /^Recheck all couldn’t reach it/,
-    );
-    expect(readReady(db, UPDATE + 25 * HOUR)).toBeNull();
     expect(
       db.prepare("SELECT summary FROM events WHERE kind = 'kamaji.ready-to-update'").all(),
     ).toEqual([
@@ -278,5 +273,68 @@ describe('ready to update, with the backup’s restore check', () => {
       { state: 'fresh', at: new Date(NIGHT).toISOString(), restoredAt: null },
       { state: 'failed', problem: 'x', at: null, step: 'backup' },
     ]);
+  });
+});
+
+describe('Ready to update on Overview, live', () => {
+  async function sent(db: Db) {
+    await checkReady(db, UPDATE, { discord: discord().d, kamajiUrl: 'https://k', recheck: null });
+  }
+  function finishRun(db: Db, siteId: string, at: number) {
+    db.prepare(
+      `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state, finished_at)
+       VALUES ('run-1', ?, 'tylercraft@github', 0, 'finished', ?)`,
+    ).run(at - HOUR, at);
+    db.prepare(
+      `INSERT INTO batch_sites (batch_id, site_id, position, backup_kind, state, finished_at)
+       VALUES ('run-1', ?, 0, 'kamaji', 'done', ?)`,
+    ).run(siteId, at);
+  }
+
+  it('nothing before the update time, or once the message for it hasn’t gone', () => {
+    const db = sites();
+    expect(liveReady(db, UPDATE + HOUR)).toBeNull();
+  });
+
+  it('worked out on load: the backup as it is now, not as it was sent', async () => {
+    const db = sites();
+    await sent(db);
+    // fresh.test's restore check finishes after the message went.
+    db.prepare(
+      `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok)
+       VALUES ('fresh.test', ?, ?, ?, 1)`,
+    ).run('a'.repeat(64), UPDATE + HOUR, UPDATE + HOUR + 5 * 60_000);
+    const live = liveReady(db, UPDATE + 2 * HOUR)!;
+    expect(live.sites.find((s) => s.siteId === 'fresh.test')?.backup).toMatchObject({
+      state: 'fresh',
+      restoredAt: new Date(UPDATE + HOUR + 5 * 60_000).toISOString(),
+    });
+    // Sites with something waiting; kinsta.test has nothing, so it's left off.
+    expect(live.sites.map((s) => s.siteId)).toEqual(['broken.test', 'export.test', 'fresh.test']);
+  });
+
+  it('a site with nothing waiting drops off; one updated since says when, until the next', async () => {
+    const db = sites();
+    await sent(db);
+    // fresh.test is updated: its offers go once its report says so.
+    finishRun(db, 'fresh.test', UPDATE + HOUR);
+    db.prepare("UPDATE components SET offer_version = NULL WHERE site_id = 'fresh.test'").run();
+    db.prepare("UPDATE components SET offer_version = NULL WHERE site_id = 'export.test'").run();
+    const live = liveReady(db, UPDATE + 2 * HOUR)!;
+    expect(live.sites.map((s) => [s.siteId, s.updatedAt, s.updates.length])).toEqual([
+      ['broken.test', null, 1],
+      ['fresh.test', new Date(UPDATE + HOUR).toISOString(), 0],
+    ]);
+    // A week on, the next update time has passed without a message for it: nothing.
+    expect(liveReady(db, UPDATE + 7 * 24 * HOUR + HOUR)).toBeNull();
+    // Just before it, still shown.
+    expect(liveReady(db, UPDATE + 7 * 24 * HOUR - HOUR)?.sites).toHaveLength(2);
+  });
+
+  it('gone once nothing is left', async () => {
+    const db = sites();
+    await sent(db);
+    db.prepare('UPDATE components SET offer_version = NULL').run();
+    expect(liveReady(db, UPDATE + HOUR)).toBeNull();
   });
 });

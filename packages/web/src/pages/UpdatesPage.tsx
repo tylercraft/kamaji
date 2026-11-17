@@ -3,6 +3,7 @@
 // names the exact scope, and the approval is bound to it.
 import {
   ApproveResponse,
+  offerKey,
   UpdatesResponse,
   type BackupKind,
   type BatchSiteView,
@@ -11,7 +12,8 @@ import {
   type ProposalView,
   type QueueItem,
 } from '@kamaji/shared';
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { useFresh } from '../news';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
@@ -21,6 +23,7 @@ import {
   Dot,
   Empty,
   Muted,
+  NewDot,
   PageHeading,
   Panel,
   PanelTitle,
@@ -74,9 +77,14 @@ const STATE_WORDS = {
   held: 'Held',
 } as const;
 
+/** Offers and runs new since this viewer last opened Updates (news.tsx); none elsewhere. */
+const FreshUpdates = createContext<Set<string>>(new Set());
+
 export function Flags({ item }: { item: QueueItem }) {
+  const fresh = useContext(FreshUpdates).has(offerKey(item));
   return (
     <>
+      {fresh && <NewDot />}
       {item.security && (
         <Pill tone="red">
           <Dot />{' '}
@@ -662,6 +670,7 @@ function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; relo
   const { batch: b, site: s } = run;
   const outcome = runOutcome(s);
   const anchor = runAnchor({ batchId: b.id, siteId: s.siteId });
+  const fresh = useContext(FreshUpdates).has(`run:${b.id}`);
   if (isActive(run))
     return (
       <div
@@ -699,7 +708,10 @@ function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; relo
           alignItems: 'baseline',
         }}
       >
-        <span css={{ fontWeight: 550 }}>{componentsLine(run)}</span>
+        <span css={{ fontWeight: 550 }}>
+          {fresh && <NewDot />}
+          {componentsLine(run)}
+        </span>
         <Pill tone={outcome.tone}>
           <Dot /> {outcome.label}
         </Pill>
@@ -1002,6 +1014,7 @@ function History({ batches, reload }: { batches: BatchView[]; reload: () => void
 }
 
 export function UpdatesPage() {
+  const fresh = useFresh('updates');
   const updates = useResource('/api/updates', UpdatesResponse, { pollMs: updatesPollMs });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState(false);
@@ -1015,7 +1028,7 @@ export function UpdatesPage() {
     setReviewing(false);
   }
   return (
-    <>
+    <FreshUpdates.Provider value={fresh}>
       <PageHeading
         title="Updates"
         purpose="Review changes and their evidence, then approve maintenance."
@@ -1059,6 +1072,6 @@ export function UpdatesPage() {
           );
         }}
       </ResourceView>
-    </>
+    </FreshUpdates.Provider>
   );
 }

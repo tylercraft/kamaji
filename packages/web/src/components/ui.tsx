@@ -96,6 +96,41 @@ export const Pill = styled.span<{ tone?: Tone }>`
   background: ${(p) => toneColours[p.tone ?? 'neutral'][1]};
 `;
 
+/**
+ * "New since you last looked": a small accent dot with the word for screen readers, beside an
+ * item that appeared since this viewer last opened the page (news.tsx).
+ */
+export function NewDot({ label = 'new' }: { label?: string }) {
+  return (
+    <span
+      title="New since you last looked"
+      css={{
+        display: 'inline-block',
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: 'var(--seam-copper)',
+        flex: 'none',
+        verticalAlign: 'middle',
+        marginInline: 4,
+      }}
+    >
+      <span
+        css={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
 /** A coloured dot that always sits beside words saying the same thing. */
 export const Dot = styled.span`
   display: inline-block;

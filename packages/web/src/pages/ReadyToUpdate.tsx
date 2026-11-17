@@ -1,6 +1,7 @@
-// "Ready to update", at the top of Overview for a day after the update time (server ready.ts):
-// each site's backup for this update and the updates waiting, majors marked, with a failed backup
-// first and the advice to fix it before updating. Discord gets the counts; the names are here.
+// "Ready to update", at the top of Overview from the update time until the next (server ready.ts,
+// liveReady): worked out on each load, each site's backup as it stands and the updates still
+// waiting, majors marked, with a failed backup first and the advice to fix it before updating. A
+// site with nothing left drops off; one updated since says when.
 import type { ReadyBackup, ReadySite, ReadyToUpdate as Data } from '@kamaji/shared';
 import { Dot, Muted, Panel, PanelHead, Pill, Time } from '../components/ui';
 import { WithIcon } from '../components/SiteIcon';
@@ -51,10 +52,15 @@ function SiteRow({ site }: { site: ReadySite }) {
             </>
           )}
         </Pill>
+        {site.updatedAt && (
+          <Pill tone="green">
+            <Dot /> Updated <Time iso={site.updatedAt} />
+          </Pill>
+        )}
       </div>
       {site.note && <Muted>{site.note}</Muted>}
       {site.updates.length === 0 ? (
-        <Muted>Nothing waiting.</Muted>
+        <Muted>{site.updatedAt ? 'Nothing left waiting.' : 'Nothing waiting.'}</Muted>
       ) : (
         <ul css={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
           {site.updates.map((u) => (

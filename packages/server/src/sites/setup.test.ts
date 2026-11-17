@@ -667,3 +667,26 @@ describe('time zones and the update time', () => {
     ).toEqual([{ summary: `Update time set to Thursday 09:00 NZ time (by ${LOGIN})` }]);
   });
 });
+
+describe('what’s new', () => {
+  it('opening a page is marked seen with no passkey; news says when, for this login', async () => {
+    const { app, get } = setup(reportOnly, () => ok(HELLO));
+    const seen = await app.request('/api/me/seen', {
+      method: 'POST',
+      headers: {
+        'Tailscale-User-Login': LOGIN,
+        Host: 'kamaji.test',
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ page: 'sites' }),
+    });
+    expect(seen.status).toBe(200);
+    const news = (await (await get('/api/me/news')).json()) as {
+      login: string;
+      seen: Record<string, string | null>;
+    };
+    expect(news.login).toBe(LOGIN);
+    expect(news.seen).toEqual({ overview: null, sites: new Date(T).toISOString(), updates: null });
+  });
+});
