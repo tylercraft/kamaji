@@ -140,6 +140,7 @@ describe('Needs a look', () => {
       exportedAt: null,
       bytes: null,
       sha256: null,
+      kind: 'export' as const,
     };
     const b = backupsWith({
       history: [

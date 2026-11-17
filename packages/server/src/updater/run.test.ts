@@ -12,6 +12,7 @@ import { approveBatch, batchViews, carryOn } from '../updates/batches.js';
 import { queue } from '../updates/queue.js';
 import { backupHistory } from '../backups/evidence.js';
 import { runUpdater, type UpdaterDeps } from './run.js';
+import { dueSites } from '../sitebackups/run.js';
 
 const REPORT = CareReport.parse(
   JSON.parse(
@@ -521,7 +522,8 @@ describe('the updater', () => {
     const view = batchViews(db)[0]!;
     expect(view.sites[0]).toMatchObject({
       state: 'held',
-      heldReason: 'Held: no backup evidence. The export on craftish failed: the export failed',
+      heldReason:
+        'Held: no backup evidence. Database export before update failed: The export on craftish failed: the export failed',
     });
     expect(outcomes(db)).toEqual([
       ['core', 'held', null],
@@ -565,5 +567,149 @@ describe('the updater', () => {
     await runUpdater(deps());
     expect(site.sent.some((s) => s.endpoint === 'update')).toBe(false);
     expect(batchViews(db)[0]!.sites[0]!.heldReason).toMatch(/already failing its checks/);
+  });
+});
+
+describe('a whole-site backup before an update', () => {
+  const HOUR = 60 * 60_000;
+  const DAY = 24 * HOUR;
+  /** Whole-site backups on, with the last good snapshot taken at `at`. */
+  function wholeSite(at: number) {
+    const made = setup('kamaji');
+    made.db
+      .prepare("UPDATE sites SET own = 1, site_backup_schedule = 'weekly' WHERE id = ?")
+      .run(SITE);
+    made.db
+      .prepare(
+        `INSERT INTO site_snapshots (site_id, started_at, finished_at, ok, snapshot_id, bytes)
+         VALUES (?, ?, ?, 1, ?, 1000)`,
+      )
+      .run(SITE, at, at, 'f'.repeat(64));
+    return made;
+  }
+  /** The backups process, as the updater sees it: it takes the request and records a result. */
+  function backupsProcess(db: Db, result: { ok: true } | { ok: false; problem: string }) {
+    const taken: (string | null)[] = [];
+    const sleep = async () => {
+      const request = db
+        .prepare('SELECT id, batch_id FROM site_backup_requests WHERE taken_at IS NULL')
+        .get();
+      if (!request) return;
+      const batchId = request.batch_id === null ? null : String(request.batch_id);
+      db.prepare('UPDATE site_backup_requests SET taken_at = ? WHERE id = ?').run(
+        T,
+        Number(request.id),
+      );
+      taken.push(batchId);
+      db.prepare(
+        `INSERT INTO site_snapshots (site_id, started_at, finished_at, ok, snapshot_id, bytes,
+           problem, batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        SITE,
+        T,
+        T + 60_000,
+        result.ok ? 1 : 0,
+        result.ok ? 'c'.repeat(64) : null,
+        result.ok ? 184 * 1024 ** 2 : null,
+        result.ok ? null : result.problem,
+        batchId,
+      );
+    };
+    return { taken, sleep };
+  }
+
+  it('a snapshot from the last day: the database export alone, as before', async () => {
+    const { db, deps, site } = wholeSite(T - 2 * HOUR);
+    await approve(db);
+    let exports = 0;
+    await runUpdater({
+      ...deps(),
+      backup: async () => {
+        exports += 1;
+        return { ok: true, words: 'Kamaji exported the database on craftish' };
+      },
+    });
+    expect(exports).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM site_backup_requests').get()).toEqual({ n: 0 });
+    expect(batchViews(db)[0]!.sites[0]!.backup).toBe(
+      'Database export before update: Kamaji exported the database on craftish',
+    );
+    expect(backupHistory(db, SITE)[0]).toMatchObject({ state: 'exported', kind: 'export' });
+    expect(site.sent.some((s) => s.endpoint === 'update')).toBe(true);
+  });
+
+  it('an older snapshot: a fresh whole-site one first, waited for, in place of the export', async () => {
+    const { db, deps, site } = wholeSite(T - 3 * DAY);
+    await approve(db);
+    const batchId = batchViews(db)[0]!.id;
+    const process = backupsProcess(db, { ok: true });
+    // Without it, the site would be due for this week's backup.
+    expect(dueSites(db, T)).toEqual([SITE]);
+    let exports = 0;
+    const updatesBefore: number[] = [];
+    await runUpdater({
+      ...deps(),
+      sleep: async () => {
+        updatesBefore.push(site.sent.filter((s) => s.endpoint === 'update').length);
+        await process.sleep();
+      },
+      backup: async () => {
+        exports += 1;
+        return { ok: true, words: 'exported' };
+      },
+    });
+    expect(process.taken).toEqual([batchId]);
+    expect(updatesBefore[0]).toBe(0);
+    expect(exports).toBe(0);
+    expect(batchViews(db)[0]!.sites[0]).toMatchObject({
+      state: 'done',
+      backup: expect.stringMatching(
+        /^Whole-site backup before update: snapshot cccccccc, 184\.0 MB, read back whole/,
+      ),
+    });
+    expect(backupHistory(db, SITE)[0]).toMatchObject({
+      state: 'exported',
+      kind: 'snapshot',
+      batchId,
+      bytes: 184 * 1024 ** 2,
+    });
+    // It counts as this week's: the hourly run leaves the site alone now.
+    expect(dueSites(db, T + HOUR)).toEqual([]);
+  });
+
+  it('a snapshot that fails holds the update, with why', async () => {
+    const { db, deps, site } = wholeSite(T - 3 * DAY);
+    await approve(db);
+    const process = backupsProcess(db, { ok: false, problem: 'craftish: not on the allowlist' });
+    await runUpdater({ ...deps(), sleep: process.sleep });
+    expect(batchViews(db)[0]!.sites[0]).toMatchObject({
+      state: 'held',
+      heldReason:
+        'Held: no backup evidence. Whole-site backup before update failed: craftish: not on the allowlist',
+    });
+    expect(site.sent.some((s) => s.endpoint === 'update')).toBe(false);
+    expect(backupHistory(db, SITE)[0]).toMatchObject({ state: 'failed', kind: 'snapshot' });
+  });
+
+  it('a snapshot that never comes holds the update, and withdraws the request', async () => {
+    const { db, deps, site } = wholeSite(T - 3 * DAY);
+    await approve(db);
+    let now = T;
+    await runUpdater({
+      ...deps(),
+      now: () => now,
+      sleep: async () => {
+        now += 15 * 60_000;
+      },
+      timing: { jobTimeoutMs: 60_000, snapshotWaitMs: 60 * 60_000 },
+    });
+    expect(batchViews(db)[0]!.sites[0]!.heldReason).toBe(
+      'Held: no backup evidence. Whole-site backup before update didn’t finish within 60 min: the backups process may not be running',
+    );
+    expect(site.sent.some((s) => s.endpoint === 'update')).toBe(false);
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM site_backup_requests WHERE taken_at IS NULL').get(),
+    ).toEqual({ n: 0 });
   });
 });

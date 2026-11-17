@@ -24,12 +24,15 @@ export function recordEvidence(
     ok: boolean;
     words: string;
     answer?: ExportAnswer | undefined;
+    /** A whole-site snapshot before an update, or (the default) a database export. */
+    kind?: 'export' | 'snapshot';
+    bytes?: number | undefined;
   },
 ): void {
   db.prepare(
     `INSERT INTO backup_evidence
-       (site_id, batch_id, requested_by, recorded_at, ok, exported_at, bytes, sha256, words)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (site_id, batch_id, requested_by, recorded_at, ok, exported_at, bytes, sha256, words, kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     evidence.siteId,
     evidence.batchId,
@@ -37,9 +40,10 @@ export function recordEvidence(
     evidence.at,
     evidence.ok ? 1 : 0,
     evidence.answer?.at ?? null,
-    evidence.answer?.bytes ?? null,
+    evidence.answer?.bytes ?? evidence.bytes ?? null,
     evidence.answer?.sha256 ?? null,
     evidence.words,
+    evidence.kind ?? 'export',
   );
 }
 
@@ -72,6 +76,7 @@ export function backupHistory(db: Db, siteId: string): BackupEntry[] {
           raw !== null && exportedAt === null
             ? `${String(r.words)} (the export gave its time as “${raw}”)`
             : String(r.words),
+        kind: String(r.kind) === 'snapshot' ? ('snapshot' as const) : ('export' as const),
       };
     });
   const runs: BackupEntry[] = db
@@ -92,6 +97,7 @@ export function backupHistory(db: Db, siteId: string): BackupEntry[] {
       bytes: null,
       sha256: null,
       words: String(r.backup),
+      kind: null,
     }));
   return [...exports, ...runs].sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
 }

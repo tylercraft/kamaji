@@ -22,6 +22,14 @@ import { clearIssue, raiseIssue } from '../issues.js';
 import { storeReport } from '../inventory/report.js';
 import { recordObservation } from '../observations.js';
 import { readPages } from '../sites/pages.js';
+import { BEFORE_UPDATE, needsFreshBackup } from '../backups/beforeUpdate.js';
+import { eligible } from '../sitebackups/eligible.js';
+import {
+  latestGoodSnapshot,
+  snapshotBeforeUpdate,
+  SNAPSHOT_POLL_MS,
+  SNAPSHOT_WAIT_MS,
+} from './wholeSite.js';
 
 export type Send = (
   home: URL,
@@ -37,6 +45,10 @@ export interface BackupResult {
   words: string;
   /** What a craftish export answered, kept apart in backup_evidence. */
   answer?: ExportAnswer;
+  /** Which backup ran: a whole-site snapshot, or the database export. */
+  kind?: 'snapshot' | 'export';
+  /** A snapshot's size. */
+  bytes?: number;
 }
 
 export interface Timing {
@@ -48,6 +60,9 @@ export interface Timing {
   requestTimeoutMs: number;
   /** How far ahead each renewal of a site's pause reaches. */
   pauseMs: number;
+  /** How long to wait for a whole-site snapshot before the update, and how often to look. */
+  snapshotWaitMs: number;
+  snapshotPollMs: number;
 }
 
 export const TIMING: Timing = {
@@ -55,6 +70,8 @@ export const TIMING: Timing = {
   jobTimeoutMs: 20 * 60_000,
   requestTimeoutMs: 120_000,
   pauseMs: 25 * 60_000,
+  snapshotWaitMs: SNAPSHOT_WAIT_MS,
+  snapshotPollMs: SNAPSHOT_POLL_MS,
 };
 
 export interface UpdaterDeps {
@@ -224,7 +241,7 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
       .get(batchId, siteId)!;
 
     if (run.backup === null) {
-      const evidence = await backupEvidence(deps, site, String(run.backup_kind));
+      const evidence = await backupEvidence(deps, site, String(run.backup_kind), batchId);
       if (run.backup_kind === 'kamaji') {
         recordEvidence(db, {
           siteId,
@@ -234,6 +251,8 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
           ok: evidence.ok,
           words: evidence.words,
           answer: evidence.answer,
+          kind: evidence.kind ?? 'export',
+          bytes: evidence.bytes,
         });
       }
       if (!evidence.ok) {
@@ -446,13 +465,44 @@ async function backupEvidence(
   deps: UpdaterDeps,
   site: RunSite,
   kind: string,
+  batchId: string,
 ): Promise<BackupResult> {
   const at = new Date(deps.now()).toISOString();
   if (kind === 'host')
     return { ok: true, words: `Handled by the host (recorded for the site), ${at}` };
   if (kind === 'client')
     return { ok: true, words: `Handled by the client (recorded for the site), ${at}` };
-  if (kind === 'kamaji') return deps.backup(site);
+  if (kind === 'kamaji') {
+    // Whole-site backups on, and the latest snapshot over a day old: a fresh one, in place of the
+    // export (backups/beforeUpdate.ts). The update waits for it, and is held if it fails.
+    if (
+      eligible(deps.db, site.id) &&
+      needsFreshBackup(latestGoodSnapshot(deps.db, site.id), deps.now())
+    ) {
+      const timing = { ...TIMING, ...deps.timing };
+      const made = await snapshotBeforeUpdate(
+        {
+          db: deps.db,
+          now: deps.now,
+          sleep: deps.sleep,
+          signal: deps.signal,
+          waitMs: timing.snapshotWaitMs,
+          pollMs: timing.snapshotPollMs,
+        },
+        site.id,
+        batchId,
+      );
+      return { ...made, kind: 'snapshot' };
+    }
+    const exported = await deps.backup(site);
+    return {
+      ...exported,
+      kind: 'export',
+      words: exported.ok
+        ? `${BEFORE_UPDATE.export}: ${exported.words}`
+        : `${BEFORE_UPDATE.export} failed: ${exported.words}`,
+    };
+  }
   return { ok: false, words: 'Tyler’s confirmation is missing for this run' };
 }
 

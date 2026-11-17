@@ -98,7 +98,12 @@ function siteName(db: Db, siteId: string): string {
 
 const mb = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
-export async function backUpSite(deps: BackupsDeps, siteId: string): Promise<boolean> {
+/** One site's backup; `batchId` when the updater asked for it before that batch's update. */
+export async function backUpSite(
+  deps: BackupsDeps,
+  siteId: string,
+  batchId: string | null = null,
+): Promise<boolean> {
   const { db, restic, now } = deps;
   const startedAt = now();
   const name = siteName(db, siteId);
@@ -116,8 +121,8 @@ export async function backUpSite(deps: BackupsDeps, siteId: string): Promise<boo
   ) => {
     db.prepare(
       `INSERT INTO site_snapshots (site_id, started_at, finished_at, ok, snapshot_id, bytes,
-         added_bytes, database_bytes, database_sha256, wordpress, problem)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         added_bytes, database_bytes, database_sha256, wordpress, problem, batch_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       siteId,
       startedAt,
@@ -130,12 +135,13 @@ export async function backUpSite(deps: BackupsDeps, siteId: string): Promise<boo
       fields.ok ? fields.database.sha256 : null,
       fields.ok ? fields.wordpress : null,
       fields.ok ? null : fields.problem,
+      batchId,
     );
     recordEvent(db, now(), {
       kind: fields.ok ? 'site.backup' : 'site.backup-failed',
       summary: fields.ok
-        ? `Whole-site backup of ${name}: ${mb(fields.bytes)}, ${mb(fields.added)} new`
-        : `Whole-site backup of ${name} failed: ${fields.problem}`,
+        ? `Whole-site backup of ${name}${batchId ? ' before update' : ''}: ${mb(fields.bytes)}, ${mb(fields.added)} new`
+        : `Whole-site backup of ${name}${batchId ? ' before update' : ''} failed: ${fields.problem}`,
       resourceType: 'site',
       resourceId: siteId,
     });
@@ -231,26 +237,43 @@ export async function checkRestore(deps: BackupsDeps, siteId: string): Promise<b
 }
 
 /** The panel's requests not yet taken, each marked taken. */
-export function takeRequests(
-  db: Db,
-  now: number,
-): { siteId: string; kind: 'backup' | 'restore' }[] {
+export interface Request {
+  siteId: string;
+  kind: 'backup' | 'restore';
+  /** The batch the updater is holding for this backup; null for the panel's. */
+  batchId: string | null;
+}
+
+/** Whether a request waits for the backups process: the app's cycle starts it then. */
+export function requestsWaiting(db: Db): boolean {
+  return (
+    db.prepare('SELECT 1 FROM site_backup_requests WHERE taken_at IS NULL LIMIT 1').get() !==
+    undefined
+  );
+}
+
+/** The requests not yet taken, each marked taken; an updater's wins over the panel's twin. */
+export function takeRequests(db: Db, now: number): Request[] {
   const rows = db
     .prepare(
-      'SELECT id, site_id, kind FROM site_backup_requests WHERE taken_at IS NULL ORDER BY id',
+      'SELECT id, site_id, kind, batch_id FROM site_backup_requests WHERE taken_at IS NULL ORDER BY id',
     )
     .all();
   const take = db.prepare('UPDATE site_backup_requests SET taken_at = ? WHERE id = ?');
-  const seen = new Set<string>();
-  const out: { siteId: string; kind: 'backup' | 'restore' }[] = [];
+  const out = new Map<string, Request>();
   for (const r of rows) {
     take.run(now, Number(r.id));
     const key = `${String(r.site_id)} ${String(r.kind)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ siteId: String(r.site_id), kind: String(r.kind) as 'backup' | 'restore' });
+    const batchId = r.batch_id === null ? null : String(r.batch_id);
+    const seen = out.get(key);
+    if (seen && (seen.batchId !== null || batchId === null)) continue;
+    out.set(key, {
+      siteId: String(r.site_id),
+      kind: String(r.kind) as 'backup' | 'restore',
+      batchId,
+    });
   }
-  return out;
+  return [...out.values()];
 }
 
 /** The NZ date and hour, for the once-a-night work. */
@@ -269,20 +292,26 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   const stopped = () => deps.signal?.aborted === true;
   const backedUp = new Set<string>();
   const checked = new Set<string>();
-  for (const request of takeRequests(db, now())) {
-    if (stopped()) return;
-    if (!eligible(db, request.siteId)) continue;
-    if (request.kind === 'backup') {
-      await backUpSite(deps, request.siteId);
-      backedUp.add(request.siteId);
-    } else {
-      await checkRestore(deps, request.siteId);
-      checked.add(request.siteId);
+  // Requests first, and again after each scheduled site: an update waiting on its backup
+  // shouldn't wait for the whole night's list.
+  const requests = async () => {
+    for (const request of takeRequests(db, now())) {
+      if (stopped()) return;
+      if (!eligible(db, request.siteId)) continue;
+      if (request.kind === 'backup') {
+        await backUpSite(deps, request.siteId, request.batchId);
+        backedUp.add(request.siteId);
+      } else {
+        await checkRestore(deps, request.siteId);
+        checked.add(request.siteId);
+      }
     }
-  }
+  };
+  await requests();
   for (const siteId of dueSites(db, now())) {
     if (stopped()) return;
     if (!backedUp.has(siteId)) await backUpSite(deps, siteId);
+    await requests();
   }
   if (stopped()) return;
   const night = nzNight(now());

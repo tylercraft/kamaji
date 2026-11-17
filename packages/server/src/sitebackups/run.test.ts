@@ -311,3 +311,41 @@ describe('hourly runs', () => {
     expect(tomorrow.restored).toEqual(['b.test']);
   });
 });
+
+describe('before an update', () => {
+  it('records the batch with its snapshot, and takes it between the night’s sites', async () => {
+    const db = testDb();
+    site(db, 'a.test');
+    site(db, 'b.test');
+    site(db, 'updating.test');
+    snapshot(db, 'updating.test', T - DAY);
+    const { d, calls } = deps(db);
+    // The updater asks while a.test is being backed up.
+    const restic = d.restic;
+    d.restic = {
+      ...restic,
+      backup: async (siteId, command, signal) => {
+        if (siteId === 'a.test')
+          db.prepare(
+            `INSERT INTO site_backup_requests (site_id, kind, requested_at, requested_by, batch_id)
+             VALUES ('updating.test', 'backup', ?, 'updater', 'batch-1')`,
+          ).run(T);
+        return restic.backup(siteId, command, signal);
+      },
+    };
+    await runBackups(d);
+    expect(calls.filter((c) => c.startsWith('backup '))).toEqual([
+      'backup a.test',
+      'backup updating.test',
+      'backup b.test',
+    ]);
+    expect(
+      rows(db, "SELECT batch_id FROM site_snapshots WHERE site_id = 'updating.test' AND ok = 1"),
+    ).toEqual([{ batch_id: null }, { batch_id: 'batch-1' }]);
+    expect(
+      rows(db, "SELECT summary FROM events WHERE resource_id = 'updating.test'").map(
+        (e) => e.summary,
+      ),
+    ).toEqual([expect.stringMatching(/^Whole-site backup of updating.test before update: /)]);
+  });
+});

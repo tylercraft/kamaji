@@ -47,6 +47,18 @@ const STATE: Record<BackupEntry['state'], [string, Tone]> = {
   recorded: ['Confirmed, not checked', 'neutral'],
 };
 
+/** Which backup Kamaji made: before an update, a whole-site snapshot or the database export. */
+export function entryLabel(e: BackupEntry): string {
+  if (e.state === 'recorded') return STATE.recorded[0];
+  const what =
+    e.kind === 'snapshot'
+      ? 'Whole-site backup before update'
+      : e.batchId !== null
+        ? 'Database export before update'
+        : 'Database export';
+  return e.state === 'failed' ? `${what} failed` : what;
+}
+
 function Run({ entry }: { entry: BackupEntry }) {
   if (entry.runApprovedAt === null) return <>Back up now</>;
   return (
@@ -158,7 +170,7 @@ function History({ history }: { history: BackupEntry[] }) {
               </td>
               <td>
                 <Pill tone={STATE[e.state][1]}>
-                  <Dot /> {STATE[e.state][0]}
+                  <Dot /> {entryLabel(e)}
                 </Pill>
                 {e.state !== 'exported' && <Muted>{e.words}</Muted>}
               </td>
@@ -263,6 +275,8 @@ export function SiteBackupsPanel({
           const confirmed = d.history.filter((e) => e.state === 'recorded');
           const latest = exports[0];
           const lastGood = exports.find((e) => e.state === 'exported');
+          const lastExport = exports.find((e) => e.state === 'exported' && e.kind === 'export');
+          const snapshots = d.wholeSite?.active === true;
           const kamaji = d.canExport || exports.length > 0;
           const policy = d.backupExpectation;
           const unset = (
@@ -279,8 +293,12 @@ export function SiteBackupsPanel({
               {kamaji ? (
                 <Part
                   id="before-update"
-                  title="Before-update database exports"
-                  note="Database only, made by Kamaji on craftish"
+                  title={snapshots ? 'Before-update backups' : 'Before-update database exports'}
+                  note={
+                    snapshots
+                      ? 'A whole-site backup when the last one is over a day old, otherwise a database export'
+                      : 'Database only, made by Kamaji on craftish'
+                  }
                 >
                   <Rows>
                     {latest && latest.state === 'failed' ? (
@@ -288,7 +306,7 @@ export function SiteBackupsPanel({
                         <dt>Latest attempt</dt>
                         <dd>
                           <Pill tone="red">
-                            <Dot /> Failed
+                            <Dot /> {entryLabel(latest)}
                           </Pill>
                           <Time iso={latest.recordedAt} />
                           <span className="why">{latest.words}</span>
@@ -307,12 +325,12 @@ export function SiteBackupsPanel({
                       </>
                     ) : (
                       <>
-                        <dt>Last export</dt>
+                        <dt>{snapshots ? 'Last backup' : 'Last export'}</dt>
                         <dd>
                           {lastGood ? (
                             <>
                               <Pill tone="green">
-                                <Dot /> Exported
+                                <Dot /> {entryLabel(lastGood)}
                               </Pill>
                               <Time iso={lastGood.exportedAt ?? lastGood.recordedAt} />
                               {lastGood.bytes !== null && <span>{size(lastGood.bytes)}</span>}
@@ -355,7 +373,7 @@ export function SiteBackupsPanel({
                     <RememberedDetails name="export-history">
                       <summary>Export details, checksum and history ({d.history.length})</summary>
                       <div css={{ display: 'grid', gap: 10, marginTop: 8 }}>
-                        <LatestExport entry={lastGood} />
+                        <LatestExport entry={lastExport} />
                         <Muted>
                           Exports stay on craftish for 14 days, always the newest 3. Nothing is kept
                           on the mini.
