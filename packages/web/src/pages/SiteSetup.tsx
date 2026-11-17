@@ -377,6 +377,7 @@ const CONFIGURE_WORDS: Record<string, string> = {
   bad_page:
     'Each page to check must be on this site, over https: a path like /shop/, or its full address',
   connected: 'A site connected through Craftish Care stays WordPress until it’s removed',
+  bad_zone: 'That time zone isn’t one Kamaji knows',
 };
 
 const MAX_PAGES = 5;
@@ -452,6 +453,64 @@ export const SCHEDULES: Record<SiteBackupSchedule, string> = {
   weekly: 'Weekly',
   fortnightly: 'Fortnightly',
 };
+
+/** Offered first: where Tyler's clients are. Any other IANA zone follows. */
+const COMMON_ZONES = [
+  'Pacific/Auckland',
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Chicago',
+  'America/New_York',
+];
+
+function allZones(): string[] {
+  try {
+    return Intl.supportedValuesOf('timeZone').filter((z) => !COMMON_ZONES.includes(z));
+  } catch {
+    return [];
+  }
+}
+
+const zoneName = (zone: string) => zone.replace(/_/g, ' ');
+
+/** The site's time zone: its whole-site backups run at 03:00 there, a quiet hour for visitors. */
+function TimeZoneField({ zone, setZone }: { zone: string; setZone: (zone: string) => void }) {
+  const others = allZones();
+  return (
+    <Field
+      id="timeZone"
+      label="Its visitors’ time zone"
+      hint="Its backup runs at 03:00 here, on the last night before the update time (Settings)."
+    >
+      <select
+        id="timeZone"
+        value={zone}
+        onChange={(e) => setZone(e.target.value)}
+        aria-describedby="timeZone-hint"
+      >
+        <optgroup label="Common">
+          {COMMON_ZONES.map((z) => (
+            <option key={z} value={z}>
+              {zoneName(z)}
+            </option>
+          ))}
+        </optgroup>
+        {!COMMON_ZONES.includes(zone) && !others.includes(zone) && (
+          <option value={zone}>{zoneName(zone)}</option>
+        )}
+        {others.length > 0 && (
+          <optgroup label="Everywhere else">
+            {others.map((z) => (
+              <option key={z} value={z}>
+                {zoneName(z)}
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+    </Field>
+  );
+}
 
 /**
  * Whole-site backups, on craftish sites only: the schedule, whether it's Tyler's own site, and
@@ -573,6 +632,7 @@ export function ConfigureStep({
   const { site } = detail;
   const [own, setOwn] = useState(detail.own);
   const [schedule, setSchedule] = useState(detail.siteBackups.schedule);
+  const [timeZone, setTimeZone] = useState(detail.timeZone);
   const [platform, setPlatform] = useState<Platform>(site.platform);
   const wordpress = platform === 'wordpress';
   const [pages, setPages] = useState<PageRow[]>(() =>
@@ -597,7 +657,12 @@ export function ConfigureStep({
       backupExpectation: !wordpress || backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
       ...(wordpress && site.hostKind === 'craftish'
-        ? { own, siteBackups: schedule, clientAgreed: form.get('clientAgreed') === 'on' }
+        ? {
+            own,
+            siteBackups: schedule,
+            clientAgreed: form.get('clientAgreed') === 'on',
+            timeZone,
+          }
         : {}),
       ...(wordpress
         ? {
@@ -729,6 +794,9 @@ export function ConfigureStep({
                 schedule={schedule}
                 setSchedule={setSchedule}
               />
+            )}
+            {site.hostKind === 'craftish' && schedule !== 'off' && (
+              <TimeZoneField zone={timeZone} setZone={setTimeZone} />
             )}
             {site.hostKind === 'craftish' && (
               <RememberedDetails name="backup-contents">

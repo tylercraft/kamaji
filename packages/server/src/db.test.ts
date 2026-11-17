@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from './db.js';
+import { migrations } from './migrations.js';
 import { testDb } from './testing.js';
 
 describe('migrate', () => {
   it('applies every migration once', () => {
     const db = openDb(':memory:');
     expect(migrate(db).map((m) => m.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
     ]);
     expect(migrate(db)).toEqual([]);
     const tables = db
@@ -65,5 +66,31 @@ describe('migrate', () => {
     expect(() => migrate(db, bad)).toThrow();
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'a'").get()).toBeUndefined();
     expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()?.n).toBe(0);
+  });
+});
+
+describe('migration 22', () => {
+  it('keeps every site’s backup schedule, and starts each one in NZ time', () => {
+    const db = openDb(':memory:');
+    migrate(
+      db,
+      migrations.filter((m) => m.version <= 21 && !m.seed),
+    );
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, site_backup_schedule, created_at)
+       VALUES ('weekly.test', 'W', 'https://weekly.test/', 'craftish', 'monitoring', 'done', 'weekly', 0),
+              ('fortnight.test', 'F', 'https://fortnight.test/', 'craftish', 'monitoring', 'done', 'fortnightly', 0)`,
+    ).run();
+    migrate(
+      db,
+      migrations.filter((m) => !m.seed),
+    );
+    expect(
+      db.prepare('SELECT id, site_backup_schedule, time_zone FROM sites ORDER BY id').all(),
+    ).toEqual([
+      { id: 'fortnight.test', site_backup_schedule: 'fortnightly', time_zone: 'Pacific/Auckland' },
+      { id: 'weekly.test', site_backup_schedule: 'weekly', time_zone: 'Pacific/Auckland' },
+    ]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM settings').get()).toEqual({ n: 0 });
   });
 });

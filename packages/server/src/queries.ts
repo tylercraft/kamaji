@@ -29,6 +29,7 @@ import { actionFor } from './issueActions.js';
 import { findOpenIssue } from './issues.js';
 import { latestObservations } from './observations.js';
 import type { Db } from './db.js';
+import { readReady } from './ready.js';
 import { readDiscord } from './discord.js';
 import { readHeartbeat } from './heartbeat.js';
 import { latestStartedJob } from './jobs/store.js';
@@ -327,7 +328,7 @@ function totalUpdates(sites: SiteSummary[], connected: number): Known<number> {
   };
 }
 
-export function overview(db: Db): OverviewResponse {
+export function overview(db: Db, now = Date.now()): OverviewResponse {
   const sites = siteSummaries(db);
   const live = sites.filter((s) => s.setup === 'done' && !s.pausedAt);
   const checked = db.prepare('SELECT 1 FROM observations LIMIT 1').get() !== undefined;
@@ -366,6 +367,7 @@ export function overview(db: Db): OverviewResponse {
       live.filter((s) => s.mode === 'connected'),
       connected,
     ),
+    ready: readReady(db, now),
   };
 }
 

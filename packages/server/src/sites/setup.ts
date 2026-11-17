@@ -21,6 +21,7 @@ import { latestObservations, recordObservation } from '../observations.js';
 import { siteInventory } from '../inventory/report.js';
 import { siteSummaries } from '../queries.js';
 import { checkPages, readPages } from './pages.js';
+import { validZone } from '../sitebackups/schedule.js';
 
 /** Sends one signed request to a site; careRequest in production, a fake in tests. */
 export type CareSend = (
@@ -170,7 +171,14 @@ export function configureSite(
   request: ConfigureSiteRequest,
   now: number,
   login: string,
-): 'saved' | 'not-found' | 'not-craftish' | 'no-consent' | 'connected' | { refused: string } {
+):
+  | 'saved'
+  | 'not-found'
+  | 'not-craftish'
+  | 'no-consent'
+  | 'connected'
+  | 'bad-zone'
+  | { refused: string } {
   const row = siteRow(db, id);
   if (!row || (row.setup !== 'configure' && row.setup !== 'done')) return 'not-found';
   const beforePlatform = String(row.platform) as Platform;
@@ -193,6 +201,9 @@ export function configureSite(
     pages = checked.pages;
   }
   if (!wordpress) pages = [];
+  const beforeZone = String(row.time_zone);
+  const timeZone = request.timeZone ?? beforeZone;
+  if (!validZone(timeZone)) return 'bad-zone';
   const hadConsent = row.site_backup_consent_at !== null;
   if (schedule !== 'off') {
     if (!craftish) return 'not-craftish';
@@ -209,7 +220,7 @@ export function configureSite(
   db.prepare(
     `UPDATE sites SET name = ?, expected_text = ?, backup_expectation = ?, notifications = ?, setup = 'done',
        own = ?, site_backup_schedule = ?, site_backup_consent_at = ?, site_backup_consent_by = ?,
-       platform = ?, important_pages = ?
+       platform = ?, important_pages = ?, time_zone = ?
      WHERE id = ?`,
   ).run(
     name,
@@ -222,6 +233,7 @@ export function configureSite(
     consent?.by ?? null,
     platform,
     JSON.stringify(pages),
+    timeZone,
     id,
   );
   const event = (kind: string, summary: string) =>
@@ -247,6 +259,7 @@ export function configureSite(
         : `Whole-site backups of ${name} turned off; the client’s agreement is asked again next time`,
     );
   }
+  if (timeZone !== beforeZone) event('site.time-zone', `${name}’s time zone: ${timeZone}`);
   if (schedule !== before) {
     event('site.backup-schedule', `Whole-site backups of ${name}: ${schedule}`);
   }
@@ -282,6 +295,7 @@ export function siteDetail(
       consentBy: row.site_backup_consent_by === null ? null : String(row.site_backup_consent_by),
     },
     icon: iconStatus(db, id),
+    timeZone: String(row.time_zone),
   };
 }
 

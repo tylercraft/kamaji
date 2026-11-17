@@ -8,6 +8,7 @@ import {
   Menu as MenuIcon,
   PackageCheck,
   Server,
+  Settings,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
   { path: '/servers', label: 'Servers', icon: Server },
   { path: '/activity', label: 'Activity', icon: History },
   { path: '/passkeys', label: 'Passkeys', icon: KeyRound },
+  { path: '/settings', label: 'Settings', icon: Settings },
   // Rules (/rules) is left out until there are rules to set: every update is approved by hand.
 ];
 

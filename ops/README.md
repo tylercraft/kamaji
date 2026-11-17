@@ -388,7 +388,7 @@ On the mini (craftish's host key is already in `kamaji_known_hosts`, from "craft
 
 ## Whole-site backups
 
-Restic snapshots of a craftish site's files and a fresh database, pulled over SSH by a third process, `dev.craftish.kamaji-backups` (`packages/server/src/sitebackups/`), nightly at 03:15 and when a site's Backups panel asks. The plan and its reasons: `ops/backups-plan.md`; craftish's side: `server-pull/README.md`. The same SSH user also serves the Backups panel's "Download latest export" with the app's own key.
+Restic snapshots of a craftish site's files and a fresh database, pulled over SSH by a third process, `dev.craftish.kamaji-backups` (`packages/server/src/sitebackups/`), hourly at :15 and when a site's Backups panel asks. Each site is backed up at 03:00 in its own time zone on the last night before the weekly update time (Settings; Tuesday 19:00 NZ by default), and a run that's missed is made up at the next hour. Restore checks stay at one a night, in the 03:15 run. At the update time the app rechecks every connected site and sends "Ready to update" to Discord and Overview; it approves nothing. The plan and its reasons: `ops/backups-plan.md`; craftish's side: `server-pull/README.md`. The same SSH user also serves the Backups panel's "Download latest export" with the app's own key.
 
 - **Repository:** `/Users/tylercraft/kamaji-backups/restic`, mode 700, encrypted. Arq takes it off-site as ciphertext. Restore checks unpack into `/Users/tylercraft/kamaji-restore` (mode 700, emptied after each check), outside what Arq copies.
 - **Secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read by this process only. Names only: `RESTIC_PASSWORD`. Tyler keeps a copy in his password manager: without it the backups can't be read.
@@ -565,7 +565,7 @@ On the mini:
 /Users/tylercraft/kamaji/ops/deploy.sh
 ```
 
-29. Install the backups LaunchAgent (loaded; it first runs tonight at 03:15):
+29. Install the backups LaunchAgent (loaded; it first runs at the next quarter past the hour):
 
 ```
 /bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-backups.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-backups.plist
@@ -618,6 +618,36 @@ sudo install -m 755 -o root -g root /tmp/site-pull /usr/local/lib/kamaji/ && rm 
 ```
 
 Existing snapshots keep what they hold; restic's retention lets them go in time. No file on the site is touched.
+
+### Moving to the update time (hourly runs)
+
+Once, after the deploy that brings the update time (migration 22). Until the LaunchAgent is reloaded it still runs only at 03:15, so sites backed up on another night wait for it.
+
+1. Deploy Kamaji (migration 22 adds each site's time zone, NZ to start, and the settings):
+
+```
+/Users/tylercraft/kamaji/ops/deploy.sh
+```
+
+2. Unload the backups LaunchAgent. A run going is stopped (it stops cleanly on SIGTERM, and the next hour makes it up), so the log’s last line should be `done; exiting` first:
+
+```
+/bin/launchctl bootout gui/501/dev.craftish.kamaji-backups
+```
+
+3. Copy the new plist in and load it:
+
+```
+/bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-backups.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-backups.plist
+```
+
+4. Check it's hourly (expect `Minute = 15` and no `Hour`):
+
+```
+/usr/bin/plutil -extract StartCalendarInterval xml1 -o - /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-backups.plist
+```
+
+5. In Kamaji: Settings → Update time, if not Tuesday 19:00. Then each site with whole-site backups → Configure → its visitors' time zone, for any not in NZ. Its Backups panel shows the next backup night.
 
 ## Passkeys
 

@@ -596,3 +596,74 @@ describe('Pages to check', () => {
     expect((await detail('minton.test')).pages).toEqual([]);
   });
 });
+
+describe('time zones and the update time', () => {
+  const craftish = (db: ReturnType<typeof setup>['db']) =>
+    db
+      .prepare(
+        `INSERT INTO sites (id, name, url, host_kind, mode, setup, own, site_backup_schedule, created_at)
+         VALUES ('own.test', 'Own', 'https://own.test/', 'craftish', 'monitoring', 'done', 1, 'weekly', 0)`,
+      )
+      .run();
+  const configure = (timeZone?: string) => ({
+    expectedText: null,
+    backupExpectation: 'kamaji',
+    notifications: 'normal',
+    own: true,
+    siteBackups: 'weekly',
+    ...(timeZone ? { timeZone } : {}),
+  });
+
+  it('a site starts in NZ time, takes an IANA zone, and refuses anything else', async () => {
+    const { db, post, detail, get } = setup(reportOnly, () => ok(HELLO));
+    craftish(db);
+    expect((await detail('own.test')).timeZone).toBe('Pacific/Auckland');
+    expect((await post('/api/sites/own.test/configure', configure('America/Chicago'))).status).toBe(
+      200,
+    );
+    expect((await detail('own.test')).timeZone).toBe('America/Chicago');
+    const refused = await post('/api/sites/own.test/configure', configure('Mars/Olympus'));
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: 'bad_zone' });
+    // Left as it was when a save doesn't send one.
+    await post('/api/sites/own.test/configure', configure());
+    expect((await detail('own.test')).timeZone).toBe('America/Chicago');
+    const backups = (await (await get('/api/sites/own.test/backups')).json()) as {
+      wholeSite: { timeZone: string; nextDueAt: string };
+    };
+    expect(backups.wholeSite.timeZone).toBe('America/Chicago');
+    expect(db.prepare("SELECT summary FROM events WHERE kind = 'site.time-zone'").all()).toEqual([
+      { summary: 'Own’s time zone: America/Chicago' },
+    ]);
+  });
+
+  it('the update time is Tuesday 19:00 until set, and setting it takes a passkey', async () => {
+    const { app, post, get, db } = setup(reportOnly, () => ok(HELLO));
+    expect(await (await get('/api/settings')).json()).toEqual({
+      updateTime: { weekday: 2, hour: 19 },
+      // T is Monday 9 November 2026, 13:00 NZDT.
+      nextUpdateAt: new Date(Date.UTC(2026, 10, 10, 6, 0)).toISOString(),
+    });
+    const unsigned = await app.request('/api/settings/update-time', {
+      method: 'POST',
+      headers: {
+        'Tailscale-User-Login': LOGIN,
+        Host: 'kamaji.test',
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ weekday: 4, hour: 9 }),
+    });
+    expect(unsigned.status).toBe(401);
+    expect((await post('/api/settings/update-time', { weekday: 7, hour: 9 })).status).toBe(400);
+    const saved = await post('/api/settings/update-time', { weekday: 4, hour: 9 });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({
+      updateTime: { weekday: 4, hour: 9 },
+      nextUpdateAt: new Date(Date.UTC(2026, 10, 11, 20, 0)).toISOString(),
+    });
+    expect(
+      db.prepare("SELECT summary FROM events WHERE kind = 'kamaji.update-time'").all(),
+    ).toEqual([{ summary: `Update time set to Thursday 09:00 NZ time (by ${LOGIN})` }]);
+  });
+});

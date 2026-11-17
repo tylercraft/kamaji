@@ -154,6 +154,7 @@ describe('Needs a look', () => {
         active: true,
         lastGoodAt: ago(3 * DAY),
         nextDueAt: ago(-3 * DAY),
+        timeZone: 'Pacific/Auckland',
         snapshots: [
           {
             startedAt: ago(DAY),

@@ -53,12 +53,12 @@ The **Download** link on a site's Backups panel, for the latest export (Tyler's 
 ## The process and the schedule
 
 - **A third process,** `dev.craftish.kamaji-backups` (`packages/server/src/sitebackups/main.ts`), the same shape as the updater. It runs under Doppler's `backup` config, holds the pull key and the password, takes its own lock in `kamaji.db`, does its work, writes what happened to `kamaji.db`, and exits.
-- **Nightly at 03:15** (StartCalendarInterval, the mini's NZ time), in this order:
+- **Hourly at :15** (StartCalendarInterval with only a minute), in this order (changed by Tyler on 2026-11-17, from nightly at 03:15 by age):
   1. requests from the Backups panel;
-  2. each site whose last good snapshot is older than its setting (weekly: 6½ days; fortnightly: 13½), one at a time;
-  3. at most one restore check: the site whose last check is oldest, if that's more than 30 days ago;
-  4. `prune` on Sundays, `check` on the 1st;
-  5. the repository's size, for the panel.
+  2. each site whose backup night has begun with no good snapshot for it, one at a time (`sitebackups/schedule.ts`). The night is 03:00 in the site's own time zone (Configure; NZ by default) on the last night before the weekly update time (Settings; Tuesday 19:00 NZ by default), so it's a quiet hour for its visitors and fresh when Tyler updates. Fortnightly sites go every second week, counted from their last snapshot. A run missed is made up the next hour; a night that fails three times waits for the next one, or Back up site now;
+  3. in the 03:15 NZ run only: at most one restore check, the site whose last check is oldest, if that's more than 30 days ago; `prune` on Sundays, `check` on the 1st;
+  4. the repository's size, for the panel.
+- **At the update time** the app (not this process, which has no Care keys) runs Recheck all, then sends one "Ready to update" to Discord and the top of Overview: each site's backup for this update (a fresh snapshot and its time, the host's backups, the pre-update export only, or failed and why, first) and the updates waiting, majors marked. Discord gets counts only; the names are on Overview. Kamaji approves nothing itself.
 - **On demand:** "Back up site now" and "Check restore now" on the Backups panel queue a request, and the app kickstarts the agent, as it does the updater.
 - **Configure → Backups** gets "Whole-site backups: off / weekly / fortnightly", off by default, shown only on craftish sites, with the client-agreed tick on client sites. A site also has to be on craftish's `site-pull.sites`; until it is, a pull fails with "not on the allowlist".
 - **Alerts,** through the same issues and notifications as everything else (`sitebackups/alerts.ts`): a failed backup, a snapshot that didn't read back and a failed restore check go to Discord at once, like a site going down, and clear with the next one that works. A site 2 days past its week or fortnight goes in the morning digest; the app's cycle looks for those, so a backups process that never runs is noticed too.

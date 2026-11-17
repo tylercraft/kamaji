@@ -1,6 +1,7 @@
-// The backups process's work (ops/backups-plan.md, "The process and the schedule"): the Backups
-// panel's requests, then each site that's due, then at most one restore check, then the
-// repository's upkeep and size. One site at a time. Everything it does is recorded in
+// The backups process's work (ops/backups-plan.md, "The process and the schedule"), hourly at :15:
+// the Backups panel's requests, then each site that's due by the update time (schedule.ts), then,
+// in the 03:15 run only, at most one restore check and the repository's upkeep; then its size. One
+// site at a time. Everything it does is recorded in
 // site_snapshots, restore_checks and Activity; failures say why in plain words.
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
@@ -10,11 +11,15 @@ import { readState, writeState } from '../state.js';
 import type { RestoreResult } from './restore.js';
 import type { Restic } from './restic.js';
 import { checkPull, readTar } from './tar.js';
+import { readUpdateTime } from '../settings.js';
+import { isDue, KAMAJI_ZONE, wallClock, type Schedule } from './schedule.js';
 
 const DAY = 24 * 60 * 60_000;
-/** A little under a week or a fortnight, so a nightly run doesn't slip a day each time. */
-export const INTERVAL = { weekly: 6.5 * DAY, fortnightly: 13.5 * DAY } as const;
 export const RESTORE_EVERY = 30 * DAY;
+/** Tries at one backup night before it waits for the next: a failure isn't retried every hour. */
+export const TRIES_PER_NIGHT = 3;
+/** The NZ hour of the run that does the night's restore check and upkeep. */
+export const NIGHTLY_HOUR = 3;
 export const REPOSITORY = 'sitebackups.repository';
 const UPKEEP = 'sitebackups.upkeep';
 export { eligible };
@@ -33,19 +38,31 @@ export interface BackupsDeps {
   signal?: AbortSignal;
 }
 
+/**
+ * Sites due now: their backup night has begun and they have no good snapshot for it, so a run
+ * missed at 03:15 is made up at the next one. A night that has failed three times waits for the
+ * next night (or Back up site now), rather than pulling the site from craftish every hour.
+ */
 export function dueSites(db: Db, now: number): string[] {
+  const time = readUpdateTime(db);
+  const tries = db.prepare(
+    'SELECT COUNT(*) AS n FROM site_snapshots WHERE site_id = ? AND ok = 0 AND started_at >= ?',
+  );
   return db
     .prepare(
-      `SELECT s.id, s.site_backup_schedule AS schedule,
+      `SELECT s.id, s.site_backup_schedule AS schedule, s.time_zone AS zone,
          (SELECT MAX(started_at) FROM site_snapshots WHERE site_id = s.id AND ok = 1) AS last
        FROM sites s WHERE ${ELIGIBLE} ORDER BY s.id`,
     )
     .all()
-    .filter(
-      (r) =>
-        r.last === null ||
-        Number(r.last) <= now - INTERVAL[String(r.schedule) as keyof typeof INTERVAL],
-    )
+    .filter((r) => {
+      const { due, night } = isDue(now, time, {
+        zone: String(r.zone),
+        schedule: String(r.schedule) as Schedule,
+        lastGood: r.last === null ? null : Number(r.last),
+      });
+      return due && Number(tries.get(String(r.id), night)?.n ?? 0) < TRIES_PER_NIGHT;
+    })
     .map((r) => String(r.id));
 }
 
@@ -236,8 +253,16 @@ export function takeRequests(
   return out;
 }
 
-/** The mini's local date, for once-a-day upkeep. */
-const localDay = (ms: number) => new Date(ms).toLocaleDateString('en-CA');
+/** The NZ date and hour, for the once-a-night work. */
+function nzNight(ms: number): { day: string; hour: number; weekday: number; date: number } {
+  const w = wallClock(KAMAJI_ZONE, ms);
+  return {
+    day: `${w.year}-${String(w.month).padStart(2, '0')}-${String(w.day).padStart(2, '0')}`,
+    hour: w.hour,
+    weekday: w.weekday,
+    date: w.day,
+  };
+}
 
 export async function runBackups(deps: BackupsDeps): Promise<void> {
   const { db, now } = deps;
@@ -260,19 +285,23 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
     if (!backedUp.has(siteId)) await backUpSite(deps, siteId);
   }
   if (stopped()) return;
-  const restore = checked.size === 0 ? restoreDue(db, now()) : null;
-  if (restore) await checkRestore(deps, restore);
-  if (stopped()) return;
-
-  const today = localDay(now());
-  const upkeep = readState<{ pruned?: string; checked?: string }>(db, UPKEEP) ?? {};
-  const date = new Date(now());
-  if (date.getDay() === 0 && upkeep.pruned !== today) {
+  const night = nzNight(now());
+  const upkeep =
+    readState<{ pruned?: string; checked?: string; restored?: string }>(db, UPKEEP) ?? {};
+  const today = night.day;
+  // At most one restore check a night, in the 03:15 run, and none after one asked for.
+  if (night.hour === NIGHTLY_HOUR && upkeep.restored !== today) {
+    const restore = checked.size === 0 ? restoreDue(db, now()) : null;
+    if (restore) await checkRestore(deps, restore);
+    upkeep.restored = today;
+    if (stopped()) return;
+  }
+  if (night.hour === NIGHTLY_HOUR && night.weekday === 0 && upkeep.pruned !== today) {
     const pruned = await deps.restic.prune();
     if (!pruned.ok) deps.log(`backups: prune failed: ${pruned.problem}`);
     upkeep.pruned = today;
   }
-  if (date.getDate() === 1 && upkeep.checked !== today) {
+  if (night.hour === NIGHTLY_HOUR && night.date === 1 && upkeep.checked !== today) {
     const result = await deps.restic.check();
     recordEvent(db, now(), {
       kind: result.ok ? 'backups.checked' : 'backups.check-failed',

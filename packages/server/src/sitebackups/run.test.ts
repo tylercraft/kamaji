@@ -15,8 +15,9 @@ import {
 import { DB, pullOf } from './testTar.js';
 
 const DAY = 24 * 60 * 60_000;
-// A Saturday in NZ and UTC alike: no upkeep unless a test asks.
-const T = Date.UTC(2026, 10, 14, 3, 0);
+// Saturday 14 November 2026, 03:15 in NZ: the run that does the night's restore check. The
+// update time is Tuesday 19:00, so the backup night in force began Tuesday 10 November, 03:00.
+const T = Date.UTC(2026, 10, 13, 14, 15);
 
 function site(
   db: Db,
@@ -71,13 +72,13 @@ function deps(
 const rows = (db: Db, sql: string) => db.prepare(sql).all();
 
 describe('which sites are due', () => {
-  it('only sites on craftish, switched on, with the client’s agreement or Tyler’s own', () => {
+  it('only sites on craftish, switched on, with the client’s agreement or Tyler’s own, without a snapshot since their night', () => {
     const db = testDb();
     site(db, 'never.test');
     site(db, 'week-old.test');
     snapshot(db, 'week-old.test', T - 7 * DAY);
     site(db, 'recent.test');
-    snapshot(db, 'recent.test', T - 6 * DAY);
+    snapshot(db, 'recent.test', T - 3 * DAY);
     site(db, 'fortnight.test', { schedule: 'fortnightly' });
     snapshot(db, 'fortnight.test', T - 10 * DAY);
     site(db, 'off.test', { schedule: 'off' });
@@ -234,5 +235,79 @@ describe('a night’s run', () => {
     ]);
     const said = rows(db, 'SELECT summary, detail FROM events').map((e) => JSON.stringify(e));
     expect(said.join('\n')).not.toContain('ERROR 1146');
+  });
+});
+
+describe('hourly runs', () => {
+  const HOUR = 60 * 60_000;
+  // Tuesday 17 November 2026, 03:15 NZDT: a site in NZ's backup night, before the update time.
+  const NIGHT = Date.UTC(2026, 10, 16, 14, 15);
+  const at = (db: Db, now: number, pull?: (site: string) => Buffer | { problem: string }) => {
+    const made = deps(db, pull, now);
+    return { ...made, run: () => runBackups(made.d) };
+  };
+
+  it('backs a site up in its own night: a Los Angeles site waits for 03:00 there', async () => {
+    const db = testDb();
+    site(db, 'nz.test');
+    site(db, 'la.test');
+    db.prepare("UPDATE sites SET time_zone = 'America/Los_Angeles' WHERE id = 'la.test'").run();
+    // Both backed up in last week's nights.
+    snapshot(db, 'nz.test', NIGHT - 7 * DAY);
+    snapshot(db, 'la.test', NIGHT - 7 * DAY - 3 * HOUR);
+    // Monday 16 November, 03:00 in Los Angeles, is Tuesday 00:00 in NZ: it goes first.
+    const la = Date.UTC(2026, 10, 16, 11, 15);
+    expect(dueSites(db, la - HOUR)).toEqual([]);
+    expect(dueSites(db, la)).toEqual(['la.test']);
+    expect(dueSites(db, NIGHT)).toEqual(['la.test', 'nz.test']);
+  });
+
+  it('catches up a missed hour, then leaves the site until next week', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    snapshot(db, 'one.test', NIGHT - 7 * DAY);
+    // 03:15 never ran; 04:15 does.
+    const late = at(db, NIGHT + HOUR);
+    await late.run();
+    expect(late.calls).toEqual(['backup one.test', 'keep one.test']);
+    const next = at(db, NIGHT + 2 * HOUR);
+    await next.run();
+    expect(next.calls).toEqual([]);
+    expect(dueSites(db, NIGHT + 6 * DAY)).toEqual([]);
+    expect(dueSites(db, NIGHT + 7 * DAY)).toEqual(['one.test']);
+  });
+
+  it('tries a failing site three times in a night, then waits for the next', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    const refused = () => ({ problem: 'craftish: not on the allowlist' });
+    for (let h = 0; h < 5; h++) await at(db, NIGHT + h * HOUR, refused).run();
+    expect(rows(db, 'SELECT ok FROM site_snapshots')).toEqual([{ ok: 0 }, { ok: 0 }, { ok: 0 }]);
+    expect(dueSites(db, NIGHT + 7 * DAY)).toEqual(['one.test']);
+  });
+
+  it('leaves sites with backups off alone, whatever the hour', async () => {
+    const db = testDb();
+    site(db, 'off.test', { schedule: 'off' });
+    for (let h = 0; h < 24; h++) expect(dueSites(db, NIGHT + h * HOUR)).toEqual([]);
+  });
+
+  it('does at most one restore check a night, in the 03:15 run', async () => {
+    const db = testDb();
+    site(db, 'a.test');
+    site(db, 'b.test');
+    snapshot(db, 'a.test', NIGHT - 30 * 60_000);
+    snapshot(db, 'b.test', NIGHT - 30 * 60_000);
+    const restored: string[] = [];
+    // A whole day of hourly runs, from 00:15 NZ.
+    for (let h = -3; h < 21; h++) {
+      const run = at(db, NIGHT + h * HOUR);
+      await run.run();
+      restored.push(...run.restored);
+    }
+    expect(restored).toEqual(['a.test']);
+    const tomorrow = at(db, NIGHT + DAY);
+    await tomorrow.run();
+    expect(tomorrow.restored).toEqual(['b.test']);
   });
 });

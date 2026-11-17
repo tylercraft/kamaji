@@ -28,6 +28,7 @@ import { useLink } from '../router';
 import { useResource, type Resource } from '../useResource';
 import { IssueStep, UndoDismiss } from '../components/IssueStep';
 import { WithIcon } from '../components/SiteIcon';
+import { ReadyToUpdate } from './ReadyToUpdate';
 
 const Metrics = styled.dl`
   margin: 0;
@@ -501,6 +502,9 @@ export function OverviewPage() {
   return (
     <>
       <PageHeading title="Overview" purpose="What needs attention, and what’s happened recently." />
+      {overview.state === 'ready' && overview.data.ready && (
+        <ReadyToUpdate ready={overview.data.ready} />
+      )}
       <ResourceView resource={overview} label="the overview">
         {(o) => (
           <Metrics>

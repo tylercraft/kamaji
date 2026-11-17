@@ -190,6 +190,7 @@ const whole = (over: Partial<WholeSiteBackups> = {}): WholeSiteBackups => ({
   active: true,
   lastGoodAt: ago(DAY),
   nextDueAt: ago(-5 * DAY),
+  timeZone: 'Pacific/Auckland',
   snapshots: [
     {
       startedAt: ago(DAY),

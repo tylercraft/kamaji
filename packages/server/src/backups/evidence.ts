@@ -104,13 +104,14 @@ export function siteBackups(
     backupExpectation: SiteBackupsResponse['backupExpectation'];
   },
   exportingSince: number | undefined,
+  now = Date.now(),
 ): SiteBackupsResponse {
   const history = backupHistory(db, site.id);
   const download = latestExport(db, site.id);
   return {
     backupExpectation: site.backupExpectation,
     download: download ? { exportedAt: download.exportedAt } : null,
-    wholeSite: wholeSiteView(db, site.id),
+    wholeSite: wholeSiteView(db, site.id, now),
     canExport: site.hostKind === 'craftish',
     exporting: exportingSince === undefined ? null : iso(exportingSince),
     latest:
