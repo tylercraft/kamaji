@@ -36,7 +36,7 @@ function oursToAnnounce(r: Row, workerAlerts: boolean): boolean {
   return true;
 }
 
-const ISSUES = `SELECT issues.*, sites.tailnet_only FROM issues
+const ISSUES = `SELECT issues.*, sites.tailnet_only, sites.name AS site_name FROM issues
   LEFT JOIN sites ON issues.resource_type = 'site' AND sites.id = issues.resource_id`;
 
 function duration(ms: number): string {
@@ -45,6 +45,53 @@ function duration(ms: number): string {
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours} h`;
   return `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * How a site's issue reads once it's fixed, for the kinds with an obvious good-news wording: what
+ * the fixed state is, the start of the issue's summary that names the site (left off the old
+ * problem, which follows in brackets), and what it was for how long.
+ */
+const RECOVERED: Record<
+  string,
+  { fixed: (name: string) => string; leads: (name: string) => string[]; was: string }
+> = {
+  down: { fixed: (n) => `${n} is back up`, leads: (n) => [`${n} is down: `], was: 'down' },
+  'backup-failed': {
+    fixed: (n) => `${n}’s whole-site backups work again`,
+    leads: (n) => [
+      `Whole-site backup of ${n} failed: `,
+      `Whole-site backup of ${n} before update failed: `,
+    ],
+    was: 'failed',
+  },
+  'restore-check-failed': {
+    fixed: (n) => `${n} restores again`,
+    leads: (n) => [`${n}’s restore check failed `],
+    was: 'failed',
+  },
+  certificate: {
+    fixed: (n) => `${n}’s certificate was renewed`,
+    leads: (n) => [`${n}’s `],
+    was: 'open',
+  },
+};
+
+/**
+ * A resolved issue's line: the good news first, in bold, and the old problem last, so it never
+ * reads as a new failure.
+ */
+export function recoveryLine(r: Row): string {
+  const after = duration(Number(r.resolved_at) - Number(r.first_seen_at));
+  const summary = String(r.summary);
+  const words = RECOVERED[String(r.kind)];
+  const name = r.site_name === null || r.site_name === undefined ? null : String(r.site_name);
+  if (r.resource_type === 'site' && words && name) {
+    const lead = words.leads(name).find((l) => summary.startsWith(l));
+    const problem = lead ? summary.slice(lead.length) : summary;
+    return `✅ **Fixed:** ${words.fixed(name)} (${words.was} for ${after}: ${problem})`;
+  }
+  return `✅ **Fixed** after ${after}: ${summary}`;
 }
 
 /** Sends what's due at once. Returns how many issues it told Tyler about. */
@@ -81,12 +128,10 @@ export async function notifyNow(
 
   const lines = [
     ...fresh.map((r) => String(r.summary)),
-    ...recovered.map(
-      (r) =>
-        `Resolved: ${String(r.summary)} (after ${duration(Number(r.resolved_at) - Number(r.first_seen_at))})`,
-    ),
+    ...recovered.map(recoveryLine),
     ...reminders.map(
-      (r) => `Still open after ${duration(now - Number(r.first_seen_at))}: ${String(r.summary)}`,
+      (r) =>
+        `⚠️ **Still open** after ${duration(now - Number(r.first_seen_at))}: ${String(r.summary)}`,
     ),
   ];
   if (lines.length === 0) return 0;

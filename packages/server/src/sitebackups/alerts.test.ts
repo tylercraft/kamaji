@@ -72,7 +72,9 @@ describe('backup alerts', () => {
     ]);
     await backUpSite(deps(db, (s) => pullOf(s), T + 60_000).d, 'one.test');
     await notifyNow(db, T + 60_000, discord, options);
-    expect(sent[1]).toMatch(/^\*\*Kamaji\*\*\n- Resolved: Whole-site backup of one.test failed/);
+    expect(sent[1]).toBe(
+      '**Kamaji**\n- ✅ **Fixed:** one.test’s whole-site backups work again (failed for 1 min: craftish: the database export failed)\n<https://kamaji.test>',
+    );
   });
 
   it('counts a snapshot that didn’t read back as a failed backup', async () => {
