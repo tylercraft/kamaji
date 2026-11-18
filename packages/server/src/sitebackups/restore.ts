@@ -2,7 +2,9 @@
 // on the mini, checked against its manifest, then started as an offline WordPress in Docker
 // Desktop and asked for its home page. Nothing in it can reach the internet: the containers are
 // on an --internal network, so a restored shop can't send email or call a payment API. Whatever
-// happens, the containers, the network and the restored files are removed after.
+// happens, the containers, the network and the restored files are removed after. When Docker Hub
+// doesn't have a WordPress release's own image yet (7.1.5 the day it shipped), the check runs on
+// that release's major.minor image instead and says so (Tyler, 2026-11-19).
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -36,7 +38,11 @@ export interface RestoreDeps {
 export type RestoreStep =
   'restore' | 'verify' | 'unpack' | 'docker' | 'database' | 'wordpress' | 'home page';
 export type RestoreResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** What the check did differently, for the site page: the image it fell back to. */
+      note?: string;
+    }
   | {
       ok: false;
       step: RestoreStep;
@@ -48,6 +54,27 @@ export type RestoreResult =
 export const MARIADB = 'mariadb:11.4';
 /** The official image for the manifest's WordPress, e.g. wordpress:6.8.3-apache. */
 export const wordpressImage = (version: string) => `wordpress:${version}-apache`;
+
+/** The major.minor release to fall back to (7.1.5 → 7.1), only for a three-part version. */
+export function fallbackVersion(version: string): string | null {
+  const parts = /^(\d+)\.(\d+)\.\d+$/.exec(version);
+  return parts ? `${parts[1]}.${parts[2]}` : null;
+}
+
+/**
+ * `docker run` couldn't pull `image` because the registry has no such tag: the daemon's line
+ * names it and says "not found" (fixtures/docker-run-image-not-found.txt), or "manifest unknown"
+ * from older Dockers. "Unable to find image … locally" alone is only the pull starting.
+ */
+export const imageMissing = (ran: Ran, image: string) =>
+  (ran.stderr ?? '')
+    .split('\n')
+    .some(
+      (line) =>
+        line.includes('Error response from daemon') &&
+        line.includes(image) &&
+        /not found|manifest unknown/.test(line),
+    );
 
 const fail = (step: RestoreStep, problem: string, ran?: Ran): RestoreResult => ({
   ok: false,
@@ -157,35 +184,51 @@ export async function restoreCheck(
     if (imported.code !== 0) return fail('database', 'database.sql didn’t import', imported);
 
     const home = `http://${name}-wp`;
-    const wp = await docker(
-      [
-        'run',
-        '--detach',
-        '--name',
-        `${name}-wp`,
-        '--network',
-        name,
-        '--volume',
-        `${join(files, 'wp-content')}:/var/www/html/wp-content`,
-        '--env',
-        `WORDPRESS_DB_HOST=${name}-db`,
-        '--env',
-        'WORDPRESS_DB_USER=root',
-        '--env',
-        'WORDPRESS_DB_PASSWORD=',
-        '--env',
-        'WORDPRESS_DB_NAME=wordpress',
-        '--env',
-        `WORDPRESS_TABLE_PREFIX=${manifest.tablePrefix}`,
-        '--env',
-        `WORDPRESS_CONFIG_EXTRA=define('WP_HOME', '${home}'); define('WP_SITEURL', '${home}'); define('DISABLE_WP_CRON', true);`,
-        wordpressImage(manifest.wordpress),
-      ],
-      { timeoutMs: 10 * 60_000 },
-    );
-    if (wp.code !== 0) {
-      return fail('wordpress', `${wordpressImage(manifest.wordpress)} didn’t start`, wp);
+    const startWordpress = (image: string) =>
+      docker(
+        [
+          'run',
+          '--detach',
+          '--name',
+          `${name}-wp`,
+          '--network',
+          name,
+          '--volume',
+          `${join(files, 'wp-content')}:/var/www/html/wp-content`,
+          '--env',
+          `WORDPRESS_DB_HOST=${name}-db`,
+          '--env',
+          'WORDPRESS_DB_USER=root',
+          '--env',
+          'WORDPRESS_DB_PASSWORD=',
+          '--env',
+          'WORDPRESS_DB_NAME=wordpress',
+          '--env',
+          `WORDPRESS_TABLE_PREFIX=${manifest.tablePrefix}`,
+          '--env',
+          `WORDPRESS_CONFIG_EXTRA=define('WP_HOME', '${home}'); define('WP_SITEURL', '${home}'); define('DISABLE_WP_CRON', true);`,
+          image,
+        ],
+        { timeoutMs: 10 * 60_000 },
+      );
+    const image = wordpressImage(manifest.wordpress);
+    let wp = await startWordpress(image);
+    let note: string | undefined;
+    const minor = fallbackVersion(manifest.wordpress);
+    if (wp.code !== 0 && minor && imageMissing(wp, image)) {
+      const fallback = wordpressImage(minor);
+      // A failed pull creates no container, but one left by a half-start would block the name.
+      await docker(['rm', '--force', `${name}-wp`]);
+      wp = await startWordpress(fallback);
+      if (wp.code !== 0)
+        return fail(
+          'wordpress',
+          `${image} isn’t on Docker Hub, and ${fallback} didn’t start either`,
+          wp,
+        );
+      note = `checked on ${fallback} (${manifest.wordpress} not on Docker Hub yet)`;
     }
+    if (wp.code !== 0) return fail('wordpress', `${image} didn’t start`, wp);
     let last = 'no answer';
     const served = await waitFor(deps, 120, async () => {
       const page = await docker([
@@ -214,7 +257,7 @@ export async function restoreCheck(
       return true;
     });
     if (!served) return fail('home page', `the test copy’s home page gave ${last}`);
-    return { ok: true };
+    return note ? { ok: true, note } : { ok: true };
   } finally {
     if (started) {
       await docker(['rm', '--force', `${name}-wp`, `${name}-db`]);

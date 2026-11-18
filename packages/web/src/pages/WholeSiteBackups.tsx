@@ -192,6 +192,7 @@ export function WholeSiteBackups({
               </Pill>
               <Time iso={check.startedAt} />
               <span>{check.seconds} s</span>
+              {check.note && <span className="why">{check.note}</span>}
             </>
           ) : (
             <>

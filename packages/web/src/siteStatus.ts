@@ -467,7 +467,9 @@ export function backups(b: SiteBackupsResponse, now: number): StatusLine[] {
             'Restore check',
             old ? 'neutral' : 'green',
             old ? 'Passed, out of date' : 'Passed',
-            `Restored to an offline test copy that served its home page, in ${check.seconds} s.`,
+            `Restored to an offline test copy that served its home page, in ${check.seconds} s${
+              check.note ? `; ${check.note}` : ''
+            }.`,
             check.startedAt,
             old,
           ),
