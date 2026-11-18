@@ -257,6 +257,55 @@ describe('telling Discord', () => {
     expect(sent[1]?.split('\n')).toHaveLength(2);
   });
 
+  it('carried on past a failed check: ⚠️, counted for Discord, named with its problem in the toast', async () => {
+    const db = testDb();
+    site(db, 'yoga.test', 'Yoga Records');
+    const passed = (n: number) =>
+      Array.from({ length: n }, (_, k) => ({ name: `P${k}`, from: '1', to: '2' }));
+    run(db, 'b1', [
+      {
+        id: 'yoga.test',
+        state: 'held',
+        held: 'Held after WooPayments 11.2.1 → 11.3.0: 11.3.0 installed, but Site Health: The REST API encountered an error',
+        backup: 'Whole-site backup before update: snapshot cccccccc, 184.0 MB, read back whole',
+        items: [
+          ...passed(4),
+          { name: 'WooPayments', from: '11.2.1', to: '11.3.0', outcome: 'checks_failed' },
+          ...passed(5).map((i) => ({ ...i, name: `Q${i.name}`, state: 'held', outcome: null })),
+        ],
+      },
+    ]);
+    db.prepare(
+      "UPDATE batch_items SET detail = '11.3.0 installed, but Site Health: The REST API encountered an error' WHERE name = 'WooPayments'",
+    ).run();
+    // Held at WooPayments, as the updater does.
+    expect(runLines(db, 'b1')).toEqual([
+      '⚠️ **Needs you:** Yoga Records is held after WooPayments 11.2.1 → 11.3.0: 11.3.0 installed, but Site Health: The REST API encountered an error. Updated before the hold: 4 updates.',
+    ]);
+    const { sent, discord } = outbox();
+    await announceRuns(db, T, discord, 'https://k');
+    // Tyler carries on; the other five pass and the site ends done.
+    expect(carryOn(db, 'b1', 'yoga.test', 'tylercraft@github', T + 4 * MIN)).toBe(true);
+    db.prepare(
+      "UPDATE batch_items SET state = 'done', outcome = 'passed' WHERE batch_id = 'b1' AND state = 'waiting'",
+    ).run();
+    db.prepare("UPDATE batch_sites SET state = 'done', finished_at = ? WHERE batch_id = 'b1'").run(
+      T + 5 * MIN,
+    );
+    db.prepare("UPDATE batches SET state = 'finished', finished_at = ? WHERE id = 'b1'").run(
+      T + 5 * MIN,
+    );
+    await announceRuns(db, T + 6 * MIN, discord, 'https://k');
+    expect(sent[1]?.split('\n')[0]).toBe(
+      '⚠️ Updated Yoga Records: 9 updates, 1 failed its checks and you carried on (whole-site backup first)',
+    );
+    const toast = recentRuns(db, T + 6 * MIN, 6 * 60 * MIN)[0]!.lines[0]!;
+    expect(toast).toMatch(/^⚠️ Updated Yoga Records: P0 1 → 2, .*QP4 1 → 2, /);
+    expect(toast).toContain(
+      'WooPayments 11.2.1 → 11.3.0 failed its checks (Site Health: The REST API encountered an error) and you carried on (whole-site backup first)',
+    );
+  });
+
   it('runs from before this are never announced', () => {
     const db = testDb();
     // Migration 24 marks finished runs as told; a run finished and told has nothing new.

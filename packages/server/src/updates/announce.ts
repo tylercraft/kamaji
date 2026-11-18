@@ -2,7 +2,9 @@
 // whatever page Tyler has open. A site that went through says what changed, that the checks
 // passed, and which backup came first; a held one leads with ⚠️ and the reason, marked as needing
 // Tyler. The app's cycle sends each finished run once (announced_at); a run carried on after a
-// hold finishes again, and that time only the sites it finished are told.
+// hold finishes again, and that time only the sites it finished are told. A site Tyler carried on
+// past a failed item ends done, but its line still leads with ⚠️ and says so (Tyler,
+// 2026-11-18): "9 updates, 1 failed its checks and you carried on".
 //
 // Discord is a third party, so its lines give counts ("1 update"), never component names: those
 // stay in the toast and on Updates (`names`). The held reason is the one Kamaji wrote, as the
@@ -29,6 +31,33 @@ const items = (rows: Row[]) =>
 
 const count = (rows: Row[]) => `${rows.length} ${rows.length === 1 ? 'update' : 'updates'}`;
 
+const FAILED: Record<string, [string, string]> = {
+  checks_failed: ['failed its checks', 'failed their checks'],
+  update_failed: ['failed to update', 'failed to update'],
+  incomplete: ['couldn’t be verified', 'couldn’t be verified'],
+};
+
+/** Items that went through without passing, which Tyler carried on past: counted, or named. */
+function carriedPast(rows: Row[], names: boolean): string {
+  if (names)
+    return rows
+      .map((i) => {
+        const [one] = FAILED[String(i.outcome)] ?? FAILED.incomplete!;
+        // The updater's detail: "11.3.0 installed, but Site Health: …"; the problem is the rest.
+        const problem = String(i.detail ?? '').replace(/^\S+ installed, but /, '');
+        return `${items([i])} ${one}${problem ? ` (${problem})` : ''}`;
+      })
+      .join(', ');
+  const by = new Map<string, number>();
+  for (const i of rows) by.set(String(i.outcome), (by.get(String(i.outcome)) ?? 0) + 1);
+  return [...by]
+    .map(([outcome, n]) => {
+      const [one, many] = FAILED[outcome] ?? FAILED.incomplete!;
+      return `${n} ${n === 1 ? one : many}`;
+    })
+    .join(', ');
+}
+
 /**
  * One line per site the run finished after `since` (every site when null), in run order. With
  * `names`, what changed by name and version (the toast); without, a count (Discord).
@@ -51,15 +80,28 @@ export function runLines(
     `SELECT name, from_version, to_version FROM batch_items
      WHERE batch_id = ? AND site_id = ? AND state = 'done' AND outcome = 'passed' ORDER BY position`,
   );
+  const failed = db.prepare(
+    `SELECT name, from_version, to_version, outcome, detail FROM batch_items
+     WHERE batch_id = ? AND site_id = ? AND state = 'done' AND outcome != 'passed' ORDER BY position`,
+  );
   return sites.map((s) => {
     const name = String(s.name);
     const updated = done.all(batchId, String(s.site_id));
     if (s.state === 'held') {
-      const why = String(s.held_reason ?? 'held').replace(/^Held: /, '');
+      // The updater's reasons start "Held: …" or "Held after <update>: …".
+      const reason = String(s.held_reason ?? 'held');
+      const why = reason.startsWith('Held: ')
+        ? `: ${reason.slice(6)}`
+        : reason.startsWith('Held ')
+          ? ` ${reason.slice(5)}`
+          : `: ${reason}`;
       const first = updated.length > 0 ? ` Updated before the hold: ${what(updated)}.` : '';
-      return `⚠️ **Needs you:** ${name} is held: ${why}${/[.!?]$/.test(why) ? '' : '.'}${first}`;
+      return `⚠️ **Needs you:** ${name} is held${why}${/[.!?]$/.test(why) ? '' : '.'}${first}`;
     }
     const backup = backupFirst(String(s.backup_kind), s.backup === null ? null : String(s.backup));
+    const past = failed.all(batchId, String(s.site_id));
+    if (past.length > 0)
+      return `⚠️ Updated ${name}: ${updated.length > 0 ? `${what(updated)}, ` : ''}${carriedPast(past, names)} and you carried on (${backup})`;
     return updated.length > 0
       ? `✅ Updated ${name}: ${what(updated)}, checks passed (${backup})`
       : `✅ ${name}: nothing left to update (${backup})`;
