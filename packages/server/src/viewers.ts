@@ -5,6 +5,7 @@
 import { offerKey, type NewsResponse, type SeenPage } from '@kamaji/shared';
 import type { Db } from './db.js';
 import { recentRuns } from './updates/announce.js';
+import { recentRollbacks } from './rollback/announce.js';
 import { queue } from './updates/queue.js';
 
 /** The toast's reach: a run that finished longer ago than this isn't news. */
@@ -81,12 +82,15 @@ export function news(db: Db, login: string, now: number): NewsResponse {
       sites: seen.sites === null ? [] : freshSites(db, seen.sites),
       updates: seen.updates === null ? [] : freshUpdates(db, seen.updates),
     },
-    runs: recentRuns(db, now, RUNS_WITHIN).map((r) => ({
-      id: r.id,
-      approvedBy: r.approvedBy,
-      finishedAt: iso(r.finishedAt),
-      lines: r.lines,
-      anchor: r.anchor,
-    })),
+    runs: [...recentRuns(db, now, RUNS_WITHIN), ...recentRollbacks(db, now, RUNS_WITHIN)].map(
+      (r) => ({
+        id: r.id,
+        approvedBy: r.approvedBy,
+        finishedAt: iso(r.finishedAt),
+        lines: r.lines,
+        anchor: r.anchor,
+        ...(r.href ? { href: r.href } : {}),
+      }),
+    ),
   };
 }

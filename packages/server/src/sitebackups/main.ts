@@ -1,6 +1,6 @@
 // The backups process (ops/backups-plan.md, ops/README.md "Whole-site backups"): hourly from
 // its LaunchAgent, dev.craftish.kamaji-backups, and when the Backups panel asks. It holds the pull
-// key, the Kinsta key and the restic password, which the app never does: its Doppler config is `backup`, scoped
+// key, the push key (rollbacks), the Kinsta key and the restic password, which the app never does: its Doppler config is `backup`, scoped
 // to ~/.kamaji-backups. One at a time: a second start while one runs exits at once.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,8 @@ import { kinstaCommand, readTest } from './kinsta.js';
 import { restoreCheck } from './restore.js';
 import { realRestic } from './restic.js';
 import { runBackups } from './run.js';
+import { runRollback } from '../rollback/push.js';
+import { readScript as readPushScript, pushCommand } from '../rollback/ssh.js';
 
 export const LOCK = 'sitebackups.process';
 
@@ -74,6 +76,10 @@ const kinsta = {
   knownHosts: env.KAMAJI_KINSTA_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji-kinsta.known_hosts`,
 };
 const restic = realRestic(env.KAMAJI_RESTIC ?? '/opt/homebrew/bin/restic');
+// The rollback key on craftish, forced to kamaji-site-push (site-push/README.md); Kinsta's pushes
+// go with Kinsta's own key, as its pulls do.
+const pushKey = env.KAMAJI_PUSH_SSH_KEY ?? `${homedir()}/.ssh/kamaji-push`;
+const restoreDir = env.KAMAJI_RESTORE_DIR ?? join(homedir(), 'kamaji-restore');
 
 try {
   log('backups: started');
@@ -90,13 +96,34 @@ try {
       const ran = await realExec(controller.signal)(bin!, args, { timeoutMs: 5 * 60_000 });
       return readTest(site, ran);
     },
+    rollback: (id) =>
+      runRollback(
+        {
+          db,
+          restic,
+          exec: realExec(controller.signal),
+          workDir: restoreDir,
+          tar: '/usr/bin/tar',
+          pushCommand: (site, host, words) =>
+            pushCommand(db, site, host, words, {
+              craftish: { key: pushKey, host: craftish.host, knownHosts: craftish.knownHostsPath },
+              kinsta,
+              script: readPushScript(),
+            }),
+          now: Date.now,
+          sleep: (ms) => delay(ms, undefined, { signal: controller.signal }),
+          log,
+          signal: controller.signal,
+        },
+        id,
+      ),
     restore: (site, snapshotId) =>
       restoreCheck(
         {
           restic,
           exec: realExec(controller.signal),
           // Outside ~/kamaji-backups, which Arq copies: a test copy is plain files.
-          workDir: env.KAMAJI_RESTORE_DIR ?? join(homedir(), 'kamaji-restore'),
+          workDir: restoreDir,
           docker: env.KAMAJI_DOCKER ?? '/usr/local/bin/docker',
           sleep: (ms) => delay(ms, undefined, { signal: controller.signal }),
           signal: controller.signal,

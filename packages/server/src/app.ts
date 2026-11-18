@@ -10,6 +10,8 @@ import {
   ApproveRequest,
   ConfigureSiteRequest,
   KinstaAccessInput,
+  RollbackRequest,
+  UndoRequest,
   DetectPlatformRequest,
   type DetectPlatformResponse,
   WholeSiteRequest,
@@ -32,6 +34,7 @@ import { z } from 'zod';
 import { openDownload, type FetchExport } from './backups/download.js';
 import { latestExport, recordEvidence, siteBackups } from './backups/evidence.js';
 import { okSize, requestTest, saveAccess } from './sitebackups/kinsta.js';
+import { requestRollback, requestUndo, siteRollback } from './rollback/request.js';
 import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
@@ -557,6 +560,30 @@ export function createApp({
     if (result === 'already') return c.json({ error: 'already_requested' }, 409);
     startBackups();
     return c.json({ queued: true }, 202);
+  });
+  // Rollback (rollback/): what it would do, and asking for it or its undo, with the passkey. The
+  // backups process takes what's asked.
+  app.get('/api/sites/:id/rollback', (c) => {
+    const id = c.req.param('id');
+    if (!db.prepare('SELECT 1 FROM sites WHERE id = ? AND removed_at IS NULL').get(id))
+      return c.json({ error: 'not_found' }, 404);
+    return c.json(siteRollback(db, id, now()));
+  });
+  app.post('/api/sites/:id/rollback', async (c) => {
+    const body = await readJson(c, RollbackRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = requestRollback(db, c.req.param('id'), body, login, now());
+    if (!result.ok) return c.json({ error: result.error, problem: result.why }, 409);
+    startBackups();
+    return c.json({ queued: true, id: result.id }, 202);
+  });
+  app.post('/api/sites/:id/rollback/undo', async (c) => {
+    const body = await readJson(c, UndoRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = requestUndo(db, c.req.param('id'), body, login, now());
+    if (!result.ok) return c.json({ error: result.error, problem: result.why }, 409);
+    startBackups();
+    return c.json({ queued: true, id: result.id }, 202);
   });
   // Kinsta's SSH access for whole-site backups (sitebackups/kinsta.ts): saved here; tested, and
   // pulled, by the backups process, which holds the key.

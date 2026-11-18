@@ -1,0 +1,598 @@
+#!/bin/bash
+# site-push/push: puts a site's updated plugins, themes and core back the way they were before
+# an update run, and its database if asked, for Kamaji's rollback (ops/rollback-plan.md,
+# README.md). One script for both hosts:
+#
+#   craftish: installed at /usr/local/lib/kamaji/site-push, run as www-data through one sudo rule
+#             by the forced command kamaji-site-push, with `craftish` as its first argument.
+#   Kinsta:   sent over SSH as it is in the repo, as `bash -c '<this>' kamaji-push kinsta …`, and
+#             run as the site's SSH user, whose WordPress is ~/public.
+#
+#   push <host> rollback <site> <id>             a tar on stdin: plan.txt, then the files
+#   push <host> undo <site> <id> files|database  puts back what that rollback replaced
+#   push <host> result <site> <id> rollback|undo what that rollback or undo ended with
+#
+# Progress goes to stdout as JSON lines, {"format":1,"step":"…","ok":true}; the last line is the
+# result, also kept in the rollback's folder as result.json (undo-result.json), so a dropped SSH
+# connection can ask for it after. A problem also goes to stderr as {"format":1,"ok":false,…}.
+#
+# What it touches: the live copies of the plugin and theme folders the plan names, core's
+# wp-admin, wp-includes and root files (never wp-config.php, wp-content or .htaccess), the
+# database through wp-cli, and its holding folder beside the site, where the replaced copies and
+# a database export from just before are kept for 14 days so the rollback can be undone.
+set -u -o pipefail
+export LC_ALL=C
+umask 077
+
+SITE_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+ID_RE='^[0-9a-f]{16}$'
+TIME_RE='^[0-9]{8}T[0-9]{6}Z$'
+VERSION_RE='^[0-9A-Za-z][0-9A-Za-z._+-]{0,39}$'
+PLUGIN_RE='^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*\.php)?$'
+THEME_RE='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
+KEEP_DAYS=14
+
+result_file=''
+work=''
+committed=0
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037'; }
+
+say() { printf '{"format":1,"step":"%s","ok":true%s}\n' "$1" "${2:+,$2}"; }
+
+# The result: stdout's last line, and result.json for `result` to read back later.
+finish() {
+  local line=$1
+  printf '%s\n' "$line"
+  [ -n "$result_file" ] && printf '%s\n' "$line" >"$result_file"
+}
+
+# changed: "none" (the site is as it was), "files" (files rolled back, database not), or the
+# step's own words when it's in between.
+fail() {
+  local step=$1 problem changed=${3:-none}
+  problem=$(json_escape "$2")
+  local line
+  line=$(printf '{"format":1,"ok":false,"step":"%s","problem":"%s","changed":"%s"}' "$step" "$problem" "$changed")
+  printf '%s\n' "$line" >&2
+  finish "$line"
+  exit "${4:-1}"
+}
+
+host=${1:-}
+mode=${2:-}
+site=${3:-}
+id=${4:-}
+extra=${5:-}
+[[ $site =~ $SITE_RE ]] || fail check 'not a site name' none 2
+[[ $id =~ $ID_RE ]] || fail check 'not a rollback id' none 2
+case $host in
+  craftish)
+    export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    grep -qxF -- "$site" /etc/kamaji/site-push.sites 2>/dev/null || fail check 'not on the push allowlist' none 2
+    root=/var/www/$site/public
+    hold=/var/www/$site/.kamaji-rollback
+    exports=/var/backups/kamaji/$site
+    export WP_CLI_CACHE_DIR=/var/backups/kamaji/.wp-cli-cache
+    ;;
+  kinsta)
+    root=$HOME/public
+    hold=$HOME/.kamaji-rollback
+    exports=''
+    export WP_CLI_CACHE_DIR=$HOME/.wp-cli/cache
+    ;;
+  *) fail check 'not a host' none 2 ;;
+esac
+case $mode in
+  rollback) [ -z "$extra" ] || fail check 'too many arguments' none 2 ;;
+  undo) [[ $extra == files || $extra == database ]] || fail check 'undo takes files or database' none 2 ;;
+  result) [[ $extra == rollback || $extra == undo ]] || fail check 'result takes rollback or undo' none 2 ;;
+  *) fail check 'not a mode' none 2 ;;
+esac
+
+if [ "$mode" = result ]; then
+  file=$hold/$id/result.json
+  [ "$extra" = undo ] && file=$hold/$id/undo-result.json
+  if [ -f "$file" ]; then cat -- "$file"; exit 0; fi
+  if [ -d "$hold/$id" ]; then
+    printf '{"format":1,"ok":false,"step":"unknown","problem":"it has no result yet","changed":"unknown"}\n'
+  else
+    printf '{"format":1,"ok":false,"step":"unknown","problem":"no such rollback here","changed":"none"}\n'
+  fi
+  exit 0
+fi
+
+[ -f "$root/wp-config.php" ] && [ -d "$root/wp-content" ] || fail check 'no WordPress there' none 2
+tar --version 2>/dev/null | head -n 1 | grep -q 'GNU tar' || fail check 'tar there isn’t GNU tar' none 2
+wp=(wp --path="$root" --skip-plugins --skip-themes)
+
+# The site must be this one: its home URL's host, without www., is the site's.
+home=$("${wp[@]}" option get home 2>/dev/null) || fail check 'wp option get home failed'
+home_host=${home#*://}
+home_host=${home_host%%/*}
+home_host=${home_host%%:*}
+[ "${home_host#www.}" = "${site#www.}" ] || fail check 'this login is another site' none 2
+
+mkdir -p -- "$hold" && chmod 700 -- "$hold" || fail check 'the holding folder couldn’t be made'
+[ "$(stat -c %d -- "$hold")" = "$(stat -c %d -- "$root")" ] ||
+  fail check 'the holding folder isn’t on the same disk as the site'
+# One rollback or undo at a time on a site.
+exec 9>"$hold/.lock" || fail check 'the lock couldn’t be made'
+flock -n 9 || fail check 'another rollback is running on this site'
+
+# Rollbacks done more than 14 days ago are let go; one that stopped part way stays until it's seen.
+for old in "$hold"/*/; do
+  old=${old%/}
+  [[ ${old##*/} =~ $ID_RE ]] || continue
+  if { [ -f "$old/journal" ] && [ ! -f "$old/result.json" ]; } ||
+    { [ -f "$old/undo-journal" ] && [ ! -f "$old/undo-result.json" ]; }; then
+    [ "${old##*/}" = "$id" ] && continue
+    fail check "an earlier rollback (${old##*/}) stopped part way; it needs a look first"
+  fi
+done
+find "$hold" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{16}' \
+  -mtime +"$KEEP_DAYS" -exec rm -rf -- {} + 2>/dev/null
+
+# --- Versions -------------------------------------------------------------------------------
+
+# A plugin's or theme's Version header, read as WordPress's get_file_data() does: the first 8 KB,
+# a line starting with the name, the value up to a closing */ or ?>.
+header_version() {
+  [ -f "$1" ] || return 1
+  head -c 8192 -- "$1" | tr '\r' '\n' |
+    grep -m1 -iE '^[[:space:]/*#@]*Version:' |
+    sed -E 's/^[[:space:]/*#@]*[Vv][Ee][Rr][Ss][Ii][Oo][Nn]:[[:space:]]*//; s/[[:space:]]*(\*\/|\?>).*$//; s/[[:space:]]+$//'
+}
+
+core_version() {
+  [ -f "$1/wp-includes/version.php" ] || return 1
+  grep -m1 -E "^\\\$wp_version = '" -- "$1/wp-includes/version.php" | sed -E "s/^[^']*'([^']*)'.*$/\\1/"
+}
+
+# Where an item lives, relative to WordPress's root, and the file that says its version.
+item_path() {
+  case $1 in
+    plugin) printf 'wp-content/plugins/%s' "${2%%/*}" ;;
+    theme) printf 'wp-content/themes/%s' "$2" ;;
+  esac
+}
+item_version() { # base type item
+  case $2 in
+    plugin) header_version "$1/wp-content/plugins/$3" ;;
+    theme) header_version "$1/wp-content/themes/$3/style.css" ;;
+    core) core_version "$1" ;;
+  esac
+}
+
+# --- The plan ------------------------------------------------------------------------------
+
+types=()
+names=()
+nows=()
+backs=()
+database=''
+export_time=''
+since=''
+read_plan() { # file
+  local key a b c d more seen_format=0 seen_id=0 seen_site=0
+  while IFS=' ' read -r key a b c d more; do
+    [ -n "${more:-}" ] && fail check 'the plan has a line it doesn’t know'
+    case $key in
+      format) [ "$a" = 1 ] || fail check 'the plan is of another format'; seen_format=1 ;;
+      id) [ "$a" = "$id" ] || fail check 'the plan is for another rollback'; seen_id=1 ;;
+      site) [ "$a" = "$site" ] || fail check 'the plan is for another site'; seen_site=1 ;;
+      item)
+        [[ $c =~ $VERSION_RE && $d =~ $VERSION_RE ]] || fail check 'the plan has a version it doesn’t know'
+        case $a in
+          plugin) [[ $b =~ $PLUGIN_RE ]] || fail check 'the plan names a plugin it doesn’t know' ;;
+          theme) [[ $b =~ $THEME_RE ]] || fail check 'the plan names a theme it doesn’t know' ;;
+          core) [ "$b" = core ] || fail check 'the plan names core oddly' ;;
+          *) fail check 'the plan has an item it doesn’t know' ;;
+        esac
+        types+=("$a"); names+=("$b"); nows+=("$c"); backs+=("$d")
+        ;;
+      database)
+        [ -z "$database" ] || fail check 'the plan names the database twice'
+        case $a in
+          export)
+            [ "$host" = craftish ] && [[ $b =~ $TIME_RE ]] || fail check 'the plan names an export oddly'
+            export_time=$b ;;
+          tar) ;;
+          *) fail check 'the plan names a database it doesn’t know' ;;
+        esac
+        database=$a ;;
+      since) [[ $a =~ $TIME_RE ]] || fail check 'the plan has a time it doesn’t know'; since=$a ;;
+      '') ;;
+      *) fail check 'the plan has a line it doesn’t know' ;;
+    esac
+  done <"$1"
+  [ $seen_format = 1 ] && [ $seen_id = 1 ] && [ $seen_site = 1 ] || fail check 'the plan is incomplete'
+  [ ${#types[@]} -gt 0 ] || fail check 'the plan has nothing to put back'
+  if [ -n "$database" ] && [ -z "$since" ]; then fail check 'the plan has no restore point time'; fi
+}
+
+# --- Moving files, journaled --------------------------------------------------------------------
+
+journal=''
+move() { # from to
+  mkdir -p -- "$(dirname -- "$2")" || return 1
+  printf '%s\t%s\n' "$1" "$2" >>"$journal" || return 1
+  mv -T -- "$1" "$2"
+}
+# Undoes a journal's moves, newest first: each that was made, made back. 0 when all went back.
+reverse() { # journal
+  local from to ok=0
+  [ -f "$1" ] || return 0
+  while IFS=$'\t' read -r from to; do
+    if [ -e "$to" ] || [ -L "$to" ]; then
+      if [ -e "$from" ] || [ -L "$from" ]; then ok=1; continue; fi
+      mv -T -- "$to" "$from" || ok=1
+    fi
+  done < <(tac -- "$1")
+  return $ok
+}
+
+maintenance_on() { "${wp[@]}" maintenance-mode activate >/dev/null 2>&1; }
+# WordPress drops its maintenance page after 10 minutes by itself; the file goes either way.
+maintenance_off() {
+  "${wp[@]}" maintenance-mode deactivate >/dev/null 2>&1 || rm -f -- "$root/.maintenance"
+}
+
+warnings=()
+caches() {
+  "${wp[@]}" cache flush >/dev/null 2>&1 || warnings+=('the object cache couldn’t be flushed')
+  if [ "$host" = kinsta ]; then
+    # Kinsta's page cache, from Kinsta's own must-use plugin, so without --skip-plugins.
+    wp --path="$root" kinsta cache purge >/dev/null 2>&1 || warnings+=('Kinsta’s cache couldn’t be cleared')
+  fi
+}
+warnings_json() {
+  local out='' w
+  for w in "${warnings[@]+"${warnings[@]}"}"; do out+="${out:+,}\"$(json_escape "$w")\""; done
+  printf '[%s]' "$out"
+}
+
+# Modes and ACLs for a staged copy, as it would have had made in place: a live folder's default
+# ACL copied onto the staging folder first, so what's unpacked into it inherits the same.
+copy_acl() { # live staged
+  command -v getfacl >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1 || return 0
+  getfacl -p --omit-header -- "$1" 2>/dev/null | grep -q '^default:' || return 0
+  getfacl -p --omit-header -- "$1" 2>/dev/null | setfacl --set-file=- -- "$2"
+}
+
+# Core's staged files take the replaced copy's group and modes (wp-includes and its version.php),
+# and, where its owner isn't this user and can't write through the group, an ACL entry so they
+# still can: this user can't give files away.
+match_core() { # staged
+  local dmode fmode group owner me
+  dmode=$(stat -c %a -- "$root/wp-includes") && fmode=$(stat -c %a -- "$root/wp-includes/version.php") ||
+    return 1
+  group=$(stat -c %G -- "$root/wp-includes") && owner=$(stat -c %U -- "$root/wp-includes") || return 1
+  me=$(id -un)
+  find "$1" -mindepth 1 -path "$1/wp-content" -prune -o -type d -exec chmod "$dmode" -- {} + || return 1
+  find "$1" -mindepth 1 -path "$1/wp-content" -prune -o -type f -exec chmod "$fmode" -- {} + || return 1
+  if [ "$group" != "$(id -gn)" ]; then
+    find "$1" -mindepth 1 -path "$1/wp-content" -prune -o -exec chgrp -h -- "$group" {} + || return 1
+  fi
+  [ "$owner" = "$me" ] && return 0
+  if id -nG -- "$owner" 2>/dev/null | tr ' ' '\n' | grep -qxF -- "$group" &&
+    [[ ${fmode: -2:1} =~ [2367] ]]; then
+    return 0
+  fi
+  command -v setfacl >/dev/null 2>&1 || return 2
+  find "$1" -mindepth 1 -path "$1/wp-content" -prune -o -exec setfacl -m "u:$owner:rwX" -- {} + || return 1
+}
+
+# Core's entries in a staged download: everything but wp-content (never touched) and wp-config.
+core_entries() { # staged
+  find "$1" -mindepth 1 -maxdepth 1 ! -name wp-content ! -name wp-config.php -printf '%f\n' | sort
+}
+
+db_import() { # file (.sql or .sql.gz)
+  case $1 in
+    *.gz) gunzip -c -- "$1" | "${wp[@]}" db import - >/dev/null 2>&1 ;;
+    *) "${wp[@]}" db import "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+wp_ok() { "${wp[@]}" "$@" >/dev/null 2>&1; }
+
+# Room for a database export and, for core, a download, with some to spare.
+room() { # with_core
+  local db need avail
+  db=$("${wp[@]}" db size --size_format=b 2>/dev/null | head -n 1)
+  [[ $db =~ ^[0-9]+$ ]] || return 1
+  need=$((db + 100 * 1024 * 1024))
+  [ "$1" = 1 ] && need=$((need + 100 * 1024 * 1024))
+  avail=$(df -Pk -- "$hold" | awk 'NR == 2 { print $4 }')
+  [[ $avail =~ ^[0-9]+$ ]] || return 1
+  [ $((avail * 1024)) -gt "$need" ]
+}
+
+# --- Rollback ----------------------------------------------------------------------------------
+
+rollback() {
+  work=$hold/$id
+  [ -e "$work" ] && fail check 'that rollback id has been used here'
+  mkdir -m 700 -- "$work" || fail check 'the rollback’s folder couldn’t be made'
+  result_file=$work/result.json
+  journal=$work/journal
+  local in=$work/in
+  # Stopped before anything changed: only the result stays. After, the copies and the journal do.
+  trap 'rm -rf -- "$work/in"; [ $committed = 1 ] || find "$work" -mindepth 1 -maxdepth 1 ! -name result.json -exec rm -rf -- {} +' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  mkdir -p -- "$in/wp-content/plugins" "$in/wp-content/themes" || fail receive 'the staging folder couldn’t be made'
+  copy_acl "$root/wp-content/plugins" "$in/wp-content/plugins" &&
+    copy_acl "$root/wp-content/themes" "$in/wp-content/themes" ||
+    fail receive 'the folders’ ACLs couldn’t be copied'
+
+  # GNU tar won't write outside the folder: it drops a leading / and refuses members with ..
+  tar -x -p --no-same-owner --no-overwrite-dir --delay-directory-restore -f - -C "$in" 2>/dev/null ||
+    fail receive 'the files didn’t arrive whole'
+  [ -f "$in/plan.txt" ] && [ ! -L "$in/plan.txt" ] || fail receive 'the plan is missing'
+  read_plan "$in/plan.txt"
+  cp -- "$in/plan.txt" "$work/plan.txt" || fail receive 'the plan couldn’t be kept'
+
+  # Nothing arrived that the plan doesn't name: no stray files, devices or links out of place.
+  local allowed=() i path entry
+  for i in "${!types[@]}"; do
+    [ "${types[$i]}" = core ] && continue
+    allowed+=("$(item_path "${types[$i]}" "${names[$i]}")")
+  done
+  for entry in "$in"/* "$in"/.[!.]* "$in"/wp-content/* "$in"/wp-content/.[!.]* \
+    "$in"/wp-content/plugins/* "$in"/wp-content/plugins/.[!.]* \
+    "$in"/wp-content/themes/* "$in"/wp-content/themes/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    path=${entry#"$in"/}
+    case $path in
+      plan.txt | wp-content | wp-content/plugins | wp-content/themes) continue ;;
+      database.sql) [ "$database" = tar ] && [ -f "$entry" ] && [ ! -L "$entry" ] && continue ;;
+      wp-content/plugins/* | wp-content/themes/*)
+        local ok=0 a
+        for a in "${allowed[@]+"${allowed[@]}"}"; do [ "$a" = "$path" ] && ok=1; done
+        [ $ok = 1 ] && [ ! -L "$entry" ] && continue ;;
+    esac
+    fail receive "something arrived that the plan doesn’t name ($(json_escape "$path"))"
+  done
+  [ -z "$(find "$in" \( -type b -o -type c -o -type p -o -type s \) -print -quit)" ] ||
+    fail receive 'a device or pipe arrived'
+  local link target base
+  while IFS= read -r -d '' link; do
+    target=$(realpath -m -- "$link")
+    for a in "${allowed[@]+"${allowed[@]}"}"; do
+      base=$(realpath -m -- "$in/$a")
+      [[ $target == "$base" || $target == "$base"/* ]] && continue 2
+    done
+    fail receive 'a link arrived that points outside its folder'
+  done < <(find "$in" -type l -print0)
+
+  # The site is the way the run left it, and what arrived is what the run replaced.
+  local now back
+  for i in "${!types[@]}"; do
+    now=$(item_version "$root" "${types[$i]}" "${names[$i]}") ||
+      fail check "$(json_escape "${names[$i]}") isn’t on the site"
+    [ "$now" = "${nows[$i]}" ] ||
+      fail check "$(json_escape "${names[$i]}") is at $(json_escape "$now") now, not ${nows[$i]}"
+    [ "${types[$i]}" = core ] && continue
+    back=$(item_version "$in" "${types[$i]}" "${names[$i]}") ||
+      fail check "$(json_escape "${names[$i]}") didn’t arrive"
+    [ "$back" = "${backs[$i]}" ] ||
+      fail check "the copy of $(json_escape "${names[$i]}") that arrived is $(json_escape "$back"), not ${backs[$i]}"
+    path=$root/$(item_path "${types[$i]}" "${names[$i]}")
+    [ -w "$(dirname -- "$path")" ] && { [ ! -d "$path" ] || [ -w "$path" ]; } ||
+      fail check "$(json_escape "${names[$i]}")’s folder isn’t writable"
+  done
+  ! wp_ok maintenance-mode is-active || fail check 'the site is in maintenance mode already'
+  local core=-1
+  for i in "${!types[@]}"; do [ "${types[$i]}" = core ] && core=$i; done
+  if [ $core -ge 0 ]; then
+    [ -w "$root" ] && [ -w "$root/wp-admin" ] && [ -w "$root/wp-includes" ] ||
+      fail check 'WordPress’s own folders aren’t writable'
+  fi
+  local export_file=''
+  if [ "$database" = export ]; then
+    export_file=$exports/$export_time.sql.gz
+    [ -f "$export_file" ] && [ ! -L "$export_file" ] && [ -r "$export_file" ] ||
+      fail check "the database export from $export_time is gone"
+  fi
+  room $((core >= 0)) || fail check 'there isn’t room on the server for the copies'
+  say check
+
+  # What putting the database back would lose: counted, read only, before anything changes.
+  if [ -n "$database" ]; then
+    local prefix at orders=null comments users
+    prefix=$("${wp[@]}" config get table_prefix 2>/dev/null) || fail count 'the table prefix couldn’t be read'
+    [[ $prefix =~ ^[A-Za-z0-9_]+$ ]] || fail count 'an unexpected table prefix'
+    at="${since:0:4}-${since:4:2}-${since:6:2} ${since:9:2}:${since:11:2}:${since:13:2}"
+    count() { "${wp[@]}" db query "$1" --skip-column-names 2>/dev/null | head -n 1; }
+    comments=$(count "SELECT COUNT(*) FROM ${prefix}comments WHERE comment_approved IN ('0', '1') AND comment_date_gmt > '$at'")
+    users=$(count "SELECT COUNT(*) FROM ${prefix}users WHERE user_registered > '$at'")
+    [[ $comments =~ ^[0-9]+$ && $users =~ ^[0-9]+$ ]] || fail count 'the comments and users couldn’t be counted'
+    if wp_ok plugin is-active woocommerce; then
+      if [ -n "$(count "SHOW TABLES LIKE '${prefix//_/\\_}wc\\_orders'")" ]; then
+        orders=$(count "SELECT COUNT(*) FROM ${prefix}wc_orders WHERE type = 'shop_order' AND date_created_gmt > '$at'")
+      else
+        orders=$(count "SELECT COUNT(*) FROM ${prefix}posts WHERE post_type = 'shop_order' AND post_date_gmt > '$at'")
+      fi
+      [[ $orders =~ ^[0-9]+$ ]] || fail count 'the orders couldn’t be counted'
+    fi
+    say count "\"orders\":$orders,\"comments\":$comments,\"users\":$users"
+  fi
+
+  if [ $core -ge 0 ]; then
+    local locale used
+    locale=$("${wp[@]}" eval 'echo get_locale();' 2>/dev/null)
+    [[ $locale =~ ^[A-Za-z_]{2,16}$ ]] || locale=en_US
+    used=$locale
+    # Not every release has every language; core's PHP is the same in each.
+    if ! wp core download --version="${backs[$core]}" --locale="$locale" --skip-content \
+      --path="$in/core" --quiet >/dev/null 2>&1; then
+      rm -rf -- "$in/core"
+      used=en_US
+      wp core download --version="${backs[$core]}" --locale=en_US --skip-content \
+        --path="$in/core" --quiet >/dev/null 2>&1 ||
+        fail stage "WordPress ${backs[$core]} couldn’t be downloaded from wordpress.org"
+    fi
+    wp core verify-checksums --version="${backs[$core]}" --locale="$used" --path="$in/core" \
+      >/dev/null 2>&1 || fail stage "WordPress ${backs[$core]} didn’t match wordpress.org’s checksums"
+    [ "$(core_version "$in/core")" = "${backs[$core]}" ] ||
+      fail stage "the download isn’t WordPress ${backs[$core]}"
+    match_core "$in/core"
+    case $? in
+      0) ;;
+      2) fail stage 'core files would no longer be writable by their owner, and setfacl isn’t here to keep them so' ;;
+      *) fail stage 'core files couldn’t be given the modes of the ones they replace' ;;
+    esac
+  fi
+  say stage
+
+  "${wp[@]}" db export "$work/before.sql" --single-transaction --quick >/dev/null 2>&1 &&
+    gzip -- "$work/before.sql" || fail save 'the database couldn’t be saved first'
+  say save
+
+  # From here it carries on to the end whatever happens to the connection, and leaves its result.
+  committed=1
+  trap '' HUP INT TERM
+  maintenance_on || fail maintenance 'maintenance mode didn’t turn on'
+  say maintenance
+
+  local swapped=1 live staged old=$work/old e
+  for i in "${!types[@]}"; do
+    if [ "${types[$i]}" = core ]; then
+      while IFS= read -r e; do
+        live=$root/$e
+        staged=$in/core/$e
+        if [ -e "$live" ] || [ -L "$live" ]; then move "$live" "$old/core/$e" || { swapped=0; break 2; }; fi
+        move "$staged" "$live" || { swapped=0; break 2; }
+      done < <(core_entries "$in/core")
+    else
+      path=$(item_path "${types[$i]}" "${names[$i]}")
+      move "$root/$path" "$old/$path" || { swapped=0; break; }
+      move "$in/$path" "$root/$path" || { swapped=0; break; }
+    fi
+  done
+  if [ $swapped = 0 ]; then
+    if reverse "$journal"; then
+      maintenance_off
+      fail swap 'a folder couldn’t be swapped, and everything was put back' none
+    fi
+    maintenance_off
+    fail swap 'a folder couldn’t be swapped, and not everything could be put back' partial
+  fi
+  say swap
+
+  local db_done=false
+  if [ -n "$database" ]; then
+    local source=$in/database.sql
+    [ "$database" = export ] && source=$export_file
+    if ! db_import "$source"; then
+      if db_import "$work/before.sql.gz"; then
+        maintenance_off
+        fail database 'the database didn’t import; it’s as it was, and the files were rolled back' files
+      fi
+      maintenance_off
+      fail database "the database didn’t import, nor would the copy saved first; it’s at $(json_escape "$work")/before.sql.gz" broken
+    fi
+    db_done=true
+    say database
+  fi
+
+  maintenance_off || warnings+=('maintenance mode didn’t turn off; WordPress drops it after 10 minutes')
+  caches
+  finish "$(printf '{"format":1,"ok":true,"step":"done","database":%s,"warnings":%s}' "$db_done" "$(warnings_json)")"
+}
+
+# --- Undo -------------------------------------------------------------------------------------
+
+undo() {
+  work=$hold/$id
+  # Undone only if its files went back: all of it, or the files when the database wouldn't import.
+  [ -f "$work/result.json" ] && [ -f "$work/journal" ] &&
+    grep -qE '"ok":true|"changed":"files"' -- "$work/result.json" ||
+    fail check 'that rollback can’t be undone here'
+  # An undo that stopped with nothing changed can be tried again; one that changed things can't.
+  if [ -f "$work/undo-result.json" ]; then
+    grep -q '"ok":true' -- "$work/undo-result.json" && fail check 'that rollback has been undone already'
+    grep -q '"changed":"none"' -- "$work/undo-result.json" ||
+      fail check 'an undo of that rollback stopped part way; it needs a look first'
+    rm -f -- "$work/undo-result.json" "$work/undo-journal"
+  fi
+  [ -f "$work/undo-journal" ] && fail check 'an undo of that rollback stopped part way; it needs a look first'
+  result_file=$work/undo-result.json
+  journal=$work/undo-journal
+  trap 'rm -f -- "$work"/undo-before.sql*' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  read_plan "$work/plan.txt"
+  if [ "$extra" = database ]; then
+    grep -q '"database":true' -- "$work/result.json" && [ -f "$work/before.sql.gz" ] ||
+      fail check 'that rollback didn’t put the database back'
+  fi
+  local i now
+  for i in "${!types[@]}"; do
+    now=$(item_version "$root" "${types[$i]}" "${names[$i]}") ||
+      fail check "$(json_escape "${names[$i]}") isn’t on the site"
+    [ "$now" = "${backs[$i]}" ] ||
+      fail check "$(json_escape "${names[$i]}") is at $(json_escape "$now") now, not the ${backs[$i]} the rollback left"
+  done
+  ! wp_ok maintenance-mode is-active || fail check 'the site is in maintenance mode already'
+  room 0 || fail check 'there isn’t room on the server for the copies'
+  say check
+
+  "${wp[@]}" db export "$work/undo-before.sql" --single-transaction --quick >/dev/null 2>&1 &&
+    gzip -- "$work/undo-before.sql" || fail save 'the database couldn’t be saved first'
+  say save
+
+  committed=1
+  trap '' HUP INT TERM
+  trap '' EXIT
+  maintenance_on || fail maintenance 'maintenance mode didn’t turn on'
+  say maintenance
+
+  # The rollback's moves, newest first: what it moved in goes aside to undone/, what it moved
+  # aside comes back.
+  local from to swapped=1 rel
+  while IFS=$'\t' read -r from to; do
+    if [[ $to == "$root"/* ]]; then
+      rel=${to#"$root"/}
+      move "$to" "$work/undone/$rel" || { swapped=0; break; }
+    else
+      move "$to" "$from" || { swapped=0; break; }
+    fi
+  done < <(tac -- "$work/journal")
+  if [ $swapped = 0 ]; then
+    if reverse "$journal"; then
+      maintenance_off
+      fail swap 'a folder couldn’t be swapped back, and everything was left as the rollback left it' none
+    fi
+    maintenance_off
+    fail swap 'a folder couldn’t be swapped back, and not everything could be put back' partial
+  fi
+  say swap
+
+  local db_done=false
+  if [ "$extra" = database ]; then
+    if ! db_import "$work/before.sql.gz"; then
+      if db_import "$work/undo-before.sql.gz"; then
+        maintenance_off
+        fail database 'the database didn’t import; it’s as the rollback left it, and the files were put back' files
+      fi
+      maintenance_off
+      fail database "the database didn’t import, nor would the copy saved first; it’s at $(json_escape "$work")/undo-before.sql.gz" broken
+    fi
+    db_done=true
+    say database
+  fi
+
+  maintenance_off || warnings+=('maintenance mode didn’t turn off; WordPress drops it after 10 minutes')
+  caches
+  finish "$(printf '{"format":1,"ok":true,"step":"done","database":%s,"warnings":%s}' "$db_done" "$(warnings_json)")"
+}
+
+case $mode in
+  rollback) rollback ;;
+  undo) undo ;;
+esac

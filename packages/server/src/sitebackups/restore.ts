@@ -22,7 +22,7 @@ export interface Ran {
 export type Exec = (
   command: string,
   args: string[],
-  options?: { stdinFile?: string; timeoutMs?: number },
+  options?: { stdinFile?: string; timeoutMs?: number; env?: Record<string, string> },
 ) => Promise<Ran>;
 
 export interface RestoreDeps {

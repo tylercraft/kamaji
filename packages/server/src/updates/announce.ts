@@ -115,6 +115,8 @@ export interface FinishedRun {
   lines: string[];
   /** Updates' anchor for the run's first site (web runHistory.ts, runAnchor). */
   anchor: string;
+  /** Where the toast links instead (a rollback's site page). */
+  href?: string;
 }
 
 function anchorFor(db: Db, batchId: string): string {

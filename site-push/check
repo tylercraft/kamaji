@@ -1,0 +1,401 @@
+#!/bin/bash
+# site-push/check: runs push and kamaji-site-push the way Kamaji does, against a made-up craftish
+# site and a made-up Kinsta home, with a stand-in `wp`. Needs GNU tar, runuser and root, so run it
+# in a throwaway Ubuntu container (README.md):
+#
+#   docker run --rm --network none -v "$PWD/site-push":/sp:ro ubuntu:24.04 /sp/check
+#
+# With the acl package installed (an image with it), it checks the ACL paths as well.
+set -u -o pipefail
+export LC_ALL=C
+here=$(cd "$(dirname "$0")" && pwd)
+push=$here/push
+forced=$here/kamaji-site-push
+fails=0
+pass() { printf 'ok   %s\n' "$1"; }
+bad() { printf 'FAIL %s\n' "$1"; fails=$((fails + 1)); }
+expect() { if eval "$2"; then pass "$1"; else bad "$1"; fi; }
+
+SITE=site.test
+ROOT=/var/www/$SITE/public
+HOLD=/var/www/$SITE/.kamaji-rollback
+STATE=/var/lib/fakewp
+acl=0
+command -v setfacl >/dev/null 2>&1 && acl=1
+
+# --- The stand-in wp: enough of wp-cli for push, its database a file ---------------------------
+mkdir -p "$STATE" /usr/local/bin
+cat >/usr/local/bin/wp <<'WP'
+#!/bin/bash
+set -u
+STATE=/var/lib/fakewp
+path=''
+args=()
+for a in "$@"; do
+  case $a in
+    --path=*) path=${a#--path=} ;;
+    --skip-plugins | --skip-themes | --quiet | --single-transaction | --quick | --skip-column-names) ;;
+    --size_format=*) ;;
+    *) args+=("$a") ;;
+  esac
+done
+set -- "${args[@]}"
+log() { printf '%s\n' "$*" >>"$STATE/calls"; }
+log "$*"
+case "$1 ${2:-}" in
+  'option get') cat "$STATE/home" ;;
+  'config get') echo wp_ ;;
+  'eval echo get_locale();') printf en_NZ ;;
+  'maintenance-mode is-active') [ -f "$path/.maintenance" ] ;;
+  'maintenance-mode activate')
+    [ -f "$path/.maintenance" ] && exit 1
+    [ -f "$STATE/sabotage" ] && bash "$STATE/sabotage"
+    echo '<?php $upgrading = 1; ?>' >"$path/.maintenance" ;;
+  'maintenance-mode deactivate') [ -f "$path/.maintenance" ] && rm "$path/.maintenance" ;;
+  'db size') stat -c %s "$STATE/db" ;;
+  'db export') cp "$STATE/db" "$3" ;;
+  'db import')
+    if [ "$3" = - ]; then body=$(cat); else body=$(cat "$3"); fi
+    [ -f "$STATE/import-fails" ] && grep -qxF -- "$body" "$STATE/import-fails" && exit 1
+    printf '%s\n' "$body" >"$STATE/db" ;;
+  'db query')
+    case $3 in
+      *comments*) echo 3 ;;
+      *wp\\_wc\\_orders*) echo wp_wc_orders ;;
+      *wc_orders*) echo 12 ;;
+      *users*) echo 1 ;;
+      *) exit 1 ;;
+    esac
+    echo ;;
+  'plugin is-active') [ "$3" = woocommerce ] && [ -f "$STATE/woocommerce" ] ;;
+  'cache flush') : ;;
+  'kinsta cache') log purged ;;
+  'core download')
+    v=''; l=''
+    for a in "$@"; do case $a in --version=*) v=${a#--version=} ;; --locale=*) l=${a#--locale=} ;; esac; done
+    [ "$l" = en_NZ ] && exit 1
+    [ "$v" = 7.1.99 ] && exit 1
+    mkdir -p "$path/wp-admin" "$path/wp-includes" "$path/wp-content"
+    printf "<?php\n\$wp_version = '%s';\n" "$v" >"$path/wp-includes/version.php"
+    echo "admin $v" >"$path/wp-admin/index.php"
+    echo "index $v" >"$path/index.php"
+    echo "load $v" >"$path/wp-load.php"
+    echo "$l" >"$path/.locale" ;;
+  'core verify-checksums') [ ! -f "$STATE/checksums-fail" ] ;;
+  *) exit 1 ;;
+esac
+WP
+chmod 755 /usr/local/bin/wp
+chmod 777 "$STATE"
+id tyler >/dev/null 2>&1 || useradd -M tyler
+mkdir -p /etc/kamaji
+echo "$SITE" >/etc/kamaji/site-push.sites
+echo 'other.test' >>/etc/kamaji/site-push.sites
+
+plugin_main() { # folder version
+  mkdir -p "$1"
+  printf "<?php\n/**\n * Plugin Name: Test\n * Version: %s\n */\n" "$2" >"$1/$(basename "$1").php"
+}
+
+# A site the way an update run left it: akismet 5.3.1 (was 5.3), a theme at 1.6.1 (was 1.6), a
+# single-file plugin at 1.7.3 (was 1.7.2), WordPress 7.1.5 (was 7.1.4).
+fresh_site() {
+  rm -rf "/var/www/$SITE" "$STATE"/{db,calls,sabotage,import-fails,checksums-fail,woocommerce}
+  mkdir -p "$ROOT/wp-content/plugins" "$ROOT/wp-content/themes/twentyx" "$ROOT/wp-content/uploads" \
+    "$ROOT/wp-admin" "$ROOT/wp-includes"
+  plugin_main "$ROOT/wp-content/plugins/akismet" 5.3.1
+  echo 'new file in 5.3.1' >"$ROOT/wp-content/plugins/akismet/new.php"
+  printf '/*\nTheme Name: X\nVersion: 1.6.1\n*/\n' >"$ROOT/wp-content/themes/twentyx/style.css"
+  printf "<?php\n/* Plugin Name: Hello\nVersion: 1.7.3 */\n" >"$ROOT/wp-content/plugins/hello.php"
+  plugin_main "$ROOT/wp-content/plugins/untouched" 2.0
+  echo upload >"$ROOT/wp-content/uploads/photo.jpg"
+  printf "<?php\n\$wp_version = '7.1.5';\n" >"$ROOT/wp-includes/version.php"
+  echo 'admin 7.1.5' >"$ROOT/wp-admin/index.php"
+  echo 'index 7.1.5' >"$ROOT/index.php"
+  echo 'secret' >"$ROOT/wp-config.php"
+  echo 'rules' >"$ROOT/.htaccess"
+  echo 'verify' >"$ROOT/google123.html"
+  chown -R tyler:www-data "/var/www/$SITE"
+  chmod 775 "/var/www/$SITE" "$ROOT" "$ROOT/wp-admin" "$ROOT/wp-includes"
+  find "$ROOT" -maxdepth 1 -type f -exec chmod 664 {} +
+  chmod 664 "$ROOT/wp-includes/version.php" "$ROOT/wp-admin/index.php"
+  # wp-content is www-data's, as WordPress's own updates leave it.
+  chown -R www-data:www-data "$ROOT/wp-content"
+  echo 'DB after the run' >"$STATE/db"
+  chmod 666 "$STATE/db"
+  echo "https://$SITE" >"$STATE/home"
+  mkdir -p "/var/backups/kamaji/$SITE"
+  echo 'DB from the export before the run' | gzip >"/var/backups/kamaji/$SITE/20261119T030000Z.sql.gz"
+  chown -R www-data:www-data /var/backups/kamaji
+  chmod -R go-rwx /var/backups/kamaji
+}
+
+# What Kamaji sends: plan.txt first, then the copies from the snapshot.
+make_tar() { # out id [extra plan lines…]
+  local out=$1 id=$2 t
+  shift 2
+  t=$(mktemp -d)
+  {
+    printf 'format 1\nid %s\nsite %s\n' "$id" "$SITE"
+    printf 'item plugin akismet/akismet.php 5.3.1 5.3\n'
+    printf 'item theme twentyx 1.6.1 1.6\n'
+    printf 'item plugin hello.php 1.7.3 1.7.2\n'
+    printf 'item core core 7.1.5 7.1.4\n'
+    for line in "$@"; do printf '%s\n' "$line"; done
+  } >"$t/plan.txt"
+  mkdir -p "$t/wp-content/plugins" "$t/wp-content/themes/twentyx"
+  plugin_main "$t/wp-content/plugins/akismet" 5.3
+  printf '/*\nTheme Name: X\nVersion: 1.6\n*/\n' >"$t/wp-content/themes/twentyx/style.css"
+  printf "<?php\n/* Plugin Name: Hello\nVersion: 1.7.2 */\n" >"$t/wp-content/plugins/hello.php"
+  chmod -R u=rwX,g=rwX,o=rX "$t/wp-content"
+  [ -f "$t/database.sql" ] || true
+  printf '%s' "$t"
+  (cd "$t" && tar -cf "$out" --format=gnu plan.txt wp-content $( [ -f database.sql ] && echo database.sql ))
+}
+
+run_push() { # stdin-file args… (as www-data, as the sudo rule runs it)
+  local input=$1
+  shift
+  runuser -u www-data -- "$push" "$@" <"$input" >/tmp/out 2>/tmp/err
+}
+last_out() { tail -n 1 /tmp/out; }
+version_at() { grep -m1 -i 'Version:' "$1" | sed -E 's/.*Version: *//; s/ *\*\/.*//'; }
+
+ID1=0123456789abcdef
+ID2=fedcba9876543210
+
+# --- The forced command ------------------------------------------------------------------------
+for cmd in '' 'rollback' 'rollback ../etc 0123456789abcdef' 'rollback site.test 0123' \
+  "rollback site.test $ID1; id" "rollback site.test $ID1 extra" "undo site.test $ID1 everything" \
+  "undo site.test $ID1 files more" "push site.test $ID1" "result site.test $ID1"; do
+  out=$(SSH_ORIGINAL_COMMAND=$cmd "$forced" 2>&1 </dev/null)
+  code=$?
+  expect "forced command refuses '$cmd'" '[ $code = 2 ] && [[ $out == *"\"ok\":false"* ]]'
+done
+
+# --- Refusals before anything --------------------------------------------------------------------
+fresh_site
+: >/tmp/empty
+run_push /tmp/empty craftish rollback nosuch.test $ID1
+expect 'refuses a site off the allowlist' 'grep -q "not on the push allowlist" /tmp/err'
+run_push /tmp/empty craftish rollback "$SITE" nothex
+expect 'refuses an id that isn’t one' 'grep -q "not a rollback id" /tmp/err'
+run_push /tmp/empty craftish wipe "$SITE" $ID1
+expect 'refuses a mode it doesn’t know' 'grep -q "not a mode" /tmp/err'
+echo "https://other.test" >"$STATE/home"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses when the home URL is another site' 'grep -q "another site" /tmp/err'
+echo "https://$SITE" >"$STATE/home"
+
+# A member the plan doesn't name.
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1)
+mkdir -p "$t/wp-content/plugins/stowaway" && echo x >"$t/wp-content/plugins/stowaway/x.php"
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses a folder the plan doesn’t name' 'grep -q "plan doesn’t name" /tmp/err'
+expect '…leaving the site as it was' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && [ ! -e "$ROOT/wp-content/plugins/stowaway" ]'
+expect '…and keeping only its result' '[ "$(ls "$HOLD/$ID1")" = result.json ]'
+
+# A link out of its folder, and a member with ..
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1)
+ln -s /etc/passwd "$t/wp-content/plugins/akismet/passwd"
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses a link that points outside its folder' 'grep -q "points outside" /tmp/err'
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1)
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content --transform='s,^wp-content/themes,wp-content/plugins/akismet/../../../../escape,')
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses members with ..' '[ ! -e /var/www/escape ] && [ ! -e "/var/www/$SITE/escape" ] && grep -q "\"ok\":false" /tmp/err'
+
+# The site has moved on since the run.
+fresh_site
+plugin_main "$ROOT/wp-content/plugins/akismet" 5.3.2
+chown -R www-data:www-data "$ROOT/wp-content/plugins/akismet"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses when an item is at another version now' 'grep -q "is at 5.3.2 now, not 5.3.1" /tmp/err'
+
+# What arrived isn't what the run replaced.
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1)
+plugin_main "$t/wp-content/plugins/akismet" 5.2
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses a copy at the wrong version' 'grep -q "that arrived is 5.2, not 5.3" /tmp/err'
+
+# Already in maintenance mode.
+fresh_site
+echo x >"$ROOT/.maintenance"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses a site already in maintenance mode' 'grep -q "maintenance mode already" /tmp/err'
+
+# Core that doesn't check out.
+fresh_site
+touch "$STATE/checksums-fail"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses core that doesn’t match its checksums' 'grep -q "checksums" /tmp/err && grep -q "7.1.5" "$ROOT/wp-includes/version.php"'
+
+# --- A rollback of the files, then its undo -------------------------------------------------------
+fresh_site
+usermod -aG www-data tyler
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+code=$?
+expect 'rolls back files and core' '[ $code = 0 ] && [[ "$(last_out)" == "{\"format\":1,\"ok\":true,\"step\":\"done\",\"database\":false"* ]]'
+expect '…the plugin' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3 ] && [ ! -e "$ROOT/wp-content/plugins/akismet/new.php" ]'
+expect '…the theme and the single-file plugin' '[ "$(version_at "$ROOT/wp-content/themes/twentyx/style.css")" = 1.6 ] && [ "$(version_at "$ROOT/wp-content/plugins/hello.php")" = 1.7.2 ]'
+expect '…core, from the en_US download when the site’s language has none' 'grep -q "7.1.4" "$ROOT/wp-includes/version.php" && grep -q "index 7.1.4" "$ROOT/index.php" && grep -q "load 7.1.4" "$ROOT/wp-load.php"'
+expect '…never wp-config.php, .htaccess, uploads, others' 'grep -qx secret "$ROOT/wp-config.php" && grep -qx rules "$ROOT/.htaccess" && [ -f "$ROOT/wp-content/uploads/photo.jpg" ] && [ -f "$ROOT/google123.html" ] && [ "$(version_at "$ROOT/wp-content/plugins/untouched/untouched.php")" = 2.0 ]'
+expect '…core with the group and modes of what it replaced' '[ "$(stat -c "%G %a" "$ROOT/wp-includes")" = "www-data 775" ] && [ "$(stat -c "%G %a" "$ROOT/wp-includes/version.php")" = "www-data 664" ] && [ "$(stat -c "%G %a" "$ROOT/index.php")" = "www-data 664" ]'
+expect '…the replaced copies kept aside, outside the web root' '[ "$(version_at "$HOLD/$ID1/old/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && grep -q 7.1.5 "$HOLD/$ID1/old/core/wp-includes/version.php"'
+expect '…the database saved first, and left alone' '[ "$(gunzip -c "$HOLD/$ID1/before.sql.gz")" = "DB after the run" ] && grep -qx "DB after the run" "$STATE/db"'
+expect '…maintenance off, and the staging gone' '[ ! -e "$ROOT/.maintenance" ] && [ ! -e "$HOLD/$ID1/in" ]'
+expect '…the holding folder private' '[ "$(stat -c %a "$HOLD")" = 700 ] && [ "$(stat -c %a "$HOLD/$ID1")" = 700 ]'
+expect '…its progress said step by step' 'grep -q "\"step\":\"check\"" /tmp/out && grep -q "\"step\":\"stage\"" /tmp/out && grep -q "\"step\":\"save\"" /tmp/out && grep -q "\"step\":\"swap\"" /tmp/out'
+run_push /tmp/empty craftish result "$SITE" $ID1 rollback
+expect 'result reads it back' 'grep -q "\"ok\":true,\"step\":\"done\"" /tmp/out'
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses an id used before' 'grep -q "id has been used" /tmp/err'
+
+run_push /tmp/empty craftish undo "$SITE" $ID1 database
+expect 'undo refuses the database when the rollback left it' 'grep -q "didn’t put the database back" /tmp/err'
+run_push /tmp/empty craftish undo "$SITE" $ID1 files
+expect 'undoes the rollback' 'grep -q "\"ok\":true,\"step\":\"done\"" /tmp/out'
+expect '…the plugin, theme and core back as the run left them' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && [ -f "$ROOT/wp-content/plugins/akismet/new.php" ] && [ "$(version_at "$ROOT/wp-content/themes/twentyx/style.css")" = 1.6.1 ] && grep -q 7.1.5 "$ROOT/wp-includes/version.php" && grep -q "index 7.1.5" "$ROOT/index.php"'
+expect '…the owner and modes they had' '[ "$(stat -c "%U:%G %a" "$ROOT/wp-includes/version.php")" = "tyler:www-data 664" ]'
+expect '…and core files only the older release had, aside' '[ ! -e "$ROOT/wp-load.php" ] && [ -f "$HOLD/$ID1/undone/wp-load.php" ]'
+run_push /tmp/empty craftish undo "$SITE" $ID1 files
+expect 'refuses a second undo' 'grep -q "undone already" /tmp/err'
+
+# Undo only while the site is as the rollback left it.
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+plugin_main "$ROOT/wp-content/plugins/akismet" 5.3.1
+run_push /tmp/empty craftish undo "$SITE" $ID1 files
+expect 'undo refuses a site that changed since the rollback' 'grep -q "not the 5.3 the rollback left" /tmp/err'
+
+# --- With the database ---------------------------------------------------------------------------
+fresh_site
+touch "$STATE/woocommerce"
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'puts the database back from craftish’s own export' 'grep -qx "DB from the export before the run" "$STATE/db" && grep -q "\"database\":true" /tmp/out'
+expect '…counting what it loses first' 'grep -q "\"step\":\"count\",\"ok\":true,\"orders\":12,\"comments\":3,\"users\":1" /tmp/out'
+expect '…from the export as www-data, which can read it' '[ "$(stat -c %U /var/backups/kamaji/$SITE/20261119T030000Z.sql.gz)" = www-data ]'
+run_push /tmp/empty craftish undo "$SITE" $ID1 database
+expect 'undoes the database too, when asked' 'grep -qx "DB after the run" "$STATE/db"'
+
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261101T030000Z' 'since 20261101T030000Z')
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses an export that’s gone' 'grep -q "export from 20261101T030000Z is gone" /tmp/err'
+
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1 'database tar' 'since 20261119T030000Z')
+echo 'DB from the snapshot' >"$t/database.sql"
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content database.sql)
+run_push /tmp/p.tar kinsta rollback "$SITE" $ID1 2>/dev/null
+# Kinsta's paths are the user's home; here it's craftish's site under HOME.
+expect 'Kinsta’s mode needs its home' 'grep -q "\"ok\":false" /tmp/err'
+
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+echo 'DB from the export before the run' >"$STATE/import-fails"
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'a database that won’t import is put back as it was' 'grep -qx "DB after the run" "$STATE/db" && grep -q "\"changed\":\"files\"" /tmp/err && [ ! -e "$ROOT/.maintenance" ]'
+expect '…with the files rolled back, and undoable' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3 ] && [ -f "$HOLD/$ID1/journal" ]'
+run_push /tmp/empty craftish undo "$SITE" $ID1 files
+expect '…and undone, the files back as the run left them' 'grep -q "\"ok\":true" /tmp/out && [ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ]'
+
+fresh_site
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+printf 'DB from the export before the run\nDB after the run\n' >"$STATE/import-fails"
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'says where the saved copy is when neither import works' 'grep -q "\"changed\":\"broken\"" /tmp/err && grep -q "before.sql.gz" /tmp/err && [ -f "$HOLD/$ID1/before.sql.gz" ]'
+
+# --- A swap that fails part way is reversed ------------------------------------------------------
+fresh_site
+# The theme can't be moved once maintenance is on: its folder loses write.
+echo "chmod 555 '$ROOT/wp-content/themes/twentyx'" >"$STATE/sabotage"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'a swap that fails part way puts everything back' 'grep -q "everything was put back" /tmp/err && grep -q "\"changed\":\"none\"" /tmp/err'
+expect '…the plugin back at the run’s version' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && [ -f "$ROOT/wp-content/plugins/akismet/new.php" ] && grep -q 7.1.5 "$ROOT/wp-includes/version.php"'
+expect '…and maintenance off' '[ ! -e "$ROOT/.maintenance" ]'
+chmod 755 "$ROOT/wp-content/themes/twentyx"
+
+# --- A hang-up mid-swap doesn't stop it ----------------------------------------------------------
+fresh_site
+echo 'sleep 2' >"$STATE/sabotage"
+t=$(make_tar /tmp/p.tar $ID2)
+runuser -u www-data -- "$push" craftish rollback "$SITE" $ID2 </tmp/p.tar >/tmp/out 2>/tmp/err &
+pid=$!
+for _ in $(seq 1 50); do [ -f "$ROOT/.maintenance" ] || grep -q '"step":"save"' /tmp/out 2>/dev/null && break; sleep 0.1; done
+sleep 0.5
+pkill -HUP -f "push craftish rollback $SITE $ID2"
+wait $pid
+expect 'a hang-up in the swap doesn’t stop it' 'grep -q "\"ok\":true" "$HOLD/$ID2/result.json" && [ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3 ]'
+
+# One that stopped part way (killed outright) holds off the next until it's looked at.
+fresh_site
+mkdir -p "$HOLD/$ID2" && printf 'a\tb\n' >"$HOLD/$ID2/journal" && chown -R www-data "$HOLD"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'refuses while an earlier one stopped part way' 'grep -q "stopped part way" /tmp/err'
+
+# Old rollbacks are let go after 14 days.
+fresh_site
+mkdir -p "$HOLD/$ID2" && echo '{"ok":true}' >"$HOLD/$ID2/result.json" && chown -R www-data "$HOLD"
+touch -d '15 days ago' "$HOLD/$ID2"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'lets go of rollbacks over 14 days old' '[ ! -e "$HOLD/$ID2" ] && [ -d "$HOLD/$ID1" ]'
+
+# --- Kinsta: the user's home, and its cache ------------------------------------------------------
+KHOME=/home/kuser
+id kuser >/dev/null 2>&1 || useradd -m -d "$KHOME" kuser
+fresh_site
+rm -rf "$KHOME/public" "$KHOME/.kamaji-rollback"
+cp -a "$ROOT" "$KHOME/public"
+chown -R kuser:kuser "$KHOME"
+chmod 755 "$KHOME"
+t=$(make_tar /tmp/p.tar $ID1 'database tar' 'since 20261119T030000Z')
+echo 'DB from the snapshot' >"$t/database.sql"
+(cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content database.sql)
+chmod 644 /tmp/p.tar
+runuser -u kuser -- env HOME="$KHOME" bash -c "$(cat "$push")" kamaji-push kinsta rollback "$SITE" $ID1 </tmp/p.tar >/tmp/out 2>/tmp/err
+expect 'Kinsta: rolls back in ~/public, the database from the tar' 'grep -q "\"ok\":true" /tmp/out && grep -qx "DB from the snapshot" "$STATE/db" && [ "$(version_at "$KHOME/public/wp-content/plugins/akismet/akismet.php")" = 5.3 ]'
+expect '…keeping its copies in ~/.kamaji-rollback' '[ -d "$KHOME/.kamaji-rollback/$ID1/old" ] && [ "$(stat -c %a "$KHOME/.kamaji-rollback")" = 700 ]'
+expect '…and clears Kinsta’s cache' 'grep -qx purged "$STATE/calls"'
+t=$(make_tar /tmp/p.tar $ID2 'database export 20261119T030000Z' 'since 20261119T030000Z')
+runuser -u kuser -- env HOME="$KHOME" bash -c "$(cat "$push")" kamaji-push kinsta rollback "$SITE" $ID2 </tmp/p.tar >/tmp/out 2>/tmp/err
+expect 'Kinsta: refuses an export, which only craftish has' 'grep -q "names an export oddly" /tmp/err'
+
+# --- ACLs, where the acl package is installed ----------------------------------------------------
+if [ $acl = 1 ]; then
+  fresh_site
+  gpasswd -d tyler www-data >/dev/null 2>&1
+  setfacl -m u:tyler:rwx -m d:u:tyler:rwx "$ROOT/wp-content/plugins"
+  t=$(make_tar /tmp/p.tar $ID1)
+  run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+  expect 'ACL: rolls back' 'grep -q "\"ok\":true" /tmp/out'
+  expect 'ACL: a plugin folder inherits its parent’s default ACL, as one made in place' 'getfacl -p "$ROOT/wp-content/plugins/akismet/akismet.php" 2>/dev/null | grep -q "^user:tyler:rw"'
+  expect 'ACL: core stays writable by its owner, who isn’t in the group' 'getfacl -p "$ROOT/wp-includes/version.php" 2>/dev/null | grep -q "^user:tyler:rw"'
+else
+  fresh_site
+  gpasswd -d tyler www-data >/dev/null 2>&1
+  t=$(make_tar /tmp/p.tar $ID1)
+  run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+  expect 'without setfacl, refuses core its owner could no longer write' 'grep -q "setfacl isn’t here" /tmp/err && grep -q 7.1.5 "$ROOT/wp-includes/version.php"'
+  echo 'skip ACL checks: no acl package here'
+fi
+
+echo
+if [ $fails = 0 ]; then echo 'all passed'; else echo "$fails failed"; exit 1; fi

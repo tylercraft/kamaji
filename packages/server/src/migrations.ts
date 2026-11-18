@@ -663,4 +663,57 @@ export const migrations: Migration[] = [
       ALTER TABLE restore_checks ADD COLUMN note TEXT;
     `,
   },
+  {
+    version: 27,
+    name: 'rollbacks',
+    // Putting a site back the way it was before an update run (ops/rollback-plan.md, Tyler,
+    // 2026-11-19), and undoing that. Each is a row: asked for from the site's page, taken by the
+    // backups process, which holds the snapshots and the SSH keys and runs site-push/push on the
+    // host; then checked by the updater, which holds the Care keys, and told by the app. An undo
+    // is its own row, naming the rollback it undoes. The restore point is recorded as used: the
+    // run's snapshot and, on craftish, its database export. `changed` is what the push left: none,
+    // files (the database couldn't be put back, or wasn't asked for), all, partial (a swap that
+    // couldn't be reversed) or broken (a database that wouldn't import either way).
+    sql: `
+      CREATE TABLE rollbacks (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('rollback', 'undo')),
+        undoes TEXT REFERENCES rollbacks (id),
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        batch_id TEXT NOT NULL REFERENCES batches (id),
+        host TEXT NOT NULL CHECK (host IN ('craftish', 'kinsta')),
+        requested_at INTEGER NOT NULL,
+        requested_by TEXT NOT NULL,
+        with_database INTEGER NOT NULL CHECK (with_database IN (0, 1)),
+        snapshot_id TEXT,
+        snapshot_at INTEGER,
+        export_time TEXT,
+        database_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'failed')),
+        step TEXT,
+        problem TEXT,
+        problem_detail TEXT,
+        changed TEXT CHECK (changed IN ('none', 'files', 'all', 'partial', 'broken', 'unknown')),
+        counts TEXT,
+        warnings TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        checked_at INTEGER,
+        checks_ok INTEGER CHECK (checks_ok IN (0, 1)),
+        checks_problem TEXT,
+        announced_at INTEGER
+      );
+      CREATE INDEX rollbacks_site ON rollbacks (site_id, requested_at);
+      CREATE TABLE rollback_items (
+        rollback_id TEXT NOT NULL REFERENCES rollbacks (id),
+        position INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('core', 'plugin', 'theme')),
+        item TEXT NOT NULL,
+        name TEXT NOT NULL,
+        now_version TEXT NOT NULL,
+        back_version TEXT NOT NULL,
+        PRIMARY KEY (rollback_id, position)
+      );
+    `,
+  },
 ];

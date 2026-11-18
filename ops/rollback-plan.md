@@ -1,6 +1,6 @@
 # Rollback plan
 
-Putting a site back the way it was before an update run, in one step from the site's page (promised to Briardale's maintenance plan). A plan for review, written 2026-11-19; nothing here is built yet. `backups-plan.md` is the ground it stands on: the pulls, the snapshots and the restore check.
+Putting a site back the way it was before an update run, in one step from the site's page (promised to Briardale's maintenance plan). Written 2026-11-19 and approved by Tyler the same day, with his answers ("Settled", at the end); built on branch `rollback`. `backups-plan.md` is the ground it stands on: the pulls, the snapshots and the restore check. The script on the host is `site-push/` (its README says exactly what it touches); Kamaji's side is `packages/server/src/rollback/`; the steps on craftish are in `ops/README.md`, "Rollback".
 
 ## Where this differs from the brief
 
@@ -129,12 +129,14 @@ A site is busy while it's in a batch that's approved or running, or has a backup
 
 ## Data model (migration 27)
 
-- **`batch_sites`:** `restore_snapshot_id TEXT` (the snapshot the run relied on or made) and `restore_export_id INTEGER` (the `backup_evidence` row of its database export, craftish only). The updater writes both from now on. The migration backfills them: the snapshot whose `batch_id` is the run's, else the newest good snapshot started before the run's site started; the export from `backup_evidence.batch_id`.
-- **`rollbacks`:** `id`, `site_id`, `batch_id`, `requested_at`, `requested_by`, `with_database`, `snapshot_id`, `export_id`, `state` (`waiting`, `running`, `done`, `failed`, `undone`), `step` (the last one that finished), `problem`, `problem_detail` (a scrubbed stderr tail, as the restore check keeps), `started_at`, `finished_at`, `undo_requested_at`, `undo_by`, `undone_at`, `announced_at`.
+- **The restore point, as built:** worked out when Roll back is offered, from what's already recorded, and kept on the rollback's row as used: the snapshot whose `batch_id` is the run's, else the newest good snapshot that finished before the run's site started and began within a day of it (the one the run relied on); and on craftish the run's own export from `backup_evidence`, while it's under 13 days old (craftish keeps 14). That gives the same answer the `batch_sites` columns would have, for past runs too, with nothing to backfill, so those columns weren't added.
+- **`rollbacks`:** one row each for a rollback and an undo (`kind`; an undo names the rollback it `undoes`), so both go through the same states: `waiting`, `running`, then `done` or `failed`, with `step`, `problem`, a scrubbed `problem_detail`, and `changed` (what the push left: `none`, `files`, `all`, `partial`, `broken`, `unknown`). Also the restore point used (`snapshot_id`, `snapshot_at`, `export_time`, `database_at`), the `counts` the database box lost, `warnings`, and the checks after (`checked_at`, `checks_ok`, `checks_problem`), then `announced_at`.
 - **`rollback_items`:** `rollback_id`, `type`, `item`, `name`, `from_version` (what it found), `to_version` (what it put back), `state`.
 - **Shared:** a `Rollback` view on the site's run history, with `canRollBack` and `whyNot` worked out on the server, so the web shows them and doesn't decide.
 
-Routes: `POST /api/sites/:id/runs/:batch/rollback` (passkey, body `{ withDatabase }`), `POST /api/rollbacks/:id/undo` (passkey).
+Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback` (passkey, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey, body `{ rollbackId, withDatabase }`).
+
+Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause; the app's cycle sends the one Discord line, and the toast goes to whoever asked.
 
 ## When a step fails
 
@@ -173,7 +175,24 @@ Routes: `POST /api/sites/:id/runs/:batch/rollback` (passkey, body `{ withDatabas
 - Rolling back automatically, ever.
 - Telling the client. Their maintenance plan says rollback exists; who tells them it happened is open question 8.
 
-## Open questions for Tyler
+## Settled (Tyler, 2026-11-19)
+
+The answers to the questions below, and what was added:
+
+1. The holding folder sits beside `public` on craftish: `/var/www/<site>` is `tyler:www-data` 775, on the same filesystem as `public`. The push checks the same disk before it starts.
+2. A new `kamaji-push` user.
+3. Core from wordpress.org. A major core rollback warns about the database in the dialog but doesn't insist.
+4. Latest run only.
+5. Undo for 14 days.
+6. Kinsta's cache: `wp kinsta cache purge` (no `--all`). A failure is a warning, not a failed rollback.
+7. `opcache.validate_timestamps` is at its default (on) on craftish, so swapped files are picked up.
+8. Tyler tells the client; out of scope.
+9. Orders (WooCommerce only), comments and users since the restore point are counted, read only, before the swap, and shown with the outcome only when the database came too.
+10. **Added:** Undo follows Roll back's rule: only while nothing has changed since the rollback (no newer run, the versions as the rollback left them). The push checks it on the server too.
+11. **Added:** core files outside wp-content have no default ACL on craftish, and `www-data` can't give files to `tyler`. So staged core takes the replaced copy's group and modes (775 and 664 there), and an ACL entry for the replaced copy's owner when they can't write through the group; without `setfacl` on the server, a core rollback is refused before anything changes. Plugin and theme folders inherit their parent's default ACL, as a folder made in place would.
+12. **Added:** `/var/backups/kamaji/<site>/` isn't loosened. The mini keeps no copy of the exports, so there's none to send, but `www-data` owns them (craftish's `fetch-export` already streams them as `www-data`), so the push, running as `www-data`, reads the one its plan names. No second sudo rule.
+
+## Open questions for Tyler (answered above)
 
 1. **On craftish,** is `/var/www/<site>/` writable by `www-data` and on the same filesystem as `public`, so the holding folder can sit beside it? If not, `/var/backups/kamaji/<site>/rollback/` works, but the rename becomes a copy if it's another filesystem.
 2. **A new `kamaji-push` user** (my recommendation), or a second key on `kamaji-pull`?

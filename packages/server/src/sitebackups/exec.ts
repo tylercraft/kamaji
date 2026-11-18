@@ -1,6 +1,6 @@
 // Running a command for the restore check: its exit code, some of its stdout, and the end of its
 // stderr. stderr can say anything, so it's only kept when a step fails, as a scrubbed tail
-// (stderrTail.ts). stdin can come from a file.
+// (stderrTail.ts). stdin can come from a file, and the environment can add to the process's.
 import { spawn } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
 import type { Exec } from './restore.js';
@@ -16,6 +16,7 @@ export function realExec(signal?: AbortSignal): Exec {
       const child = spawn(command, args, {
         stdio: [stdin, 'pipe', 'pipe'],
         timeout: options.timeoutMs ?? 60_000,
+        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
         ...(signal ? { signal } : {}),
       });
       let stdout = '';

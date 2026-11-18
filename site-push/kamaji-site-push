@@ -1,0 +1,31 @@
+#!/bin/bash
+# kamaji-site-push: the forced command of Kamaji's rollback key on craftish (README.md). Takes
+# what the backups process asks, from the SSH command, never a path:
+#
+#   rollback <site> <id>                    (the files and the plan on stdin)
+#   undo <site> <id> files|database
+#   result <site> <id> rollback|undo
+#
+# Anything else is refused here, before sudo. Then runs the push as www-data through one sudo
+# rule, where the site is checked against the push allowlist again.
+set -u
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+refuse() {
+  printf '{"format":1,"ok":false,"step":"check","problem":"%s","changed":"none"}\n' "$1" >&2
+  exit 2
+}
+read -r -a words <<<"${SSH_ORIGINAL_COMMAND:-}"
+mode=${words[0]:-}
+site=${words[1]:-}
+id=${words[2]:-}
+extra=${words[3]:-}
+[ ${#words[@]} -le 4 ] || refuse 'too many words'
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || refuse 'not a site name'
+[[ $id =~ ^[0-9a-f]{16}$ ]] || refuse 'not a rollback id'
+case "$mode $extra" in
+  'rollback ') exec sudo -n -u www-data /usr/local/lib/kamaji/site-push craftish rollback "$site" "$id" ;;
+  'undo files' | 'undo database' | 'result rollback' | 'result undo')
+    exec sudo -n -u www-data /usr/local/lib/kamaji/site-push craftish "$mode" "$site" "$id" "$extra" ;;
+  *) refuse 'not something Kamaji asks' ;;
+esac
