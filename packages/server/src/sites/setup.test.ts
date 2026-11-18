@@ -10,6 +10,7 @@ import type { CareResult } from '../care/client.js';
 import { loadCareKeys, newKeyPair, type CareKeys, type SigningKey } from '../care/keys.js';
 import { testDb } from '../testing.js';
 import type { CareSend } from './setup.js';
+import { recordTest } from '../sitebackups/kinsta.js';
 
 const LOGIN = 'tylercraft@github';
 const ORIGIN = 'https://kamaji.test';
@@ -299,6 +300,83 @@ describe('Add site', () => {
       siteBackups: 'weekly',
     });
     expect(await elsewhere.json()).toEqual({ error: 'not_craftish' });
+  });
+
+  it('on Kinsta: access saved with a passkey, Test connection without; backups on once it worked', async () => {
+    const { db, app, post, detail } = setup(reportOnly, () => ok(HELLO));
+    await post('/api/sites', { ...NEW, url: 'https://photogravure.com', hostKind: 'kinsta' });
+    await post('/api/sites/photogravure.com/mode', { mode: 'monitoring' });
+    const configure = (extra: object) =>
+      post('/api/sites/photogravure.com/configure', {
+        expectedText: null,
+        backupExpectation: null,
+        notifications: 'normal',
+        own: true,
+        ...extra,
+      });
+    // Kamaji's own backup before an update, there, is a whole-site snapshot: backups on first.
+    expect(await (await configure({ backupExpectation: 'kamaji' })).json()).toEqual({
+      error: 'kinsta_needs_backups',
+    });
+    expect(await (await configure({ siteBackups: 'weekly' })).json()).toEqual({
+      error: 'kinsta_not_ready',
+      problem: 'set its SSH host, port and user, then Test connection',
+    });
+    const access = { host: 'ssh.example.net', port: 12345, user: 'photogravure' };
+    // Unsigned, it's refused: where Kamaji connects is a passkey's decision.
+    const unsigned = await app.request('/api/sites/photogravure.com/kinsta', {
+      method: 'POST',
+      body: JSON.stringify(access),
+      headers: {
+        'Tailscale-User-Login': LOGIN,
+        Host: 'kamaji.test',
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(unsigned.status).toBe(401);
+    expect((await post('/api/sites/photogravure.com/kinsta', access)).status).toBe(200);
+    expect(
+      (await post('/api/sites/photogravure.com/kinsta', { ...access, user: 'x; rm' })).status,
+    ).toBe(400);
+    const test = await app.request('/api/sites/photogravure.com/kinsta/test', {
+      method: 'POST',
+      body: '{}',
+      headers: {
+        'Tailscale-User-Login': LOGIN,
+        Host: 'kamaji.test',
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(test.status).toBe(202);
+    expect((await detail('photogravure.com')).kinsta).toMatchObject({
+      ...access,
+      testPending: new Date(T).toISOString(),
+      blocked: 'Test connection first',
+    });
+    // The backups process answers.
+    recordTest(
+      db,
+      'photogravure.com',
+      {
+        ok: true,
+        path: '/www/photogravure_123/public',
+        wordpress: '6.8.3',
+        wpCli: '2.11.0',
+        wpContentBytes: 1024 ** 3,
+        databaseBytes: 1024 ** 2,
+      },
+      T,
+    );
+    expect((await configure({ siteBackups: 'weekly', backupExpectation: 'kamaji' })).status).toBe(
+      200,
+    );
+    expect(await detail('photogravure.com')).toMatchObject({
+      backupExpectation: 'kamaji',
+      siteBackups: { schedule: 'weekly' },
+      kinsta: { blocked: null, test: { ok: true, path: '/www/photogravure_123/public' } },
+    });
   });
 
   it('connects a site already set up as monitoring only, keeping its settings', async () => {

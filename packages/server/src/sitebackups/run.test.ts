@@ -8,10 +8,12 @@ import {
   backUpSite,
   dueSites,
   REPOSITORY,
+  requestsWaiting,
   restoreDue,
   runBackups,
   type BackupsDeps,
 } from './run.js';
+import { kinstaView, okSize, requestTest, type TestResult } from './kinsta.js';
 import { DB, pullOf } from './testTar.js';
 
 const DAY = 24 * 60 * 60_000;
@@ -56,6 +58,17 @@ function deps(
   const restored: string[] = [];
   const restoredSnapshots: string[] = [];
   const result: { value: RestoreResult } = { value: { ok: true } };
+  const tested: string[] = [];
+  const test: { value: TestResult } = {
+    value: {
+      ok: true,
+      path: '/www/site_123/public',
+      wordpress: '6.8.3',
+      wpCli: '2.11.0',
+      wpContentBytes: 2 * 1024 ** 3,
+      databaseBytes: 50 * 1024 ** 2,
+    },
+  };
   const d: BackupsDeps = {
     db,
     restic: fake.restic,
@@ -64,11 +77,15 @@ function deps(
       restoredSnapshots.push(snapshotId);
       return result.value;
     },
-    pullCommand: (id) => ['/usr/bin/ssh', id],
+    pullCommand: (id, host) => ['/usr/bin/ssh', host, id],
+    kinstaTest: async (id) => {
+      tested.push(id);
+      return test.value;
+    },
     now: () => now,
     log: () => {},
   };
-  return { d, ...fake, restored, restoredSnapshots, result };
+  return { d, ...fake, restored, restoredSnapshots, result, tested, test };
 }
 
 const rows = (db: Db, sql: string) => db.prepare(sql).all();
@@ -513,6 +530,103 @@ describe('retention keeps the rollback point', () => {
       { batch_id: 'batch-1', forgotten_at: THURSDAY + 15 * DAY },
       { batch_id: null, forgotten_at: null },
       { batch_id: null, forgotten_at: null },
+    ]);
+  });
+});
+
+describe('Kinsta sites (pulled over SSH)', () => {
+  function kinsta(db: Db, id: string, tested: { bytes?: number } | false = {}) {
+    site(db, id, { host: 'kinsta' });
+    db.prepare(
+      `INSERT INTO kinsta_access (site_id, host, port, user, updated_at, updated_by)
+       VALUES (?, '203.0.113.7', 12345, 'site', 0, 'tylercraft@github')`,
+    ).run(id);
+    if (tested)
+      db.prepare(
+        `UPDATE kinsta_access SET tested_at = 0, test_ok = 1, wordpress_path = '/www/site_1/public',
+           wordpress = '6.8.3', wp_cli = '2.11.0', wp_content_bytes = ?, database_bytes = 0
+         WHERE site_id = ?`,
+      ).run(tested.bytes ?? 1024 ** 3, id);
+  }
+
+  it('due like craftish’s once their access is saved; pulled with Kinsta’s command, read back, restore-checked', async () => {
+    const db = testDb();
+    kinsta(db, 'photogravure.test');
+    site(db, 'unset.test', { host: 'kinsta' });
+    expect(dueSites(db, T)).toEqual(['photogravure.test']);
+    const { d, commands, restored } = deps(db);
+    await runBackups(d);
+    expect(commands).toEqual([
+      {
+        site: 'photogravure.test',
+        host: 'kinsta',
+        command: ['/usr/bin/ssh', 'kinsta', 'photogravure.test'],
+      },
+    ]);
+    expect(rows(db, 'SELECT site_id, ok FROM site_snapshots')).toEqual([
+      { site_id: 'photogravure.test', ok: 1 },
+    ]);
+    expect(restored).toEqual(['photogravure.test']);
+  });
+
+  it('the first pull waits for a good test', async () => {
+    const db = testDb();
+    kinsta(db, 'untested.test', false);
+    const { d, calls } = deps(db);
+    await runBackups(d);
+    expect(calls.filter((c) => c.startsWith('backup'))).toEqual([]);
+    expect(rows(db, 'SELECT ok, problem FROM site_snapshots')).toEqual([
+      { ok: 0, problem: 'Test connection first, under Configure → Backups' },
+    ]);
+  });
+
+  it('over 20 GB, the first pull waits for Tyler’s okay; after it, the pull goes', async () => {
+    const db = testDb();
+    kinsta(db, 'photoseed.test', { bytes: 34 * 1024 ** 3 });
+    const first = deps(db);
+    await runBackups(first.d);
+    expect(first.calls.filter((c) => c.startsWith('backup'))).toEqual([]);
+    expect(rows(db, 'SELECT problem FROM site_snapshots')).toEqual([
+      {
+        problem: 'it measured 34.0 GB, over 20 GB: okay that size first, under Configure → Backups',
+      },
+    ]);
+    expect(okSize(db, 'photoseed.test', 'tylercraft@github', T)).toBe('okayed');
+    const second = deps(db, undefined, T + 60 * 60_000);
+    await backUpSite(second.d, 'photoseed.test');
+    expect(second.calls).toContain('backup photoseed.test');
+  });
+
+  it('once it has a snapshot, a failed test later doesn’t stop the pulls', async () => {
+    const db = testDb();
+    kinsta(db, 'p.test');
+    snapshot(db, 'p.test', T - 8 * DAY);
+    db.prepare("UPDATE kinsta_access SET test_ok = 0, test_problem = 'x'").run();
+    const { d, calls } = deps(db);
+    await backUpSite(d, 'p.test');
+    expect(calls).toContain('backup p.test');
+  });
+
+  it('Test connection: taken first, recorded with what it found, and it starts the process', async () => {
+    const db = testDb();
+    kinsta(db, 'p.test', false);
+    expect(requestTest(db, 'p.test', T)).toBe('queued');
+    expect(requestTest(db, 'p.test', T)).toBe('already');
+    expect(requestsWaiting(db)).toBe(true);
+    const { d, tested } = deps(db, undefined, T + 60_000);
+    // Tested before anything is pulled; this site's first pull then goes in the same run.
+    await runBackups(d);
+    expect(tested).toEqual(['p.test']);
+    expect(requestsWaiting(db)).toBe(false);
+    expect(kinstaView(db, 'p.test')).toMatchObject({
+      testPending: null,
+      test: { ok: true, path: '/www/site_123/public', wpContentBytes: 2 * 1024 ** 3 },
+      blocked: null,
+    });
+    expect(
+      rows(db, "SELECT summary FROM events WHERE kind = 'site.kinsta-test'").map((r) => r.summary),
+    ).toEqual([
+      'Kinsta connection to p.test works: WordPress 6.8.3 at /www/site_123/public, wp-content 2.0 GB, database 50 MB',
     ]);
   });
 });

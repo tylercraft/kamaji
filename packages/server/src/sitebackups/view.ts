@@ -5,6 +5,7 @@ import type { RestoreCheck, SiteSnapshot, WholeSiteBackups } from '@kamaji/share
 import type { Db } from '../db.js';
 import { readState } from '../state.js';
 import { readUpdateTime } from '../settings.js';
+import { PULL_HOSTS } from './eligible.js';
 import { eligible, REPOSITORY } from './run.js';
 import { nextNight } from './schedule.js';
 
@@ -15,7 +16,7 @@ const strOrNull = (v: unknown) => (v === null || v === undefined ? null : String
 
 export function wholeSiteView(db: Db, siteId: string, now = Date.now()): WholeSiteBackups | null {
   const site = db.prepare('SELECT * FROM sites WHERE id = ? AND removed_at IS NULL').get(siteId);
-  if (!site || site.host_kind !== 'craftish') return null;
+  if (!site || !(PULL_HOSTS as readonly unknown[]).includes(site.host_kind)) return null;
   const schedule = String(site.site_backup_schedule) as WholeSiteBackups['schedule'];
   const active = eligible(db, siteId);
   const snapshots: SiteSnapshot[] = db

@@ -623,4 +623,35 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 25,
+    name: 'kinsta whole-site backups',
+    // Whole-site backups of Kinsta sites (Tyler, 2026-11-18), pulled over SSH with the backups
+    // process's own key (sitebackups/kinsta.ts). Each site's SSH host, port and user (not secret;
+    // the key never leaves the mini's ~/.ssh). "Test connection" is a request the backups process
+    // takes, like the panel's; it records what it found, and the sizes the 20 GB check uses. Over
+    // 20 GB, the first pull waits for Tyler's okay of that size.
+    sql: `
+      CREATE TABLE kinsta_access (
+        site_id TEXT PRIMARY KEY REFERENCES sites (id),
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        user TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL,
+        test_requested_at INTEGER,
+        tested_at INTEGER,
+        test_ok INTEGER CHECK (test_ok IN (0, 1)),
+        test_problem TEXT,
+        wordpress_path TEXT,
+        wordpress TEXT,
+        wp_cli TEXT,
+        wp_content_bytes INTEGER,
+        database_bytes INTEGER,
+        size_ok_bytes INTEGER,
+        size_ok_at INTEGER,
+        size_ok_by TEXT
+      );
+    `,
+  },
 ];

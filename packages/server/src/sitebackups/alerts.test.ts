@@ -43,6 +43,7 @@ function deps(db: Db, pull: (s: string) => Buffer | { problem: string }, now: nu
     restic: fakeRestic(pull).restic,
     restore: async () => restore.value,
     pullCommand: () => [],
+    kinstaTest: async () => ({ ok: false, problem: 'not here' }),
     now: () => now,
     log: () => {},
   };

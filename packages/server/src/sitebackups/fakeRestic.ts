@@ -52,10 +52,12 @@ export function fakeRestic(
 ) {
   const snapshots = new Map<string, { site: string; tar: Buffer; at: number }>();
   const calls: string[] = [];
+  const commands: { site: string; host: string; command: string[] }[] = [];
   let n = 0;
   const restic: Restic = {
-    async backup(site) {
+    async backup(site, command, _signal, host = 'craftish') {
       calls.push(`backup ${site}`);
+      commands.push({ site, host, command });
       const tar = pull(site);
       if (!Buffer.isBuffer(tar)) return { ok: false, problem: tar.problem };
       const id = (++n).toString(16).padStart(64, '0');
@@ -98,5 +100,5 @@ export function fakeRestic(
       return { ok: true };
     },
   };
-  return { restic, snapshots, calls };
+  return { restic, snapshots, calls, commands };
 }

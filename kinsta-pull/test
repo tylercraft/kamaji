@@ -1,0 +1,38 @@
+#!/bin/bash
+# kinsta-pull/test: Configure's "Test connection" for a Kinsta site (README.md). Sent like pull,
+# as `bash -c '<this>' kamaji-test <site>`; reads only. One JSON line on stdout, written here, so
+# Kamaji parses nothing of Kinsta's own: where WordPress is, its version and home URL, wp-cli's
+# version (wp --info must work too), and the sizes the 20 GB check uses (wp-content as du counts it, with what the pull
+# leaves out still in, and the database as wp db size gives it in bytes).
+set -u -o pipefail
+export LC_ALL=C
+
+fail() {
+  printf '{"format":1,"ok":false,"problem":"%s"}\n' "$1"
+  exit 2
+}
+
+site=${1:-}
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail 'not a site name'
+root=$HOME/public
+[ -f "$root/wp-config.php" ] && [ -d "$root/wp-content" ] || fail 'no WordPress in ~/public'
+[[ $root =~ ^/[A-Za-z0-9._/-]+$ ]] || fail 'an unexpected WordPress path'
+tar --version 2>/dev/null | head -n 1 | grep -q 'GNU tar' || fail 'tar there isn’t GNU tar'
+export WP_CLI_CACHE_DIR=$HOME/.wp-cli/cache
+wp=(wp --path="$root" --skip-plugins --skip-themes)
+
+wp --info >/dev/null 2>&1 || fail 'wp --info failed'
+cli=$(wp cli version 2>/dev/null) || fail 'wp cli version failed'
+[[ $cli =~ ^WP-CLI\ ([0-9][0-9.a-zA-Z-]*)$ ]] || fail 'an unexpected wp-cli version'
+cli=${BASH_REMATCH[1]}
+version=$("${wp[@]}" core version 2>/dev/null) || fail 'wp core version failed'
+[[ $version =~ ^[0-9][0-9.a-zA-Z-]*$ ]] || fail 'an unexpected WordPress version'
+home=$("${wp[@]}" option get home 2>/dev/null) || fail 'wp option get home failed'
+[[ $home =~ ^https?://[A-Za-z0-9.:-]+(/[A-Za-z0-9._~/-]*)?$ ]] || fail 'an unexpected home URL'
+database=$("${wp[@]}" db size --size_format=b 2>/dev/null) || fail 'wp db size failed'
+[[ $database =~ ^[0-9]+$ ]] || fail 'an unexpected database size'
+kb=$(du -sk "$root/wp-content" 2>/dev/null | cut -f1) || fail 'wp-content could not be measured'
+[[ $kb =~ ^[0-9]+$ ]] || fail 'an unexpected wp-content size'
+
+printf '{"format":1,"ok":true,"path":"%s","wordpress":"%s","home":"%s","wpContentBytes":%s,"databaseBytes":%s,"wpCli":"%s"}\n' \
+  "$root" "$version" "$home" "$((kb * 1024))" "$database" "$cli"

@@ -24,6 +24,7 @@ import { RememberedDetails } from '../components/remembered';
 import { PLATFORM_NAMES } from '../sitesView';
 import { pageLabel } from './SiteHealth';
 import { load as reloadIcons, SiteIcon } from '../components/SiteIcon';
+import { KinstaAccessFields } from './KinstaAccess';
 
 const OK = z.object({ ok: z.literal(true) });
 
@@ -73,7 +74,7 @@ const BLOCKERS: Record<string, string> = {
 
 const SSH: Record<HostKind, string> = {
   craftish: 'Yes, Tyler’s own server (used for exports before updates, from M4)',
-  kinsta: 'Kinsta offers SSH with wp-cli (not used yet)',
+  kinsta: 'Yes, with wp-cli: whole-site backups pull over it, with Kamaji’s own key',
   wpengine: 'WP Engine offers SSH with wp-cli (not used yet)',
   other: 'Unknown for this host',
 };
@@ -371,8 +372,19 @@ export function InstallSteps({
   );
 }
 
+/** On Kinsta, Kamaji's own backup before an update is a whole-site snapshot (server setup.ts). */
+const KINSTA_KAMAJI =
+  'Kamaji takes a whole-site backup first, unless it has one from the last day (needs whole-site backups on)';
+
+/** Hosts whole-site backups pull from (server sitebackups/eligible.ts). */
+const pulls = (host: HostKind) => host === 'craftish' || host === 'kinsta';
+
 const CONFIGURE_WORDS: Record<string, string> = {
-  not_craftish: 'Kamaji’s own backups are on craftish, and this site isn’t hosted there',
+  not_craftish: 'Kamaji’s own backups are on craftish or Kinsta, and this site is on neither',
+  kinsta_needs_backups:
+    'On Kinsta, Kamaji’s backup before an update is a whole-site one: turn whole-site backups on too',
+  kinsta_not_ready:
+    'Whole-site backups of a Kinsta site wait for its SSH access and a good Test connection (and, over 20 GB, your okay)',
   no_consent: 'Tick that the client agreed before turning on whole-site backups of their site',
   bad_page:
     'Each page to check must be on this site, over https: a path like /shop/, or its full address',
@@ -513,7 +525,7 @@ function TimeZoneField({ zone, setZone }: { zone: string; setZone: (zone: string
 }
 
 /**
- * Whole-site backups, on craftish sites only: the schedule, whether it's Tyler's own site, and
+ * Whole-site backups, on craftish and Kinsta sites: the schedule, whether it's Tyler's own site, and
  * on a client's site the tick that the client agreed (recorded once, with who ticked it and when).
  */
 function WholeSiteChoices({
@@ -534,9 +546,10 @@ function WholeSiteChoices({
     <Choices>
       <legend>Whole-site backups</legend>
       <Muted>
-        Files and a fresh database from craftish, kept encrypted with restic on molcajete: all from
-        the last 14 days, then 4 weekly and 6 monthly. Arq copies that encrypted repository
-        off-site; Kamaji doesn’t check Arq.
+        Files and a fresh database from{' '}
+        {detail.site.hostKind === 'kinsta' ? 'Kinsta, over SSH' : 'craftish'}, kept encrypted with
+        restic on molcajete: all from the last 14 days, then 4 weekly and 6 monthly. Arq copies that
+        encrypted repository off-site; Kamaji doesn’t check Arq.
       </Muted>
       {(Object.entries(SCHEDULES) as [SiteBackupSchedule, string][]).map(([value, label]) => (
         <label key={value}>
@@ -588,12 +601,13 @@ function configureSummary(detail: SiteDetailResponse): string {
   if (detail.site.platform !== 'wordpress')
     return `${PLATFORM_NAMES[detail.site.platform]}, monitoring only · ${notes}`;
   const policy = detail.backupExpectation
-    ? POLICY_SHORT[detail.backupExpectation]
+    ? detail.backupExpectation === 'kamaji' && detail.site.hostKind === 'kinsta'
+      ? 'Whole-site backups before updates'
+      : POLICY_SHORT[detail.backupExpectation]
     : 'Backups before updates not decided';
-  const whole =
-    detail.site.hostKind === 'craftish'
-      ? ` · Whole-site backups ${SCHEDULES[detail.siteBackups.schedule].toLowerCase()}`
-      : '';
+  const whole = pulls(detail.site.hostKind)
+    ? ` · Whole-site backups ${SCHEDULES[detail.siteBackups.schedule].toLowerCase()}`
+    : '';
   return `${policy}${whole} · ${notes}`;
 }
 
@@ -657,7 +671,7 @@ export function ConfigureStep({
       expectedText: String(form.get('expected') ?? '').trim() || null,
       backupExpectation: !wordpress || backup === '' ? null : backup,
       notifications: form.get('notifications') === 'digest' ? 'digest' : 'normal',
-      ...(wordpress && site.hostKind === 'craftish'
+      ...(wordpress && pulls(site.hostKind)
         ? {
             own,
             siteBackups: schedule,
@@ -765,7 +779,7 @@ export function ConfigureStep({
             <Choices>
               <legend>Before each update</legend>
               {(Object.entries(BACKUPS) as [BackupExpectation, string][])
-                .filter(([value]) => value !== 'kamaji' || site.hostKind === 'craftish')
+                .filter(([value]) => value !== 'kamaji' || pulls(site.hostKind))
                 .map(([value, label]) => (
                   <label key={value}>
                     <input
@@ -774,7 +788,7 @@ export function ConfigureStep({
                       value={value}
                       defaultChecked={detail.backupExpectation === value}
                     />
-                    {label}
+                    {value === 'kamaji' && site.hostKind === 'kinsta' ? KINSTA_KAMAJI : label}
                   </label>
                 ))}
               <label>
@@ -787,7 +801,8 @@ export function ConfigureStep({
                 Not decided yet: shown as unknown
               </label>
             </Choices>
-            {site.hostKind === 'craftish' && (
+            {site.hostKind === 'kinsta' && <KinstaAccessFields detail={detail} reload={reload} />}
+            {pulls(site.hostKind) && (
               <WholeSiteChoices
                 detail={detail}
                 own={own}
@@ -796,10 +811,10 @@ export function ConfigureStep({
                 setSchedule={setSchedule}
               />
             )}
-            {site.hostKind === 'craftish' && schedule !== 'off' && (
+            {pulls(site.hostKind) && schedule !== 'off' && (
               <TimeZoneField zone={timeZone} setZone={setTimeZone} />
             )}
-            {site.hostKind === 'craftish' && (
+            {pulls(site.hostKind) && (
               <RememberedDetails name="backup-contents">
                 <summary>What a whole-site backup holds</summary>
                 <Muted css={{ marginTop: 6 }}>
@@ -809,11 +824,19 @@ export function ConfigureStep({
                   <code>backups*</code> and <code>*.log</code> files. <code>wp-config.php</code> and
                   WordPress’s own files are never read.
                 </Muted>
-                <Muted css={{ marginTop: 6 }}>
-                  <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
-                  craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which version
-                  craftish has; ops/README.md, “Updating site-pull”, installs it.
-                </Muted>
+                {site.hostKind === 'craftish' ? (
+                  <Muted css={{ marginTop: 6 }}>
+                    <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out only once
+                    craftish runs the updated <code>site-pull</code>. Kamaji can’t tell which
+                    version craftish has; ops/README.md, “Updating site-pull”, installs it.
+                  </Muted>
+                ) : (
+                  <Muted css={{ marginTop: 6 }}>
+                    <code>wp-content/wflogs</code> (Wordfence’s live logs) is left out too. On
+                    Kinsta, the database dump waits in a private folder in the SSH user’s home,
+                    outside <code>public</code>, while the pull runs, and is removed after.
+                  </Muted>
+                )}
               </RememberedDetails>
             )}
           </div>

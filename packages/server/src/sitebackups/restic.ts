@@ -6,15 +6,22 @@
 import { spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { z } from 'zod';
+import type { PullHost } from './eligible.js';
+
+const HOST_NAMES: Record<PullHost, string> = { craftish: 'craftish', kinsta: 'Kinsta' };
 
 export type Result<T = object> = ({ ok: true } & T) | { ok: false; problem: string };
 
 export interface Restic {
-  /** One snapshot of what `command` writes to stdout, as `<site>.tar`, tagged site:<site>. */
+  /**
+   * One snapshot of what `command` writes to stdout, as `<site>.tar`, tagged site:<site>, with
+   * the host it came from as restic's host.
+   */
   backup(
     site: string,
     command: string[],
     signal?: AbortSignal,
+    host?: PullHost,
   ): Promise<Result<{ snapshotId: string; bytes: number; added: number }>>;
   /** Streams `<site>.tar` from a snapshot into `read`. */
   dump<T>(
@@ -41,13 +48,13 @@ export interface Restic {
  */
 export const KEEP = ['--keep-within', '14d', '--keep-weekly', '4', '--keep-monthly', '6'];
 
-/** The pull's own refusal (server-pull/), which ssh passes through on stderr. */
+/** The pull's own refusal (server-pull/, kinsta-pull/), which ssh passes through on stderr. */
 const PULL_PROBLEM = /\{"format":1,"ok":false,"problem":"([^"\\]{1,200})"\}/;
 
 /** What a failed restic said, in words Kamaji can store: never its stderr as such. */
-export function problem(code: number | null, stderr: string): string {
+export function problem(code: number | null, stderr: string, host: PullHost = 'craftish'): string {
   const pull = PULL_PROBLEM.exec(stderr);
-  if (pull) return `craftish: ${pull[1]}`;
+  if (pull) return `${HOST_NAMES[host]}: ${pull[1]}`;
   // restic's documented exit codes (fixtures/README.md).
   switch (code) {
     case 3:
@@ -158,13 +165,13 @@ export function realRestic(bin: string): Restic {
     return ran.code === 0 ? { ok: true } : { ok: false, problem: problem(ran.code, ran.stderr) };
   };
   return {
-    async backup(site, command, signal) {
+    async backup(site, command, signal, host = 'craftish') {
       const ran = await run(
         [
           'backup',
           '--json',
           '--host',
-          'craftish',
+          host,
           '--tag',
           `site:${site}`,
           '--stdin-filename',
@@ -175,7 +182,7 @@ export function realRestic(bin: string): Restic {
         ],
         { signal },
       );
-      if (ran.code !== 0) return { ok: false, problem: problem(ran.code, ran.stderr) };
+      if (ran.code !== 0) return { ok: false, problem: problem(ran.code, ran.stderr, host) };
       const summary = parseBackup(ran.stdout);
       if (!summary) return { ok: false, problem: 'restic’s answer had no snapshot in it' };
       return {

@@ -1366,6 +1366,113 @@ for (const view of VIEWS) {
   else console.log('ok   refetch icon: in the site’s settings, no passkey, says how it went');
 }
 
+// Kinsta: Configure → Backups on Photogravure takes its SSH host, port and user (a passkey
+// write), Test connection goes without one and shows what the backups process found, a site over
+// 20 GB waits for an okay, and then whole-site backups and Kamaji's before-update backup go on.
+{
+  problems = [];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const { recordTest } = await imp('sitebackups/kinsta.js');
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/photogravure.com` });
+  await wait(1500);
+  const filled = await evaluate(`(() => {
+    const set = (id, value) => {
+      const input = document.getElementById(id);
+      if (!input) return false;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    };
+    return set('kinsta-host', '203.0.113.7') && set('kinsta-port', '12345') && set('kinsta-user', 'photogravure');
+  })()`);
+  if (!filled) problems.push('no Kinsta SSH access fields in Configure');
+  const button = (label) =>
+    evaluate(
+      `(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}); if (!b) return 'missing'; if (b.disabled) return 'disabled'; b.click(); return 'clicked'; })()`,
+    );
+  const saved = await button('Save access');
+  if (saved !== 'clicked') problems.push(`Save access was ${saved}`);
+  await wait(1500);
+  const access = db.prepare("SELECT * FROM kinsta_access WHERE site_id = 'photogravure.com'").get();
+  if (!access || access.port !== 12345) problems.push('the access wasn’t saved');
+  const nonces = () =>
+    db.prepare('SELECT COUNT(*) AS n FROM passkey_nonces WHERE used_at IS NOT NULL').get().n;
+  const before = nonces();
+  const tested = await button('Test connection');
+  if (tested !== 'clicked') problems.push(`Test connection was ${tested}`);
+  await wait(1000);
+  if (nonces() !== before) problems.push('Test connection asked for a passkey');
+  if (!(await evaluate('document.body.textContent')).includes('Testing: asked'))
+    problems.push('no word that the test is waiting');
+  // The backups process answers.
+  recordTest(
+    db,
+    'photogravure.com',
+    {
+      ok: true,
+      path: '/www/photogravure_123/public',
+      wordpress: '6.8.3',
+      wpCli: '2.11.0',
+      wpContentBytes: 25 * 1024 ** 3,
+      databaseBytes: 50 * 1024 ** 2,
+    },
+    Date.now(),
+  );
+  let text = '';
+  for (let i = 0; i < 16 && !text.includes('Connected to Photogravure on Kinsta'); i++) {
+    await wait(500);
+    text = await evaluate('document.body.innerText');
+  }
+  if (!text.includes('Connected to Photogravure on Kinsta')) problems.push('no toast for the test');
+  // The settings may be folded away, so their text rather than what shows.
+  if (!(await evaluate('document.body.textContent')).includes('/www/photogravure_123/public'))
+    problems.push('the WordPress path isn’t shown');
+  const okayed = await button('Okay 25.05 GB');
+  if (okayed !== 'clicked') problems.push(`Okay was ${okayed}`);
+  await wait(1500);
+  if (
+    db.prepare("SELECT size_ok_at FROM kinsta_access WHERE site_id = 'photogravure.com'").get()
+      ?.size_ok_at == null
+  )
+    problems.push('the okay wasn’t saved');
+  const configured = await evaluate(`(() => {
+    const pick = (selector) => { const e = document.querySelector(selector); if (e && !e.checked) e.click(); return !!e; };
+    if (!pick('input[name="siteBackups"][value="weekly"]')) return 'no weekly';
+    if (!pick('input[name="backup"][value="kamaji"]')) return 'no Kamaji choice';
+    const kamaji = document.querySelector('input[name="backup"][value="kamaji"]').parentElement.textContent;
+    if (!kamaji.includes('whole-site backup first')) return 'the Kamaji choice says ' + kamaji;
+    return 'ok';
+  })()`);
+  if (configured !== 'ok') problems.push(`Configure: ${configured}`);
+  await wait(300);
+  await evaluate(`(() => {
+    const agreed = document.querySelector('input[name="clientAgreed"]');
+    if (agreed && !agreed.checked) agreed.click();
+    document.querySelector('input[name="siteBackups"]').form.requestSubmit();
+  })()`);
+  await wait(1500);
+  const row = db
+    .prepare(
+      "SELECT site_backup_schedule, backup_expectation FROM sites WHERE id = 'photogravure.com'",
+    )
+    .get();
+  if (row.site_backup_schedule !== 'weekly' || row.backup_expectation !== 'kamaji')
+    problems.push(`saved as ${row.site_backup_schedule}, ${row.backup_expectation}`);
+  if (SHOTS) {
+    await evaluate(
+      `(() => { const f = [...document.querySelectorAll('fieldset')].find((f) => f.querySelector('legend')?.textContent === 'Kinsta SSH access'); let d = f?.closest('details'); while (d) { d.open = true; d = d.parentElement?.closest('details'); } f?.scrollIntoView({ block: 'start' }); })()`,
+    );
+    await wait(300);
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'kinsta-access.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  if (problems.length) failures.push(`kinsta: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   kinsta: access saved, tested without a passkey, 20 GB okayed, backups and Kamaji on',
+    );
+}
+
 // The phone header: a menu button in place of the tabs, opening onto the tabs and Passkeys, and
 // closing again on the way to another page. Plus the home screen icon iOS asks for.
 {

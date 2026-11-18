@@ -692,6 +692,49 @@ describe('a whole-site backup before an update', () => {
     expect(backupHistory(db, SITE)[0]).toMatchObject({ state: 'failed', kind: 'snapshot' });
   });
 
+  /** The same site on Kinsta, its SSH access saved. */
+  function onKinsta(made: ReturnType<typeof wholeSite>) {
+    made.db.prepare("UPDATE sites SET host_kind = 'kinsta' WHERE id = ?").run(SITE);
+    made.db
+      .prepare(
+        `INSERT INTO kinsta_access (site_id, host, port, user, updated_at, updated_by, tested_at,
+           test_ok) VALUES (?, '203.0.113.7', 12345, 'site', 0, 'tylercraft@github', 0, 1)`,
+      )
+      .run(SITE);
+    return made;
+  }
+
+  it('on Kinsta, a snapshot from the last day is the backup: there’s no export to make', async () => {
+    const { db, deps, site } = onKinsta(wholeSite(T - 2 * HOUR));
+    await approve(db);
+    let exports = 0;
+    await runUpdater({
+      ...deps(),
+      backup: async () => {
+        exports += 1;
+        return { ok: false, words: 'Kamaji makes exports only on craftish' };
+      },
+    });
+    expect(exports).toBe(0);
+    expect(batchViews(db)[0]!.sites[0]).toMatchObject({
+      state: 'done',
+      backup: `Whole-site backup before update: the latest snapshot, ffffffff, from ${new Date(T - 2 * HOUR).toISOString()}, under a day old`,
+    });
+    expect(backupHistory(db, SITE)[0]).toMatchObject({ kind: 'snapshot' });
+    expect(site.sent.some((s) => s.endpoint === 'update')).toBe(true);
+  });
+
+  it('on Kinsta, an older snapshot: a fresh one first, as on craftish', async () => {
+    const { db, deps } = onKinsta(wholeSite(T - 3 * DAY));
+    await approve(db);
+    const process = backupsProcess(db, { ok: true });
+    await runUpdater({ ...deps(), sleep: process.sleep });
+    expect(process.taken).toHaveLength(1);
+    expect(batchViews(db)[0]!.sites[0]!.backup).toMatch(
+      /^Whole-site backup before update: snapshot cccccccc/,
+    );
+  });
+
   it('a snapshot that never comes holds the update, and withdraws the request', async () => {
     const { db, deps, site } = wholeSite(T - 3 * DAY);
     await approve(db);

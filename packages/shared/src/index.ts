@@ -472,6 +472,52 @@ export const SiteIconStatus = z.object({
 export type SiteIconStatus = z.infer<typeof SiteIconStatus>;
 
 /** One site, for the setup and manage views. */
+/**
+ * A Kinsta site's SSH access for whole-site backups (server sitebackups/kinsta.ts): Kinsta's own
+ * host, port and user for the site, none of them secret. The key is the backups process's.
+ */
+export const KinstaAccessInput = z.object({
+  host: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*|\d{1,3}(\.\d{1,3}){3})$/,
+    ),
+  port: z.number().int().min(1).max(65535),
+  user: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$/),
+});
+export type KinstaAccessInput = z.infer<typeof KinstaAccessInput>;
+
+/** What "Test connection" found: where WordPress is and the sizes the 20 GB check uses. */
+export const KinstaTest = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    at: Timestamp,
+    path: z.string(),
+    wordpress: z.string(),
+    wpCli: z.string(),
+    wpContentBytes: z.number().int(),
+    databaseBytes: z.number().int(),
+  }),
+  z.object({ ok: z.literal(false), at: Timestamp, problem: z.string() }),
+]);
+export type KinstaTest = z.infer<typeof KinstaTest>;
+
+export const KinstaAccess = KinstaAccessInput.extend({
+  /** "Test connection" asked for and not answered yet. */
+  testPending: Timestamp.nullable(),
+  test: KinstaTest.nullable(),
+  /** Over 20 GB, the first pull waits for this: who okayed it, when, and at what size. */
+  sizeOk: z.object({ at: Timestamp, by: z.string(), bytes: z.number().int() }).nullable(),
+  /** Why whole-site backups can't be turned on yet, or null when they can. */
+  blocked: z.string().nullable(),
+});
+export type KinstaAccess = z.infer<typeof KinstaAccess>;
+
 export const SiteDetailResponse = z.object({
   site: SiteSummary,
   handshake: Handshake.nullable(),
@@ -493,6 +539,8 @@ export const SiteDetailResponse = z.object({
   icon: SiteIconStatus.nullable(),
   /** IANA time zone: whole-site backups run at 03:00 there. */
   timeZone: z.string(),
+  /** A Kinsta site's SSH access for whole-site backups; null until it's set, and elsewhere. */
+  kinsta: KinstaAccess.nullable().default(null),
 });
 export type SiteDetailResponse = z.infer<typeof SiteDetailResponse>;
 

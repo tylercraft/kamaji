@@ -1,0 +1,73 @@
+#!/bin/bash
+# kinsta-pull/pull: one Kinsta site's files and a fresh database dump, as one tar on stdout, for
+# Kamaji's whole-site backup (README.md). Kinsta has no sudo, so no forced command: the backups
+# process sends this file over SSH, as it is in the repo, as `bash -c '<this>' kamaji-pull <site>`,
+# with its own key. It runs as the site's SSH user, whose WordPress is ~/public.
+#
+# The same tar as craftish's server-pull/site-pull, so the read-back and the restore check are
+# the same: wp-content (without caches, other backup plugins' archives, logs and Wordfence's live
+# log folder wflogs), .htaccess if there is one, database.sql and, last, manifest.json. Never
+# wp-config.php or WordPress's own files. Problems go to stderr, since stdout is the backup; any
+# non-zero exit means restic keeps no snapshot.
+set -u -o pipefail
+export LC_ALL=C
+umask 077
+
+fail() {
+  printf '{"format":1,"ok":false,"problem":"%s"}\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+site=${1:-}
+[[ $site =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail 'not a site name' 2
+root=$HOME/public
+[ -f "$root/wp-config.php" ] && [ -d "$root/wp-content" ] || fail 'no WordPress in ~/public' 2
+tar --version 2>/dev/null | head -n 1 | grep -q 'GNU tar' || fail 'tar there isn’t GNU tar' 2
+export WP_CLI_CACHE_DIR=$HOME/.wp-cli/cache
+wp=(wp --path="$root" --skip-plugins --skip-themes)
+
+# The login must be this site's: its home URL's host, without www., is the site's.
+home=$("${wp[@]}" option get home 2>/dev/null) || fail 'wp option get home failed'
+host=${home#*://}
+host=${host%%/*}
+host=${host%%:*}
+[ "${host#www.}" = "${site#www.}" ] || fail 'this SSH login is another site' 2
+
+# The dump needs a file: tar writes each file's size before it, and the manifest its hash. It's
+# in a folder only this user can read, outside ~/public, removed on the way out however the pull
+# ends. One left by a pull cut off harder than that (kill -9) is removed by the next.
+find "$HOME" -maxdepth 1 -type d -name '.kamaji-pull.*' -mmin +720 -exec rm -rf -- {} + 2>/dev/null
+work=$(mktemp -d "$HOME/.kamaji-pull.XXXXXX") || fail 'the work folder could not be made'
+trap 'rm -rf -- "$work"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# --single-transaction: consistent InnoDB tables without locking the site.
+"${wp[@]}" db export "$work/database.sql" --single-transaction --quick >/dev/null 2>&1 ||
+  fail 'the database export failed'
+version=$("${wp[@]}" core version 2>/dev/null) || fail 'wp core version failed'
+prefix=$("${wp[@]}" config get table_prefix 2>/dev/null) || fail 'wp config get table_prefix failed'
+[[ $version =~ ^[0-9][0-9.a-zA-Z-]*$ ]] || fail 'an unexpected WordPress version'
+[[ $prefix =~ ^[A-Za-z0-9_]+$ ]] || fail 'an unexpected table prefix'
+# Names only: every constant and variable wp-config defines, never a value.
+names=$("${wp[@]}" config list --fields=name --format=json 2>/dev/null) || fail 'wp config list failed'
+bytes=$(stat -c %s "$work/database.sql") || fail 'the database export could not be measured'
+sha=$(sha256sum "$work/database.sql" | cut -d' ' -f1) || fail 'the database export could not be hashed'
+at=$(date -u +%Y%m%dT%H%M%SZ)
+printf '{"format":1,"site":"%s","at":"%s","wordpress":"%s","tablePrefix":"%s","config":%s,"database":{"bytes":%s,"sha256":"%s"}}\n' \
+  "$site" "$at" "$version" "$prefix" "$names" "$bytes" "$sha" >"$work/manifest.json"
+
+parts=(wp-content)
+[ -f "$root/.htaccess" ] && parts+=(.htaccess)
+# GNU tar exits 1 when a file changed while it was read (a live site's uploads can): a warning,
+# not a failure. 2 is fatal. manifest.json goes last, so a stream that stops early lacks it.
+# The exclusions are site-pull's, word for word.
+tar --create --format=gnu --sort=name --warning=no-file-changed --no-wildcards-match-slash \
+  --exclude=wp-content/cache --exclude=wp-content/upgrade --exclude=wp-content/ai1wm-backups \
+  --exclude=wp-content/updraft --exclude='wp-content/backups*' --exclude='*.log' \
+  --exclude=wp-content/wflogs \
+  -C "$root" "${parts[@]}" -C "$work" database.sql manifest.json
+code=$?
+[ "$code" -le 1 ] || exit "$code"
+exit 0
