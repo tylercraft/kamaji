@@ -1,0 +1,88 @@
+#!/bin/bash
+# check: runs pull and test as Kamaji sends them (`sh -c "bash -c '<script>' …"`, the way sshd
+# hands a command to the login shell) against a made-up Kinsta home with a stand-in wp, and checks
+# the tar, the exclusions, the test's line and that no work folder is left, after a pull that
+# worked and after ones that failed or were killed. Needs GNU tar: run it in an Ubuntu container,
+#   docker run --rm --network none -v "$PWD":/kp:ro -v /tmp/kp-out:/out ubuntu:24.04 /kp/check
+# The tar is left in /out/pull.tar for Kamaji's own read-back (README.md).
+set -eu -o pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+out=${OUT:-/out}
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+export HOME=$tmp/home
+mkdir -p "$HOME/public/wp-content"/{wflogs,cache/page,upgrade,updraft,backups-old,ai1wm-backups,plugins/wordfence,uploads/2026} "$tmp/bin"
+for f in wflogs/attack-data.php cache/page/a.html upgrade/x.zip updraft/db.gz backups-old/b.zip \
+  ai1wm-backups/c.wpress debug.log plugins/wordfence/wordfence.php uploads/2026/a.jpg; do
+  echo x >"$HOME/public/wp-content/$f"
+done
+echo secret >"$HOME/public/wp-config.php"
+echo core >"$HOME/public/wp-load.php"
+echo '# rules' >"$HOME/public/.htaccess"
+
+# The stand-in wp: the answers wp-cli's docs give, for the commands pull and test use.
+cat >"$tmp/bin/wp" <<'WP'
+#!/bin/bash
+args=" $* "
+case "$args" in
+  *" --info "*) echo 'OS: Linux' ;;
+  *" cli version "*) echo 'WP-CLI 2.11.0' ;;
+  *" core version "*) echo '6.8.3' ;;
+  *" option get home "*) echo "${WP_HOME_URL:-https://www.example.com}" ;;
+  *" db size "*) echo '52428800' ;;
+  *" db export "*)
+    [ -n "${WP_EXPORT_FAILS:-}" ] && exit 1
+    for a in "$@"; do case $a in /*.sql) printf 'CREATE TABLE wp_posts (id int);\n' >"$a" ;; esac; done
+    [ -n "${WP_EXPORT_HANGS:-}" ] && sleep 4
+    exit 0 ;;
+  *" config get table_prefix "*) echo 'wp_' ;;
+  *" config list "*) echo '[{"name":"DB_NAME"},{"name":"table_prefix"}]' ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+WP
+chmod +x "$tmp/bin/wp"
+export PATH=$tmp/bin:$PATH
+
+# Single-quoted for the login shell, as kinsta.ts quotes it.
+quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+send() { sh -c "bash -c $(quote "$(cat "$here/$1")") kamaji-$1 $(quote "$2")"; }
+left() { find "$HOME" -maxdepth 1 -name '.kamaji-pull.*' | wc -l; }
+fail=0
+no() { echo "FAIL: $*"; fail=1; }
+
+line=$(send test example.com)
+echo "test: $line"
+[[ $line == '{"format":1,"ok":true,"path":"'"$HOME"'/public","wordpress":"6.8.3","home":"https://www.example.com","wpContentBytes":'*',"databaseBytes":52428800,"wpCli":"2.11.0"}' ]] ||
+  no 'the test line'
+
+send pull example.com >"$out/pull.tar" 2>"$tmp/err" || no "the pull failed: $(cat "$tmp/err")"
+tar --list -f "$out/pull.tar" >"$tmp/list"
+for f in wp-content/plugins/wordfence/wordfence.php wp-content/uploads/2026/a.jpg .htaccess database.sql; do
+  grep -qxF "$f" "$tmp/list" || no "missing: $f"
+done
+for f in wp-config.php wp-load.php wp-content/wflogs/ wp-content/cache/ wp-content/upgrade/ \
+  wp-content/updraft/ wp-content/backups-old/ wp-content/ai1wm-backups/ wp-content/debug.log; do
+  ! grep -qxF "$f" "$tmp/list" || no "not left out: $f"
+done
+[ "$(tail -n 1 "$tmp/list")" = manifest.json ] || no 'manifest.json is not last'
+[ "$(left)" -eq 0 ] || no 'a work folder was left after a pull'
+
+WP_HOME_URL=https://other.example.org send pull example.com >/dev/null 2>"$tmp/err" && no 'another site’s login was pulled'
+grep -q 'this SSH login is another site' "$tmp/err" || no "another site: $(cat "$tmp/err")"
+WP_EXPORT_FAILS=1 send pull example.com >/dev/null 2>"$tmp/err" && no 'a failed export still pulled'
+grep -q 'the database export failed' "$tmp/err" || no "failed export: $(cat "$tmp/err")"
+[ "$(left)" -eq 0 ] || no 'a work folder was left after a failed export'
+send pull 'example.com;id' >/dev/null 2>"$tmp/err" && no 'a bad site name was taken'
+
+# The connection dropping mid-pull: sshd sends HUP to the shell. bash runs its trap once the
+# command it's waiting on (here the export) finishes, and the dump still goes.
+WP_EXPORT_HANGS=1 send pull example.com >/dev/null 2>&1 &
+sleep 2
+[ "$(left)" -eq 1 ] || no 'no work folder while the export ran'
+pkill -HUP -f 'kamaji-pull example.com' || true
+wait || true
+sleep 4
+[ "$(left)" -eq 0 ] || no 'a work folder was left after a hang-up'
+
+[ "$fail" -eq 0 ] && echo "ok: test line, $(wc -l <"$tmp/list") entries, manifest last, exclusions, no work folder left"
+exit "$fail"

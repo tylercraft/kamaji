@@ -494,6 +494,9 @@ async function backupEvidence(
       );
       return { ...made, kind: 'snapshot' };
     }
+    // Kinsta has no export of Kamaji's: a snapshot under a day old is the backup, and without
+    // whole-site backups on there's none (Configure doesn't allow that choice).
+    if (site.hostKind === 'kinsta') return recentSnapshot(deps.db, site.id);
     const exported = await deps.backup(site);
     return {
       ...exported,
@@ -504,6 +507,31 @@ async function backupEvidence(
     };
   }
   return { ok: false, words: 'Tyler’s confirmation is missing for this run' };
+}
+
+/** A Kinsta site's latest good snapshot, standing in as the backup when it's under a day old. */
+function recentSnapshot(db: Db, siteId: string): BackupResult {
+  const row = eligible(db, siteId)
+    ? db
+        .prepare(
+          `SELECT snapshot_id, started_at, bytes FROM site_snapshots
+           WHERE site_id = ? AND ok = 1 AND forgotten_at IS NULL
+           ORDER BY started_at DESC, id DESC LIMIT 1`,
+        )
+        .get(siteId)
+    : undefined;
+  if (!row)
+    return {
+      ok: false,
+      kind: 'snapshot',
+      words: `${BEFORE_UPDATE.snapshot} failed: whole-site backups aren’t on for this Kinsta site`,
+    };
+  return {
+    ok: true,
+    kind: 'snapshot',
+    words: `${BEFORE_UPDATE.snapshot}: the latest snapshot, ${String(row.snapshot_id).slice(0, 8)}, from ${new Date(Number(row.started_at)).toISOString()}, under a day old`,
+    bytes: Number(row.bytes),
+  };
 }
 
 /** A report, stored as the app stores one: the installed versions after an update. */

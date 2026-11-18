@@ -82,11 +82,16 @@ const streamOf = (data: Buffer, code = 0) => ({
 });
 
 describe('whole-site backups in a site’s Backups', () => {
-  it('shows them only on craftish sites, and the latest export to download', async () => {
+  it('shows them only where they can pull from (craftish, Kinsta), and the latest export to download', async () => {
     const { db, backups } = app();
     site(db, 'one.test');
+    site(db, 'wpengine.test', 'wpengine', 'off');
     site(db, 'kinsta.test', 'kinsta', 'off');
-    expect((await backups('kinsta.test')).wholeSite).toBeNull();
+    expect((await backups('wpengine.test')).wholeSite).toBeNull();
+    expect((await backups('kinsta.test')).wholeSite).toMatchObject({
+      schedule: 'off',
+      active: false,
+    });
     const one = await backups('one.test');
     expect(one.wholeSite).toMatchObject({ schedule: 'weekly', own: true, active: true });
     expect(one.download).toBeNull();

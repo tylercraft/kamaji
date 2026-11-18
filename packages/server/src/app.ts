@@ -9,6 +9,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import {
   ApproveRequest,
   ConfigureSiteRequest,
+  KinstaAccessInput,
   DetectPlatformRequest,
   type DetectPlatformResponse,
   WholeSiteRequest,
@@ -30,6 +31,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { openDownload, type FetchExport } from './backups/download.js';
 import { latestExport, recordEvidence, siteBackups } from './backups/evidence.js';
+import { okSize, requestTest, saveAccess } from './sitebackups/kinsta.js';
 import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
@@ -156,8 +158,10 @@ const PASSKEY_FREE = new Set([
 // Refetch icon: the plain GETs of the home page and its icon, as when the site was added.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
 // Domain check: the daily RDAP read of the site's renewal date, now.
+// Kinsta's Test connection: fixed read-only commands over SSH (kinsta-pull/test). Saving the
+// access and okaying a size take a passkey.
 const PASSKEY_FREE_SITE_STEP =
-  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check)$/;
+  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test)$/;
 // Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
 const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
@@ -554,6 +558,27 @@ export function createApp({
     startBackups();
     return c.json({ queued: true }, 202);
   });
+  // Kinsta's SSH access for whole-site backups (sitebackups/kinsta.ts): saved here; tested, and
+  // pulled, by the backups process, which holds the key.
+  app.post('/api/sites/:id/kinsta', async (c) => {
+    const body = await readJson(c, KinstaAccessInput);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = saveAccess(db, c.req.param('id'), body, login, now());
+    if (result === 'not-kinsta') return c.json({ error: 'not_found' }, 404);
+    return c.json({ ok: true });
+  });
+  app.post('/api/sites/:id/kinsta/test', (c) => {
+    const result = requestTest(db, c.req.param('id'), now());
+    if (result === 'no-access') return c.json({ error: 'not_found' }, 404);
+    if (result === 'already') return c.json({ error: 'already_requested' }, 409);
+    startBackups();
+    return c.json({ queued: true }, 202);
+  });
+  app.post('/api/sites/:id/kinsta/size-ok', (c) => {
+    const result = okSize(db, c.req.param('id'), login, now());
+    if (result === 'not-needed') return c.json({ error: 'not_needed' }, 409);
+    return c.json({ ok: true });
+  });
   // Refresh now: a report with WordPress's own update checks first (the plugin allows one per 10 minutes).
   app.post('/api/sites/:id/report', async (c) => {
     if (!care?.keys) return c.json({ error: 'not_set_up' }, 409);
@@ -633,6 +658,9 @@ export function createApp({
     if (result === 'no-consent') return c.json({ error: 'no_consent' }, 400);
     if (result === 'connected') return c.json({ error: 'connected' }, 409);
     if (result === 'bad-zone') return c.json({ error: 'bad_zone' }, 400);
+    if (result === 'kinsta-needs-backups') return c.json({ error: 'kinsta_needs_backups' }, 400);
+    if (typeof result === 'object' && 'kinsta' in result)
+      return c.json({ error: 'kinsta_not_ready', problem: result.kinsta }, 409);
     if (typeof result === 'object') return c.json({ error: 'bad_page', page: result.refused }, 400);
     return c.json({ ok: true });
   });

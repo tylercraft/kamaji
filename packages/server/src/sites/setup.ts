@@ -3,6 +3,7 @@
 // from the first step so it can be resumed. Kamaji never installs the plugin: it offers the zip,
 // and the handshake is its first signed request.
 import { iconStatus } from '../checks/icons.js';
+import { kinstaBlocked, kinstaView } from '../sitebackups/kinsta.js';
 import {
   CareHello,
   type ConfigureSiteRequest,
@@ -160,8 +161,10 @@ export async function handshake(
 
 /**
  * Step 3. Finishing grants no update permission: every update is still approved. Kamaji's own
- * backup is the database export on craftish, and whole-site backups pull from craftish too, so
- * only a site hosted there can have either. Turning whole-site backups on for a client's site
+ * backup before an update is the database export on craftish, or on Kinsta a whole-site snapshot
+ * (Tyler, 2026-11-18), so a Kinsta site needs whole-site backups on to choose it. Whole-site
+ * backups pull from craftish, or from Kinsta over SSH once Test connection has worked there and,
+ * over 20 GB, Tyler has okayed the size (sitebackups/kinsta.ts). Turning whole-site backups on for a client's site
  * needs the client's agreement, ticked here and recorded with who ticked it and when (calcifer
  * explore/kamaji.md, "Backups (TY-166)"); turning them off clears it, so it's asked again.
  */
@@ -175,6 +178,8 @@ export function configureSite(
   | 'saved'
   | 'not-found'
   | 'not-craftish'
+  | 'kinsta-needs-backups'
+  | { kinsta: string }
   | 'no-consent'
   | 'connected'
   | 'bad-zone'
@@ -187,11 +192,15 @@ export function configureSite(
   // A connected site is WordPress until it's disconnected (Remove asks the plugin to forget it).
   if (!wordpress && row.mode === 'connected') return 'connected';
   const craftish = row.host_kind === 'craftish';
-  if (wordpress && request.backupExpectation === 'kamaji' && !craftish) return 'not-craftish';
+  const kinsta = row.host_kind === 'kinsta';
   const own = request.own ?? Number(row.own) === 1;
   const before = String(row.site_backup_schedule) as SiteBackupSchedule;
   // A static site or an app has no backups to expect, from Kamaji or anyone.
   const schedule = wordpress ? (request.siteBackups ?? before) : 'off';
+  if (wordpress && request.backupExpectation === 'kamaji' && !craftish) {
+    if (!kinsta) return 'not-craftish';
+    if (schedule === 'off') return 'kinsta-needs-backups';
+  }
   const backupExpectation = wordpress ? request.backupExpectation : null;
   // Pages to check go with updates, so only WordPress keeps any.
   let pages = readPages(String(row.important_pages ?? '[]'), String(row.url));
@@ -206,7 +215,10 @@ export function configureSite(
   if (!validZone(timeZone)) return 'bad-zone';
   const hadConsent = row.site_backup_consent_at !== null;
   if (schedule !== 'off') {
-    if (!craftish) return 'not-craftish';
+    if (!craftish && !kinsta) return 'not-craftish';
+    // Turning them on waits for a good test (and the size okay); once on, they stay saveable.
+    const waiting = kinsta && before === 'off' ? kinstaBlocked(db, id) : null;
+    if (waiting) return { kinsta: waiting };
     if (!own && !hadConsent && !request.clientAgreed) return 'no-consent';
   }
   const consent =
@@ -296,6 +308,7 @@ export function siteDetail(
     },
     icon: iconStatus(db, id),
     timeZone: String(row.time_zone),
+    kinsta: row.host_kind === 'kinsta' ? kinstaView(db, id) : null,
   };
 }
 

@@ -3,9 +3,10 @@
 // export alone, as before, since a snapshot that recent already holds the files. A site without
 // whole-site backups keeps the export.
 //
-// The rule is the host's as much as ours: when Kamaji takes Kinsta's backups itself (its API, not
-// built yet: Kinsta's own daily backups are recorded as the host's), the same call decides
-// whether that site needs a fresh one before an update, from the time of Kinsta's latest.
+// Kinsta sites (2026-11-18) follow the same rule with their own whole-site backups, pulled over
+// SSH (sitebackups/kinsta.ts), not Kinsta's API: a snapshot when the latest is over a day old,
+// otherwise that latest snapshot, since Kinsta has no export of Kamaji's to fall back on
+// (updater/run.ts).
 
 export const FRESH_FOR = 24 * 60 * 60_000;
 

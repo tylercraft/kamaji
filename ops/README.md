@@ -392,7 +392,7 @@ Restic snapshots of a craftish site's files and a fresh database, pulled over SS
 
 - **Repository:** `/Users/tylercraft/kamaji-backups/restic`, mode 700, encrypted. Arq takes it off-site as ciphertext. Restore checks unpack into `/Users/tylercraft/kamaji-restore` (mode 700, emptied after each check), outside what Arq copies.
 - **Secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read by this process only. Names only: `RESTIC_PASSWORD`. Tyler keeps a copy in his password manager: without it the backups can't be read.
-- **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
+- **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_KINSTA_SSH_KEY` (default `~/.ssh/kamaji-kinsta`) and `KAMAJI_KINSTA_KNOWN_HOSTS` (default `~/.ssh/kamaji-kinsta.known_hosts`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
 - **Log:** `~/Library/Logs/kamaji-backups.log`: one line per site, never restic's own output. Results go to Activity and the site's Backups panel. A failed backup or restore check goes to Discord at once; a backup 2 days overdue goes in the morning digest.
 
 Tyler runs these one at a time, in order.
@@ -648,6 +648,66 @@ Once, after the deploy that brings the update time (migration 22). Until the Lau
 ```
 
 5. In Kamaji: Settings → Update time, if not Tuesday 19:00. Then each site with whole-site backups → Configure → its visitors' time zone, for any not in NZ. Its Backups panel shows the next backup night.
+
+### Kinsta sites
+
+Whole-site backups of a Kinsta site pull over SSH with a key of Kamaji's made just for Kinsta (`ops/backups-plan.md`, "Kinsta"). Once, for the key:
+
+On the mini:
+
+1. Make the Kinsta key (no passphrase: the process can't type one). It stays in `~/.ssh` on the mini and never goes in the repo or Kamaji's database:
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-kinsta@molcajete -f /Users/tylercraft/.ssh/kamaji-kinsta
+```
+
+2. Make Kamaji's own known_hosts for Kinsta. Each host's key is kept from the first Test connection and checked from then on:
+
+```
+/usr/bin/install -m 600 /dev/null /Users/tylercraft/.ssh/kamaji-kinsta.known_hosts
+```
+
+3. Show the public key, to paste into MyKinsta:
+
+```
+/bin/cat /Users/tylercraft/.ssh/kamaji-kinsta.pub
+```
+
+In MyKinsta:
+
+4. Your name (top right) → User settings → SSH keys → Add SSH key. Paste the key and name it "Kamaji (molcajete)". It works for every site your MyKinsta user can reach, so on Pat's company it covers Photogravure and Briardale.
+
+5. For each site: Sites → the site → Info → SFTP/SSH. Note the Host, Port and Username. If the site limits SSH to allowed IP addresses, add molcajete's public address there.
+
+On the mini:
+
+6. Deploy Kamaji. Migration 25 adds the Kinsta access table:
+
+```
+/Users/tylercraft/kamaji/ops/deploy.sh
+```
+
+Then, for each site, in Kamaji:
+
+7. The site → Configure → Backups → Kinsta SSH access: paste the host, port and username, then Save access (passkey).
+
+8. Test connection. Within a minute or so it should say Connected, with WordPress at `/www/<something>/public` and the sizes of wp-content and the database. Over 20 GB, an Okay button shows the size; okay it only if you mean to keep that much.
+
+9. Still in Configure: Whole-site backups weekly, the client-agreed tick (Pat agreed on 2026-11-18), its visitors' time zone, and Before each update: "Kamaji takes a whole-site backup first". Save changes.
+
+10. Backups → Back up site now. Expect a snapshot read back whole, then a restore check.
+
+If Test connection says SSH couldn't connect or log in, check the host, port and user against MyKinsta, that the key is on your profile, and the allowed IP addresses. If Kinsta has changed a host's key, the stored one no longer matches and SSH refuses the connection. To see what's stored, with the host and port from MyKinsta:
+
+```
+/usr/bin/ssh-keygen -F '[HOST]:PORT' -f /Users/tylercraft/.ssh/kamaji-kinsta.known_hosts
+```
+
+Remove it only once you know why it changed (Kinsta moved the site, say), then Test connection again:
+
+```
+/usr/bin/ssh-keygen -R '[HOST]:PORT' -f /Users/tylercraft/.ssh/kamaji-kinsta.known_hosts
+```
 
 ## Passkeys
 

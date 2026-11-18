@@ -1,4 +1,4 @@
-// A craftish site's whole-site backups, inside its Backups card: the latest attempt, the last
+// A craftish or Kinsta site’s whole-site backups, inside its Backups card: the latest attempt, the last
 // good backup, the latest restore check and the next run, then asking for either now. Schedule,
 // consent, retention, storage and the snapshot list are one click down. The app never runs
 // restic; it asks the backups process.

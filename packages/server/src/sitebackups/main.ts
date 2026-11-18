@@ -1,6 +1,6 @@
 // The backups process (ops/backups-plan.md, ops/README.md "Whole-site backups"): hourly from
 // its LaunchAgent, dev.craftish.kamaji-backups, and when the Backups panel asks. It holds the pull
-// key and the restic password, which the app never does: its Doppler config is `backup`, scoped
+// key, the Kinsta key and the restic password, which the app never does: its Doppler config is `backup`, scoped
 // to ~/.kamaji-backups. One at a time: a second start while one runs exits at once.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { openDb } from '../db.js';
 import { backupConfig } from '../updater/backup.js';
 import { releaseLock, takeLock } from '../updater/lock.js';
 import { realExec } from './exec.js';
+import { kinstaCommand, readTest } from './kinsta.js';
 import { restoreCheck } from './restore.js';
 import { realRestic } from './restic.js';
 import { runBackups } from './run.js';
@@ -48,7 +49,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 }
 
 const pullKey = env.KAMAJI_PULL_SSH_KEY ?? `${homedir()}/.ssh/kamaji-pull`;
-const pullCommand = (site: string) => [
+const craftishPull = (site: string) => [
   '/usr/bin/ssh',
   '-i',
   pullKey,
@@ -66,6 +67,12 @@ const pullCommand = (site: string) => [
   `kamaji-pull@${craftish.host}`,
   site,
 ];
+// Kinsta's own key, made on the mini for Kinsta alone (ops/README.md, "Kinsta"), and Kamaji's own
+// known_hosts for Kinsta's hosts.
+const kinsta = {
+  key: env.KAMAJI_KINSTA_SSH_KEY ?? `${homedir()}/.ssh/kamaji-kinsta`,
+  knownHosts: env.KAMAJI_KINSTA_KNOWN_HOSTS ?? `${homedir()}/.ssh/kamaji-kinsta.known_hosts`,
+};
 const restic = realRestic(env.KAMAJI_RESTIC ?? '/opt/homebrew/bin/restic');
 
 try {
@@ -73,7 +80,16 @@ try {
   await runBackups({
     db,
     restic,
-    pullCommand,
+    pullCommand: (site, host) =>
+      host === 'kinsta' ? kinstaCommand(db, kinsta, site, 'pull') : craftishPull(site),
+    kinstaTest: async (site) => {
+      const command = kinstaCommand(db, kinsta, site, 'test');
+      if (!command) return { ok: false, problem: 'its Kinsta SSH access isn’t set' };
+      const [bin, ...args] = command;
+      // du over a big wp-content takes a while.
+      const ran = await realExec(controller.signal)(bin!, args, { timeoutMs: 5 * 60_000 });
+      return readTest(site, ran);
+    },
     restore: (site, snapshotId) =>
       restoreCheck(
         {

@@ -1,11 +1,12 @@
 // The backups process's work (ops/backups-plan.md, "The process and the schedule"), hourly at :15:
-// the Backups panel's requests, then each site that's due by the update time (schedule.ts), each
+// Kinsta's connection tests and the Backups panel's requests, then each site that's due by the update time (schedule.ts), each
 // restore-checked once it's backed up; then, in the 03:15 run only, the 30-day fallback restore
 // check and the repository's upkeep; then its size. One site at a time. Everything it does is
 // recorded in site_snapshots, restore_checks and Activity; failures say why in plain words.
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
-import { ELIGIBLE, eligible } from './eligible.js';
+import { ELIGIBLE, eligible, pullHost, type PullHost } from './eligible.js';
+import { kinstaBlocked, recordTest, testsWaiting, type TestResult } from './kinsta.js';
 import { backupFailed, backupWorked, restoreFailed, restoreWorked } from './alerts.js';
 import { readState, writeState } from '../state.js';
 import type { RestoreResult } from './restore.js';
@@ -31,8 +32,13 @@ export interface BackupsDeps {
     site: { id: string; expectedText: string | null },
     snapshotId: string,
   ) => Promise<RestoreResult>;
-  /** The ssh command that streams a site's pull from craftish. */
-  pullCommand: (siteId: string) => string[];
+  /**
+   * The ssh command that streams a site's pull: craftish's forced command, or Kinsta's script
+   * (kinsta.ts). Null when a Kinsta site has no access saved.
+   */
+  pullCommand: (siteId: string, host: PullHost) => string[] | null;
+  /** Configure's "Test connection" on a Kinsta site, over SSH with the backups process's key. */
+  kinstaTest: (siteId: string) => Promise<TestResult>;
   now: () => number;
   log: (message: string) => void;
   signal?: AbortSignal;
@@ -151,7 +157,16 @@ export async function backUpSite(
     return fields.ok;
   };
 
-  const made = await restic.backup(siteId, deps.pullCommand(siteId), deps.signal);
+  const host = pullHost(db, siteId);
+  if (!host) return record({ ok: false, problem: 'its host has no whole-site backups' });
+  // A Kinsta site's first pull waits on a good test and, over 20 GB, Tyler's okay (kinsta.ts).
+  if (host === 'kinsta' && latestSnapshot(db, siteId) === null) {
+    const waiting = kinstaBlocked(db, siteId);
+    if (waiting) return record({ ok: false, problem: `${waiting}, under Configure → Backups` });
+  }
+  const command = deps.pullCommand(siteId, host);
+  if (!command) return record({ ok: false, problem: 'its Kinsta SSH access isn’t set' });
+  const made = await restic.backup(siteId, command, deps.signal, host);
   if (!made.ok) return record(made);
   // Read the snapshot back, as stored, before it counts.
   const dumped = await restic.dump(made.snapshotId, siteId, readTar, deps.signal);
@@ -253,7 +268,7 @@ export interface Request {
 export function requestsWaiting(db: Db): boolean {
   return (
     db.prepare('SELECT 1 FROM site_backup_requests WHERE taken_at IS NULL LIMIT 1').get() !==
-    undefined
+      undefined || testsWaiting(db).length > 0
   );
 }
 
@@ -305,6 +320,12 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
     // the updater asked for isn't. The checks wait until every backup taken here is done, so an
     // update waiting on its own backup isn't held behind one.
     const toCheck: { siteId: string; snapshotId: string | null }[] = [];
+    // Kinsta's "Test connection": quick, and Tyler is watching for it.
+    for (const siteId of testsWaiting(db)) {
+      if (stopped()) return;
+      recordTest(db, siteId, await deps.kinstaTest(siteId), now());
+      deps.log(`backups: ${siteId} Kinsta connection tested`);
+    }
     for (const request of takeRequests(db, now())) {
       if (stopped()) return;
       if (!eligible(db, request.siteId)) continue;
