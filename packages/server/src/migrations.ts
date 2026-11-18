@@ -654,4 +654,13 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 26,
+    name: 'restore check notes',
+    // What a passed restore check did differently, for the site page (Tyler, 2026-11-19): the
+    // major.minor WordPress image it ran on when Docker Hub didn't have the release's own yet.
+    sql: `
+      ALTER TABLE restore_checks ADD COLUMN note TEXT;
+    `,
+  },
 ];

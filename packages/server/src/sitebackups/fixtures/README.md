@@ -4,3 +4,7 @@
 - **`backup.jsonl` is still written from restic's docs,** not captured: "Scripting" (`restic.readthedocs.io/en/stable/075_scripting.html`, read 2026-11-13) says `backup --json` prints `status` lines and one `summary` line. Its values are made up. The live backup on 2026-11-13 parsed its real summary, so the shape holds; replace it with a captured one when there's a reason to run `restic backup --json` by hand.
 
 Kamaji's rule is to parse captured output, never guessed output: when restic is upgraded and its answers change, capture them again and keep the tests passing by fixing the parser, not the fixtures.
+
+# Docker fixtures
+
+- **`docker-run-image-not-found.txt` is real output,** what `docker run` said on stderr on molcajete on 2026-11-18 when briardalewealth.com's restore check asked for `wordpress:7.1.5-apache`, a tag Docker Hub didn't have yet. Read back from that check's `restore_checks.problem_detail`. The restore check falls back to the major.minor tag on it (`restore.ts`, `imageMissing`).

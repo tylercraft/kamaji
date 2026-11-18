@@ -213,6 +213,7 @@ const whole = (over: Partial<WholeSiteBackups> = {}): WholeSiteBackups => ({
       failedStep: null,
       problem: null,
       detail: null,
+      note: null,
     },
   ],
   pending: { backup: null, restore: null },
@@ -283,6 +284,7 @@ describe('the backup lines', () => {
             failedStep: null,
             problem: null,
             detail: null,
+            note: null,
           },
         ],
       }),
@@ -290,6 +292,29 @@ describe('the backup lines', () => {
     expect(states(r)).toMatchObject({
       'Whole-site backup': 'Overdue',
       'Restore check': 'Passed, out of date',
+    });
+  });
+
+  it('says which image a passed check fell back to', () => {
+    const note = 'checked on wordpress:7.1-apache (7.1.5 not on Docker Hub yet)';
+    const r = response({
+      wholeSite: whole({
+        restoreChecks: [
+          {
+            startedAt: ago(DAY),
+            seconds: 90,
+            ok: true,
+            failedStep: null,
+            problem: null,
+            detail: null,
+            note,
+          },
+        ],
+      }),
+    });
+    expect(backups(r, NOW).find((l) => l.label === 'Restore check')).toMatchObject({
+      state: 'Passed',
+      detail: `Restored to an offline test copy that served its home page, in 90 s; ${note}.`,
     });
   });
 

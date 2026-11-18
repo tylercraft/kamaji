@@ -221,8 +221,8 @@ export async function checkRestore(
     : { ok: false, step: 'restore', problem: 'there’s no snapshot to restore yet' };
   const finishedAt = now();
   db.prepare(
-    `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok, failed_step, problem, problem_detail)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO restore_checks (site_id, snapshot_id, started_at, finished_at, ok, failed_step, problem, problem_detail, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     siteId,
     snapshotId,
@@ -233,6 +233,7 @@ export async function checkRestore(
     result.ok ? null : result.problem,
     // Only on the check's own row and the Backups panel: never in Activity or Discord.
     result.ok ? null : (result.detail ?? null),
+    result.ok ? (result.note ?? null) : null,
   );
   const seconds = Math.round((finishedAt - startedAt) / 1000);
   const name = siteName(db, siteId);

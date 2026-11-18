@@ -177,6 +177,7 @@ describe('Needs a look', () => {
             failedStep: 'wordpress',
             problem: 'x',
             detail: null,
+            note: null,
           },
         ],
         pending: { backup: null, restore: null },

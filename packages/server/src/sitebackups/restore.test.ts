@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { realExec } from './exec.js';
 import { fakeRestic } from './fakeRestic.js';
-import { restoreCheck, type Exec, type RestoreDeps } from './restore.js';
+import { fallbackVersion, restoreCheck, type Exec, type RestoreDeps } from './restore.js';
 import { pullOf, SITE } from './testTar.js';
 
 /** Docker as a list of what it was asked, answering from `answer`; tar runs for real. */
@@ -198,5 +198,88 @@ describe('waiting for MariaDB', () => {
     expect(asked.filter(healthcheck)).toHaveLength(60);
     expect(asked.at(-1)?.slice(0, 2)).toEqual(['network', 'rm']);
     expect(readdirSync(workDir)).toEqual([]);
+  });
+});
+
+describe('a WordPress release Docker Hub doesn’t have yet', () => {
+  // What docker run said for briardalewealth.com's 7.1.5, as the test tar's 6.8.3.
+  const missing = (version: string) =>
+    readFileSync(
+      join(import.meta.dirname, 'fixtures', 'docker-run-image-not-found.txt'),
+      'utf8',
+    ).replaceAll('7.1.5', version);
+  const runs = (asked: string[][]) =>
+    asked.filter((a) => a[0] === 'run' && a.at(-1)?.startsWith('wordpress:')).map((a) => a.at(-1));
+  const answer =
+    (wordpress: (image: string) => { code: number; stderr?: string }) => (args: string[]) => {
+      if (args[0] === 'run' && args.at(-1)?.startsWith('wordpress:'))
+        return wordpress(args.at(-1)!);
+      return args.includes('curl') ? { code: 0, stdout: '<h1>Hello</h1>\n200' } : { code: 0 };
+    };
+
+  it('uses the release’s own image when there is one', async () => {
+    const { deps, asked } = setup(
+      pullOf(),
+      answer(() => ({ code: 0 })),
+    );
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toEqual({ ok: true });
+    expect(runs(asked)).toEqual(['wordpress:6.8.3-apache']);
+  });
+
+  it('falls back to the major.minor image, says so, and cleans up', async () => {
+    const { deps, asked, workDir } = setup(
+      pullOf(),
+      answer((image) =>
+        image === 'wordpress:6.8.3-apache' ? { code: 125, stderr: missing('6.8.3') } : { code: 0 },
+      ),
+    );
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toEqual({
+      ok: true,
+      note: 'checked on wordpress:6.8-apache (6.8.3 not on Docker Hub yet)',
+    });
+    expect(runs(asked)).toEqual(['wordpress:6.8.3-apache', 'wordpress:6.8-apache']);
+    const first = asked.findIndex((a) => a.at(-1) === 'wordpress:6.8.3-apache');
+    expect(asked[first + 1]).toEqual(['rm', '--force', expect.stringMatching(/-wp$/)]);
+    expect(asked.at(-1)?.slice(0, 2)).toEqual(['network', 'rm']);
+    expect(readdirSync(workDir)).toEqual([]);
+  });
+
+  it('fails at WordPress, naming both images, when the fallback is missing too', async () => {
+    const { deps, asked } = setup(
+      pullOf(),
+      answer((image) => ({ code: 125, stderr: missing(image.slice(10, -7)) })),
+    );
+    const result = await restoreCheck(deps, site, 'a'.repeat(64));
+    expect(result).toMatchObject({
+      ok: false,
+      step: 'wordpress',
+      problem:
+        'wordpress:6.8.3-apache isn’t on Docker Hub, and wordpress:6.8-apache didn’t start either',
+    });
+    expect((result as { detail: string }).detail).toContain('wordpress:6.8-apache: not found');
+    expect(runs(asked)).toEqual(['wordpress:6.8.3-apache', 'wordpress:6.8-apache']);
+    expect(asked.at(-1)?.slice(0, 2)).toEqual(['network', 'rm']);
+  });
+
+  it('doesn’t fall back when the image is there and the container didn’t start', async () => {
+    const conflict =
+      'docker: Error response from daemon: Conflict. The container name "/kamaji-restore-1-wp" is already in use.';
+    const { deps, asked } = setup(
+      pullOf(),
+      answer(() => ({ code: 125, stderr: conflict })),
+    );
+    expect(await restoreCheck(deps, site, 'a'.repeat(64))).toMatchObject({
+      ok: false,
+      step: 'wordpress',
+      problem: 'wordpress:6.8.3-apache didn’t start',
+    });
+    expect(runs(asked)).toEqual(['wordpress:6.8.3-apache']);
+  });
+
+  it('falls back only from a three-part version', () => {
+    expect(fallbackVersion('7.1.5')).toBe('7.1');
+    expect(fallbackVersion('7.1')).toBeNull();
+    expect(fallbackVersion('7.1-RC1')).toBeNull();
+    expect(fallbackVersion('7.1.5-beta2')).toBeNull();
   });
 });

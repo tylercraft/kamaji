@@ -1237,6 +1237,8 @@ export const RestoreCheck = z.object({
   problem: z.string().nullable(),
   /** A failed command's last lines, scrubbed of anything like a password or token. */
   detail: z.string().nullable(),
+  /** What a passed check did differently: "checked on wordpress:7.1-apache (7.1.5 not on …)". */
+  note: z.string().nullable().default(null),
 });
 export type RestoreCheck = z.infer<typeof RestoreCheck>;
 

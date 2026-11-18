@@ -82,6 +82,7 @@ On the mini:
 1. `restic restore` the site's latest snapshot into a temporary folder under `~/kamaji-restore`, mode 700: outside `~/kamaji-backups`, so Arq never copies a test copy's plain files.
 2. Unpack it and check `database.sql` against the manifest.
 3. In Docker Desktop, which the mini already runs, start a throwaway MariaDB and the `wordpress` image matching the manifest's version. Both go on an `--internal` network with no internet, so the copy can't send email, call payment APIs or run cron against the world.
+   When Docker Hub doesn't have that release's image yet (it lags a WordPress release by a few days), and `docker run` says the image wasn't found, the check tries the major.minor image once (`wordpress:7.1-apache` for 7.1.5). A pass on it says so on the site page: "checked on wordpress:7.1-apache (7.1.5 not on Docker Hub yet)". If that image is missing too, it fails at "wordpress", naming both.
 4. Import `database.sql`, and start WordPress with the restored `wp-content`, the manifest's table prefix, fresh salts, `WP_HOME` set to the test address and `DISABLE_WP_CRON`.
 5. Fetch the home page inside the network. It passes on a 200 containing the site's expected text, from its own home page check.
 6. Record pass or fail, the step that failed, and how long it took. explore: "restores are the product", and timed.

@@ -235,6 +235,17 @@ describe('a night’s run', () => {
     ]);
   });
 
+  it('keeps a passed check’s note, for the site page', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    snapshot(db, 'one.test', T - DAY);
+    const { d, result } = deps(db);
+    const note = 'checked on wordpress:7.1-apache (7.1.5 not on Docker Hub yet)';
+    result.value = { ok: true, note };
+    await runBackups(d);
+    expect(rows(db, 'SELECT ok, note FROM restore_checks')).toEqual([{ ok: 1, note }]);
+  });
+
   it('keeps a failed import’s last lines with the check, never in Activity', async () => {
     const db = testDb();
     site(db, 'one.test');
