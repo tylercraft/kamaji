@@ -897,9 +897,21 @@ Once, on the mini, after the deploy that brings it (migration 28):
 
 5. In Kamaji, on F&L accounting's page (tailnet only), then aleyahoerlein.com's: Screenshots → Take screenshots now. Each shows its shots within a minute or so. Look at them together with Calcifer before the first run that takes them.
 
+## Rules
+
+Rules (`ops/rules-plan.md`): standing approvals for routine updates, written and signed on the Rules page. A rule names its sites one by one, each with the address and backup it had when signed, and says which plugins or themes, what size of change (patch, minor, or security fixes; never major, never core, never Craftish Care), how many days after wordpress.org released a version, and how many updates and sites at most. Saving signs it with the passkey every time (the 10-minute window doesn't cover it); editing or resuming signs a new version, and only the latest counts.
+
+At each rule's update time (the one Kamaji had when it was signed), right after Recheck all, the app sets out the rule's run from the queue and "Ready to update" counts it (Discord gets counts, never the rule's name). The run waits an hour, shown at the top of Updates with **Pause this run** (no passkey; its updates go back to the queue). Then the updater runs it as any run, one site first, after checking it against the signed rule itself (`packages/server/src/rules/check.ts`): the proof; the latest version, not paused or deleted; the time; each site and its address and backup as signed, never the site's row; and each update against a report it asks the site for and wordpress.org's release date. Kamaji's own whole-site backup counts only when this update's snapshot passed its restore check; a database export alone doesn't, and a client's or Tyler's word never does.
+
+A held site, a run the updater refuses, screenshots that changed, or a rollback of a rule's run pauses the rule until it's signed again; a pause Kamaji makes opens an urgent issue. A rule's run never carries on: what it didn't run goes back to the queue for Tyler.
+
+**Outbound:** the app and the updater ask `api.wordpress.org` when a plugin or theme's latest version was released, with only its slug, as the inventory's closed-plugin check does. The app keeps answers an hour. No new secrets.
+
+**Once, after the deploy that brings it (migration 29):** on the Rules page, check each site under "Sites no rule can name" is there for the reason you expect, then make the first rule (Tyler, 2026-11-19): patch and minor plugin updates, WooCommerce left out, three days (none for security fixes), on accounting.firstandlastrecords.com, accounting.prettyearpublishing.com, firstandlastrecords.com and yogarecords.com. Before the update time, look at "What it would take at its next run" with Calcifer, and turn off WordPress's own auto-updates for anything the rule lists as overlapping.
+
 ## Passkeys
 
-TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake, refreshing a report and Take screenshots now don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
+TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, saving or deleting a rule, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake, refreshing a report, Take screenshots now, and pausing a rule or a rule's run don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
 
 The passkeys Kamaji accepts are in `/etc/kamaji/passkeys`, one JSON line each, a file only root can change. Kamaji and every agent on the mini run as `tylercraft`, so a list kept anywhere `tylercraft` can write, Kamaji's database included, an agent could add its own key to. Kamaji refuses the file if it or `/etc/kamaji` isn't root's and writable by root only. It's read on every check, so a change takes effect at once, without a restart.
 

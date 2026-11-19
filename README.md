@@ -18,6 +18,8 @@ The decisions live in calcifer, not here: `explore/kamaji.md` (the source of tru
 | `plugin`          | `craftish-care`, the WordPress plugin (`docs/protocol.md`), and its request tests   |
 | `dev`             | The local DDEV WordPress the plugin is built against (`dev/README.md`)              |
 
+Rules, standing approvals Tyler signs, are in `packages/server/src/rules/` (`ops/rules-plan.md`).
+
 Still to come: `packages/mcp` (M5).
 
 ## Commands
