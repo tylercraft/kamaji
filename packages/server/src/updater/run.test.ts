@@ -804,6 +804,10 @@ describe('rollbacks, from the updater’s side', () => {
     worker.length = 0;
     await runUpdater(deps());
     expect(checked(db)).toEqual({ checked_at: T, checks_ok: 1, checks_problem: null });
+    // Its report has WordPress rerun the update checks the push had it forget.
+    expect(site.sent.filter((s) => s.endpoint === 'report').at(-1)?.body).toEqual({
+      refresh: true,
+    });
     expect(db.prepare('SELECT updating_until FROM sites').get()!.updating_until).toBeNull();
     expect(worker).toContain(`POST /v1/check/${SITE}`);
     expect(

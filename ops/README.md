@@ -827,6 +827,44 @@ If a rollback stops part way (Discord says "left it part way"), nothing more run
 sudo ls -la /var/www/aleyahoerlein.com/.kamaji-rollback/
 ```
 
+### Updating the push on craftish
+
+When `site-push/push` changes on main (the rollback-offers change, 2026-11-19, was the first), only it needs copying; `kamaji-site-push`, the user, the sudo rule and the allowlist stay. Kinsta needs nothing: the backups process sends the script each time, so it gets the new one once Kamaji is deployed.
+
+On the laptop, from main:
+
+1. Copy it up:
+
+```
+/usr/bin/scp /Users/tyler/kamaji/site-push/push craftish:/tmp/
+```
+
+2. Note its checksum:
+
+```
+/usr/bin/shasum -a 256 /Users/tyler/kamaji/site-push/push
+```
+
+On craftish (`ssh craftish`):
+
+3. Install it over the old one, owned by root:
+
+```
+sudo install -m 755 -o root -g root /tmp/push /usr/local/lib/kamaji/site-push && rm /tmp/push
+```
+
+4. Check it's the same file (expect step 2's checksum):
+
+```
+sha256sum /usr/local/lib/kamaji/site-push
+```
+
+5. Check it still answers through the forced command, changing nothing (expect `"problem":"no such rollback here"`):
+
+```
+sudo -u kamaji-push env SSH_ORIGINAL_COMMAND='result aleyahoerlein.com 0123456789abcdef rollback' /usr/local/bin/kamaji-site-push
+```
+
 ## Passkeys
 
 TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake and refreshing a report don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.

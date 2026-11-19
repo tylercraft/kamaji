@@ -46,6 +46,11 @@ const versions = () => ({
   akismet: wp('plugin get akismet --field=version'),
   theme: wp('theme get twentytwentyfour --field=version'),
 });
+/** WordPress's update checks, as the push leaves them: gone, so they run again. */
+const forgotten = () =>
+  ['update_plugins', 'update_themes', 'update_core'].every(
+    (t) => wp(`transient get ${t} --network --format=json`) === '',
+  );
 const home = () =>
   execFileSync('curl', [
     '-sk',
@@ -206,6 +211,7 @@ describe('rollback on the DDEV site', () => {
     expect(latest()).toMatchObject({ state: 'done', changed: 'all', problem: null });
     expect(versions()).toEqual(before);
     expect(wp(`comment get ${comment} --field=content`)).toBe('after the snapshot');
+    expect(forgotten()).toBe(true);
     expect(home()).toBe('200');
     expect(inDdev(`test -e ${ROOT}/.maintenance && echo yes || echo no`).toString().trim()).toBe(
       'no',
@@ -252,6 +258,8 @@ describe('rollback on the DDEV site', () => {
     expect(latest()).toMatchObject({ state: 'done', changed: 'all' });
     expect(versions()).toEqual(before);
     expect(() => wp(`comment get ${comment} --field=content`)).toThrow();
+    // After the import, which brought back the snapshot's own.
+    expect(forgotten()).toBe(true);
     expect(home()).toBe('200');
     checked();
 

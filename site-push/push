@@ -59,6 +59,8 @@ fail() {
   local line
   line=$(printf '{"format":1,"ok":false,"step":"%s","problem":"%s","changed":"%s"}' "$step" "$problem" "$changed")
   printf '%s\n' "$line" >&2
+  # Files that changed, even part way, leave WordPress's update checks out of date.
+  [ "$changed" = none ] || forget_offers
   finish "$line"
   exit "${4:-1}"
 }
@@ -263,8 +265,22 @@ maintenance_off() {
   "${wp[@]}" maintenance-mode deactivate >/dev/null 2>&1 || rm -f -- "$root/.maintenance"
 }
 
+# WordPress's update checks remember the versions they last saw, so after a swap they offer
+# nothing for what went back until they run again (aleyahoerlein.com, 2026-11-19). Forgotten after
+# the database step, since an imported database brings its own. Kamaji's next report asks Craftish
+# Care to run them again, inside WordPress with every plugin's own update filters. Deleting one
+# that isn't there exits 0 (fixtures/wp-cli-2.12.txt).
+forget_offers() {
+  local t ok=1
+  for t in update_plugins update_themes update_core; do
+    "${wp[@]}" transient delete "$t" --network >/dev/null 2>&1 || ok=0
+  done
+  [ $ok = 1 ] || warnings+=('WordPress’s update checks couldn’t be cleared, so its offers may be out of date')
+}
+
 warnings=()
 caches() {
+  forget_offers
   "${wp[@]}" cache flush >/dev/null 2>&1 || warnings+=('the object cache couldn’t be flushed')
   if [ "$host" = kinsta ]; then
     # Kinsta's page cache, from Kinsta's own must-use plugin, so without --skip-plugins.

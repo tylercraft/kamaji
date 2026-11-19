@@ -69,6 +69,7 @@ case "$1 ${2:-}" in
     echo ;;
   'plugin is-active') [ "$3" = woocommerce ] && [ -f "$STATE/woocommerce" ] ;;
   'cache flush') : ;;
+  'transient delete') [ ! -f "$STATE/transient-fails" ] ;;
   'kinsta cache') log purged ;;
   'core download')
     v=''; l=''
@@ -92,6 +93,21 @@ mkdir -p /etc/kamaji
 echo "$SITE" >/etc/kamaji/site-push.sites
 echo 'other.test' >>/etc/kamaji/site-push.sites
 
+# WordPress's update checks, forgotten: each of the three, as a site transient.
+forgot() {
+  local t
+  for t in update_plugins update_themes update_core; do
+    grep -qx "transient delete $t --network" "$STATE/calls" || return 1
+  done
+}
+# …after the last database import, which would bring back its own.
+forgot_after_import() {
+  local imported deleted
+  imported=$(grep -n '^db import' "$STATE/calls" | tail -1 | cut -d: -f1)
+  deleted=$(grep -n '^transient delete' "$STATE/calls" | head -1 | cut -d: -f1)
+  [ -n "$imported" ] && [ -n "$deleted" ] && [ "$deleted" -gt "$imported" ]
+}
+
 plugin_main() { # folder version
   mkdir -p "$1"
   printf "<?php\n/**\n * Plugin Name: Test\n * Version: %s\n */\n" "$2" >"$1/$(basename "$1").php"
@@ -100,7 +116,7 @@ plugin_main() { # folder version
 # A site the way an update run left it: akismet 5.3.1 (was 5.3), a theme at 1.6.1 (was 1.6), a
 # single-file plugin at 1.7.3 (was 1.7.2), WordPress 7.1.5 (was 7.1.4).
 fresh_site() {
-  rm -rf "/var/www/$SITE" "$STATE"/{db,calls,sabotage,import-fails,checksums-fail,woocommerce}
+  rm -rf "/var/www/$SITE" "$STATE"/{db,calls,sabotage,import-fails,checksums-fail,woocommerce,transient-fails}
   mkdir -p "$ROOT/wp-content/plugins" "$ROOT/wp-content/themes/twentyx" "$ROOT/wp-content/uploads" \
     "$ROOT/wp-admin" "$ROOT/wp-includes"
   plugin_main "$ROOT/wp-content/plugins/akismet" 5.3.1
@@ -250,6 +266,7 @@ t=$(make_tar /tmp/p.tar $ID1)
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 code=$?
 expect 'rolls back files and core' '[ $code = 0 ] && [[ "$(last_out)" == "{\"format\":1,\"ok\":true,\"step\":\"done\",\"database\":false"* ]]'
+expect '…and has WordPress forget its update checks, which still list the run’s versions' forgot
 expect '…the plugin' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3 ] && [ ! -e "$ROOT/wp-content/plugins/akismet/new.php" ]'
 expect '…the theme and the single-file plugin' '[ "$(version_at "$ROOT/wp-content/themes/twentyx/style.css")" = 1.6 ] && [ "$(version_at "$ROOT/wp-content/plugins/hello.php")" = 1.7.2 ]'
 expect '…core, from the en_US download when the site’s language has none' 'grep -q "7.1.4" "$ROOT/wp-includes/version.php" && grep -q "index 7.1.4" "$ROOT/index.php" && grep -q "load 7.1.4" "$ROOT/wp-load.php"'
@@ -265,15 +282,24 @@ expect 'result reads it back' 'grep -q "\"ok\":true,\"step\":\"done\"" /tmp/out'
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'refuses an id used before' 'grep -q "id has been used" /tmp/err'
 
+: >"$STATE/calls"
 run_push /tmp/empty craftish undo "$SITE" $ID1 database
 expect 'undo refuses the database when the rollback left it' 'grep -q "didn’t put the database back" /tmp/err'
+expect '…leaving the update checks alone' '! grep -q "^transient" "$STATE/calls"'
 run_push /tmp/empty craftish undo "$SITE" $ID1 files
 expect 'undoes the rollback' 'grep -q "\"ok\":true,\"step\":\"done\"" /tmp/out'
+expect '…and has WordPress forget its update checks, which list the rollback’s versions' forgot
 expect '…the plugin, theme and core back as the run left them' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && [ -f "$ROOT/wp-content/plugins/akismet/new.php" ] && [ "$(version_at "$ROOT/wp-content/themes/twentyx/style.css")" = 1.6.1 ] && grep -q 7.1.5 "$ROOT/wp-includes/version.php" && grep -q "index 7.1.5" "$ROOT/index.php"'
 expect '…the owner and modes they had' '[ "$(stat -c "%U:%G %a" "$ROOT/wp-includes/version.php")" = "tyler:www-data 664" ]'
 expect '…and core files only the older release had, aside' '[ ! -e "$ROOT/wp-load.php" ] && [ -f "$HOLD/$ID1/undone/wp-load.php" ]'
 run_push /tmp/empty craftish undo "$SITE" $ID1 files
 expect 'refuses a second undo' 'grep -q "undone already" /tmp/err'
+
+fresh_site
+touch "$STATE/transient-fails"
+t=$(make_tar /tmp/p.tar $ID1)
+run_push /tmp/p.tar craftish rollback "$SITE" $ID1
+expect 'update checks that won’t clear are a warning, not a failure' 'grep -q "\"ok\":true,\"step\":\"done\"" /tmp/out && grep -q "update checks couldn’t be cleared" /tmp/out'
 
 # Undo only while the site is as the rollback left it.
 fresh_site
@@ -289,7 +315,7 @@ touch "$STATE/woocommerce"
 run_push /tmp/empty craftish count "$SITE" $ID2 20261119T030000Z
 expect 'counts orders, comments and users since the restore point' '[ "$(last_out)" = "{\"format\":1,\"step\":\"count\",\"ok\":true,\"orders\":12,\"comments\":3,\"users\":1}" ]'
 expect '…from that time' 'grep -q "comment_date_gmt > .2026-11-19 03:00:00." "$STATE/calls"'
-expect '…changing nothing and keeping nothing' '[ ! -e "$HOLD" ] && grep -qx "DB after the run" "$STATE/db" && ! grep -qE "maintenance-mode activate|db (import|export)" "$STATE/calls"'
+expect '…changing nothing and keeping nothing' '[ ! -e "$HOLD" ] && grep -qx "DB after the run" "$STATE/db" && ! grep -qE "maintenance-mode activate|db (import|export)|transient" "$STATE/calls"'
 rm "$STATE/woocommerce"
 run_push /tmp/empty craftish count "$SITE" $ID2 20261119T030000Z
 expect '…with no orders where it isn’t a shop' 'grep -q "\"orders\":null,\"comments\":3,\"users\":1" /tmp/out'
@@ -305,9 +331,12 @@ t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z')
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'puts the database back from craftish’s own export' 'grep -qx "DB from the export before the run" "$STATE/db" && grep -q "\"database\":true" /tmp/out'
 expect '…without counting: that came before the passkey' '! grep -q "\"step\":\"count\"" /tmp/out'
+expect '…forgetting the update checks after the import, which brings its own' forgot_after_import
 expect '…from the export as www-data, which can read it' '[ "$(stat -c %U /var/backups/kamaji/$SITE/20261119T030000Z.sql.gz)" = www-data ]'
+: >"$STATE/calls"
 run_push /tmp/empty craftish undo "$SITE" $ID1 database
 expect 'undoes the database too, when asked' 'grep -qx "DB after the run" "$STATE/db"'
+expect '…forgetting the update checks after it' 'forgot && forgot_after_import'
 
 fresh_site
 t=$(make_tar /tmp/p.tar $ID1 'database export 20261101T030000Z')
@@ -328,6 +357,7 @@ echo 'DB from the export before the run' >"$STATE/import-fails"
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'a database that won’t import is put back as it was' 'grep -qx "DB after the run" "$STATE/db" && grep -q "\"changed\":\"files\"" /tmp/err && [ ! -e "$ROOT/.maintenance" ]'
 expect '…with the files rolled back, and undoable' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3 ] && [ -f "$HOLD/$ID1/journal" ]'
+expect '…the update checks forgotten, since the files changed' 'forgot && forgot_after_import'
 run_push /tmp/empty craftish undo "$SITE" $ID1 files
 expect '…and undone, the files back as the run left them' 'grep -q "\"ok\":true" /tmp/out && [ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ]'
 
@@ -346,6 +376,7 @@ run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'a swap that fails part way puts everything back' 'grep -q "everything was put back" /tmp/err && grep -q "\"changed\":\"none\"" /tmp/err'
 expect '…the plugin back at the run’s version' '[ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ] && [ -f "$ROOT/wp-content/plugins/akismet/new.php" ] && grep -q 7.1.5 "$ROOT/wp-includes/version.php"'
 expect '…and maintenance off' '[ ! -e "$ROOT/.maintenance" ]'
+expect '…and the update checks left alone, since nothing changed' '! grep -q "^transient" "$STATE/calls"'
 chmod 755 "$ROOT/wp-content/themes/twentyx"
 
 # --- A hang-up mid-swap doesn't stop it ----------------------------------------------------------

@@ -189,6 +189,33 @@ describe('the report', () => {
     expect(asked.at(-1)?.body).toEqual({ refresh: true });
   });
 
+  it('has WordPress recheck after a rollback or undo changed the files since the last refresh', async () => {
+    const db = testDb();
+    connectedSite(db);
+    const { send, asked } = plugin([]);
+    const signal = new AbortController().signal;
+    await checkReports(db, { keys, send, now: () => T, signal });
+    db.prepare(
+      `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state) VALUES ('b', 0, 'tyler', 0, 'finished')`,
+    ).run();
+    const rollback = db.prepare(
+      `INSERT INTO rollbacks (id, kind, site_id, batch_id, host, requested_at, requested_by,
+         with_database, state, changed, finished_at)
+       VALUES (?, 'rollback', ?, 'b', 'craftish', ?, 'tyler', 0, ?, ?, ?)`,
+    );
+    // One that changed nothing doesn't count.
+    rollback.run('r0', SITE.id, T, 'failed', 'none', T + HOUR / 2);
+    await checkReports(db, { keys, send, now: () => T + HOUR, signal });
+    expect(asked.at(-1)?.body).toEqual({ refresh: false });
+    // One that did, and whose own check Craftish Care didn't refresh for.
+    rollback.run('r1', SITE.id, T + HOUR, 'done', 'files', T + 1.5 * HOUR);
+    await checkReports(db, { keys, send, now: () => T + 2 * HOUR, signal });
+    expect(asked.at(-1)?.body).toEqual({ refresh: true });
+    // Once is enough.
+    await checkReports(db, { keys, send, now: () => T + 3 * HOUR, signal });
+    expect(asked.at(-1)?.body).toEqual({ refresh: false });
+  });
+
   it('opens an issue after a day without a good report, and resolves it on the next', async () => {
     const db = testDb();
     connectedSite(db);

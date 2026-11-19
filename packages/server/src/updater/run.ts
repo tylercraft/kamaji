@@ -547,13 +547,20 @@ function recentSnapshot(db: Db, siteId: string): BackupResult {
   };
 }
 
-/** A report, stored as the app stores one: the installed versions after an update. */
-export async function freshReport(deps: UpdaterDeps, site: RunSite): Promise<CareReport | null> {
+/**
+ * A report, stored as the app stores one: the installed versions after an update. With refresh,
+ * Craftish Care reruns WordPress's update checks first (at most once per 10 minutes).
+ */
+export async function freshReport(
+  deps: UpdaterDeps,
+  site: RunSite,
+  refresh = false,
+): Promise<CareReport | null> {
   const result = await deps.send(
     new URL(site.url),
     deps.keys.report,
     'report',
-    { refresh: false },
+    { refresh },
     {
       signal: deps.signal,
     },
@@ -572,7 +579,7 @@ export async function freshReport(deps: UpdaterDeps, site: RunSite): Promise<Car
     ok: true,
     value: {
       ok: true,
-      refreshed: false,
+      refreshed: parsed.data.refreshed,
       locale: parsed.data.core.locale,
       php: parsed.data.php,
       database: parsed.data.database.server,
