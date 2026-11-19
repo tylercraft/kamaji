@@ -8,7 +8,7 @@ import { PrimaryButton } from '../components/forms';
 import { Button, Dot, Muted, Panel, PanelHead, Pill, ResourceView, Time } from '../components/ui';
 import { runOutcome, updatesPollMs } from '../runHistory';
 import { workTone, workWords } from '../siteStatus';
-import { itemKey as key } from '../updatesView';
+import { itemKey as key, routineItems } from '../updatesView';
 import { useResource } from '../useResource';
 import { useSiteReload } from '../siteReload';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
@@ -71,7 +71,7 @@ export function SiteUpdatesPanel({
           const site = data.sites[0];
           const latest = data.batches[0];
           const run = latest?.sites[0];
-          const routine = data.items.filter((i) => !i.major);
+          const routine = routineItems(data.items);
           const outcome = run ? runOutcome(run) : null;
           const chosen = data.items.filter((i) => ticked.has(key(i))).length;
           return (

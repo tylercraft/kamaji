@@ -241,6 +241,23 @@ function lastRefreshAt(db: Db, siteId: string): number | null {
   return row ? Number(row.at) : null;
 }
 
+/**
+ * Whether a rollback or undo has changed the site's files since its last refresh: the push had
+ * WordPress forget its update checks (site-push/push), so they need running again before the
+ * offers mean anything. The rollback's own checks ask for that; this catches one Craftish Care
+ * skipped, having refreshed in the 10 minutes before.
+ */
+function swappedSince(db: Db, siteId: string, at: number): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM rollbacks WHERE site_id = ? AND finished_at > ?
+           AND changed IS NOT NULL AND changed != 'none' LIMIT 1`,
+      )
+      .get(siteId, at) !== undefined
+  );
+}
+
 /** Asks one site for its report and records the answer. Returns whether it worked. */
 export async function reportSite(
   db: Db,
@@ -264,7 +281,10 @@ async function askForReport(
 ): Promise<ReportValue> {
   const lastRefresh = lastRefreshAt(db, site.id);
   const refresh =
-    options.refresh ?? (lastRefresh === null || now() - lastRefresh >= REFRESH_EVERY_MS);
+    options.refresh ??
+    (lastRefresh === null ||
+      now() - lastRefresh >= REFRESH_EVERY_MS ||
+      swappedSince(db, site.id, lastRefresh));
   const result = await send(new URL(site.url), keys.report, 'report', { refresh });
   const at = now();
   let value: ReportValue;

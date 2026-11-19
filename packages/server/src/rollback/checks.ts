@@ -76,7 +76,9 @@ export async function checkRollbacks(deps: UpdaterDeps): Promise<void> {
     const before = healthBefore(db, r);
     let ok: boolean;
     try {
-      const report = await freshReport(deps, site);
+      // Refreshed: the push had WordPress forget its update checks, which still listed the
+      // versions it replaced, so without them the report would offer nothing (site-push/push).
+      const report = await freshReport(deps, site, true);
       const health = report?.site_health.map((h) => h.label) ?? [];
       const checks = await runChecks(deps, site, health, before);
       problems.push(...checks.problems);

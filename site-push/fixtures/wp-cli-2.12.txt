@@ -108,3 +108,12 @@ quiet exit 0
 index.php
 license.txt
 readme.html
+== transient delete (2026-11-19, wp transient delete <t> --network, each of update_plugins, update_themes, update_core)
+Success: Transient deleted.
+exit 0
+== transient delete, one that isn't there
+Warning: Transient was not deleted; however, the transient does not appear to exist.
+exit 0
+== transient get, one that isn't there (wp transient get <t> --network; the warning on stderr)
+Warning: Transient with key "kamaji_nonexistent" is not set.
+exit 0

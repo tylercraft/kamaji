@@ -8,6 +8,24 @@ export type Grouping = 'update' | 'site';
 export const itemKey = (i: { siteId: string; type: string; item: string }) =>
   `${i.siteId}\u0000${i.type}\u0000${i.item}`;
 
+/** What "Select routine updates" ticks: never a major version, nor what a rollback put back. */
+export const routineItems = (items: QueueItem[]) =>
+  items.filter((i) => !i.major && !i.rolledBackAt);
+
+/**
+ * A proposal's items, ticked as it arrives, except what a rollback put back from the version
+ * offered: those stay for Tyler to tick himself.
+ */
+export function proposalTicks(proposed: Parameters<typeof itemKey>[0][], items: QueueItem[]) {
+  const putBack = new Set(items.filter((i) => i.rolledBackAt).map(itemKey));
+  return new Set(proposed.map(itemKey).filter((k) => !putBack.has(k)));
+}
+
+const rolledBackDay = new Intl.DateTimeFormat('en-NZ', { day: 'numeric', month: 'short' });
+/** "Rolled back on 19 Nov". */
+export const rolledBackWords = (iso: string) =>
+  `Rolled back on ${rolledBackDay.format(new Date(iso))}`;
+
 /** "Akismet 5.3 → 5.7.2, 2 sites", in the queue's order. */
 export function byUpdate(items: QueueItem[]): QueueItem[][] {
   const by = new Map<string, QueueItem[]>();

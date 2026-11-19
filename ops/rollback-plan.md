@@ -105,6 +105,7 @@ Each prints one JSON line as it finishes, `{"format":1,"step":"stage","ok":true}
 5. **swap:** for each item, rename the live folder to `<hold>/<id>/old/…`, then the staged one into place, writing each rename to `<hold>/<id>/journal` before it's made. For core, the same for `wp-admin`, `wp-includes` and the root files the download has (never `wp-config.php`, `wp-content` or `.htaccess`). Renames stay on one filesystem, so each is instant. The moved-aside copies sit outside the web root, so WordPress never sees two copies of a plugin.
 6. **database** (ticked only): `wp db import`. On craftish from the run's export (`/var/backups/kamaji/<site>/<time>.sql.gz`, already on the server, so nothing to send), else the pushed `database.sql`.
 7. **maintenance off,** then `wp cache flush`, and on Kinsta its page cache purge (open question 6).
+8. **update checks:** `wp transient delete --network` of `update_plugins`, `update_themes` and `update_core`, after the database step, since an import brings back its own. WordPress's checks remember the versions they last saw, so after the swap they'd offer nothing for what went back (aleyahoerlein.com trial, 2026-11-19: Admin Menu Editor at 1.15.2, no offer of 1.15.3). Also when the push stops having changed files. The rollback's checks then ask Craftish Care for a report with `refresh`, which runs the checks again inside WordPress, with every plugin's own update filters; a regular report refreshes too when a rollback or undo changed the files since the last refresh, in case Craftish Care skipped one (it refreshes at most once per 10 minutes).
 
 Steps 4 to 7 are the critical part. The script ignores HUP, INT and TERM through them, so a dropped SSH connection doesn't stop it halfway; it carries on to the end and leaves its result in `<hold>/<id>/result.json`. The backups process reads that on its next connection if the first one dropped.
 
@@ -140,6 +141,8 @@ A site is busy while it's in a batch that's approved or running, or has a backup
 - **Shared:** a `Rollback` view on the site's run history, with `canRollBack` and `whyNot` worked out on the server, so the web shows them and doesn't decide.
 
 Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback/count` (no passkey: it changes nothing; body `{ batchId }`, answers the count's id), `GET /api/sites/:id/rollback/count/:count`, `POST /api/sites/:id/rollback` (passkey each time, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey each time, body `{ rollbackId, withDatabase }`).
+
+In Updates, an offer for an item whose latest rollback (not undone) put it back from that same version says "Rolled back on 19 Nov", and isn't ticked by "Select routine updates" or by a proposal; Tyler ticks it himself.
 
 Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause. Site Health is measured against the site's last report from before the rollback or undo was asked for, and only without one against the run's own baseline, which may be days old and miss a release that came out since (aleyahoerlein.com trial, 2026-11-19); the app's cycle sends the one Discord line, and the toast goes to whoever asked.
 
