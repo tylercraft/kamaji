@@ -1,0 +1,7 @@
+What Chromium 1248 (Playwright 1.64.1, kamaji-shots) says for a script request aborted with
+route.abort('blockedbyclient'), 2026-11-19: the request's failure text, then a console error
+for the same load. shoot.mjs counts load failures from requestfailed and responses, so console
+errors starting "Failed to load resource:" aren't counted again as JavaScript errors.
+
+failed net::ERR_BLOCKED_BY_CLIENT.Inspector
+console error "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector" https://www.googletagmanager.com/gtag/js?id=G-TEST

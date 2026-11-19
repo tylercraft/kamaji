@@ -734,4 +734,81 @@ export const migrations: Migration[] = [
       CREATE INDEX rollback_counts_site ON rollback_counts (site_id, requested_at);
     `,
   },
+  {
+    version: 28,
+    name: 'screenshots',
+    // Screenshot checks (ops/screenshots-plan.md, Tyler, 2026-11-19): each check page at 1440 and
+    // 390 wide, just before a site's first update and just after its last, compared, and shown on
+    // the run. A set is one sitting of the screenshots process (kind before, after, or manual from
+    // the site's page), with one shot per page, size and round: a "before" set shoots twice a few
+    // seconds apart, and what differs between its rounds is masked when it's compared. A
+    // comparison is one page and size, a later set against an earlier one. The images live on
+    // disk (data/screenshots/<site>/<set>/), never here. A JavaScript error or failed request is
+    // kept only as a count and a fingerprint (a hash), never its text. sites.screenshot_hide and
+    // screenshot_mask are CSS selectors (JSON lists): hidden before every shot (cookie banners,
+    // chat bubbles), or left out of every comparison (a cart count, a date).
+    sql: `
+      CREATE TABLE screenshot_sets (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        batch_id TEXT REFERENCES batches (id),
+        kind TEXT NOT NULL CHECK (kind IN ('before', 'after', 'manual')),
+        rounds INTEGER NOT NULL CHECK (rounds IN (1, 2)),
+        requested_at INTEGER NOT NULL,
+        requested_by TEXT,
+        state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'failed')),
+        started_at INTEGER,
+        finished_at INTEGER,
+        problem TEXT
+      );
+      CREATE INDEX screenshot_sets_site ON screenshot_sets (site_id, requested_at);
+      CREATE INDEX screenshot_sets_batch ON screenshot_sets (batch_id, site_id);
+      CREATE TABLE screenshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        set_id TEXT NOT NULL REFERENCES screenshot_sets (id),
+        round INTEGER NOT NULL CHECK (round IN (1, 2)),
+        position INTEGER NOT NULL,
+        page_url TEXT NOT NULL,
+        viewport TEXT NOT NULL CHECK (viewport IN ('desktop', 'mobile')),
+        file TEXT,
+        thumb TEXT,
+        width INTEGER,
+        height INTEGER,
+        cut INTEGER NOT NULL DEFAULT 0 CHECK (cut IN (0, 1)),
+        quiet INTEGER NOT NULL DEFAULT 1 CHECK (quiet IN (0, 1)),
+        status INTEGER,
+        blocked INTEGER NOT NULL DEFAULT 0 CHECK (blocked IN (0, 1)),
+        js_errors INTEGER NOT NULL DEFAULT 0,
+        js_keys TEXT NOT NULL DEFAULT '[]',
+        failed_requests INTEGER NOT NULL DEFAULT 0,
+        failed_keys TEXT NOT NULL DEFAULT '[]',
+        masks TEXT NOT NULL DEFAULT '[]',
+        problem TEXT,
+        UNIQUE (set_id, round, position, viewport)
+      );
+      CREATE TABLE screenshot_comparisons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        set_id TEXT NOT NULL REFERENCES screenshot_sets (id),
+        against_set_id TEXT NOT NULL REFERENCES screenshot_sets (id),
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        page_url TEXT NOT NULL,
+        viewport TEXT NOT NULL CHECK (viewport IN ('desktop', 'mobile')),
+        before_id INTEGER REFERENCES screenshots (id),
+        after_id INTEGER REFERENCES screenshots (id),
+        compared TEXT NOT NULL CHECK (compared IN ('page', 'first screen', 'none')),
+        changed_pct REAL,
+        masked_pct REAL,
+        height_before INTEGER,
+        height_after INTEGER,
+        new_js_errors INTEGER NOT NULL DEFAULT 0,
+        new_failed_requests INTEGER NOT NULL DEFAULT 0,
+        diff_file TEXT,
+        problem TEXT,
+        at INTEGER NOT NULL
+      );
+      CREATE INDEX screenshot_comparisons_set ON screenshot_comparisons (set_id);
+      ALTER TABLE sites ADD COLUMN screenshot_hide TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE sites ADD COLUMN screenshot_mask TEXT NOT NULL DEFAULT '[]';
+    `,
+  },
 ];

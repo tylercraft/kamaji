@@ -1,5 +1,5 @@
 // Starting a separate process: the updater once a batch is approved, the backups process when a
-// site's Backups panel asks. On the mini each is its own LaunchAgent (dev.craftish.kamaji-updater,
+// site's Backups panel asks, the screenshots process when a set is asked for. On the mini each is its own LaunchAgent (dev.craftish.kamaji-updater,
 // dev.craftish.kamaji-backups), run under doppler with its own config, so the app never sees the
 // update key or the restic password; each exits when its work is done, and kickstart on one
 // already running does nothing. On the laptop (`spawn`) each is a child process with the app's
@@ -52,5 +52,17 @@ export function backupsLauncher(
     name: 'backups',
     label: 'dev.craftish.kamaji-backups',
     entry: '../sitebackups/main.js',
+  });
+}
+
+/** The screenshots process (shots/main.ts): no Doppler, since it holds no secrets. */
+export function shotsLauncher(
+  mode: string | undefined,
+  log: (message: string) => void,
+): () => void {
+  return launcher(mode, log, {
+    name: 'shots',
+    label: 'dev.craftish.kamaji-shots',
+    entry: '../shots/main.js',
   });
 }

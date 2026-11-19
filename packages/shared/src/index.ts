@@ -1071,6 +1071,121 @@ export const BatchItemView = z.object({
 });
 export type BatchItemView = z.infer<typeof BatchItemView>;
 
+/** One screenshot: a page at one size, from one set (ops/screenshots-plan.md). */
+export const ShotView = z.object({
+  id: z.number().int(),
+  pageUrl: z.string(),
+  viewport: z.enum(['desktop', 'mobile']),
+  /** The full-page PNG and the first screen's JPEG, served by the app; null when it failed. */
+  image: z.string().nullable(),
+  thumb: z.string().nullable(),
+  width: z.number().int().nullable(),
+  height: z.number().int().nullable(),
+  /** Taller than 15,000 px, so cut there. */
+  cut: z.boolean(),
+  /** The network went quiet before the shot. */
+  quiet: z.boolean(),
+  status: z.number().int().nullable(),
+  /** Cloudflare's bot check answered instead of the page. */
+  blocked: z.boolean(),
+  jsErrors: z.number().int(),
+  failedRequests: z.number().int(),
+  problem: z.string().nullable(),
+});
+export type ShotView = z.infer<typeof ShotView>;
+
+/** One page and size, a later set against an earlier one. */
+export const ComparisonView = z.object({
+  pageUrl: z.string(),
+  viewport: z.enum(['desktop', 'mobile']),
+  /** The whole page; only the first screen when the heights differ; none when one is missing. */
+  compared: z.enum(['page', 'first screen', 'none']),
+  /** Of the pixels outside the masks, the share that changed, in percent. */
+  changedPct: z.number().nullable(),
+  maskedPct: z.number().nullable(),
+  heightBefore: z.number().int().nullable(),
+  heightAfter: z.number().int().nullable(),
+  newJsErrors: z.number().int(),
+  newFailedRequests: z.number().int(),
+  diff: z.string().nullable(),
+  before: ShotView.nullable(),
+  after: ShotView.nullable(),
+  /** Why it couldn't be compared. */
+  problem: z.string().nullable(),
+});
+export type ComparisonView = z.infer<typeof ComparisonView>;
+
+/** A page changed this much outside its masks counts as changed (report-only: no hold). */
+export const SCREENSHOT_CHANGED_PCT = 1;
+
+/**
+ * Whether a page and size changed: past the threshold, a different height, new JavaScript
+ * errors or failed requests, or shot before and not after (unless a bot check answered).
+ */
+export function comparisonChanged(c: ComparisonView): boolean {
+  if (c.newJsErrors > 0 || c.newFailedRequests > 0) return true;
+  if (c.compared === 'none')
+    return Boolean(c.before?.image) && !c.after?.image && !c.after?.blocked;
+  return c.compared === 'first screen' || (c.changedPct ?? 0) >= SCREENSHOT_CHANGED_PCT;
+}
+
+/** The pages (by URL) with any size changed. */
+export const changedPages = (comparisons: ComparisonView[]): string[] => [
+  ...new Set(comparisons.filter(comparisonChanged).map((c) => c.pageUrl)),
+];
+
+export const ScreenshotSetView = z.object({
+  id: z.string(),
+  kind: z.enum(['before', 'after', 'manual']),
+  state: z.enum(['waiting', 'running', 'done', 'failed']),
+  requestedAt: Timestamp,
+  requestedBy: z.string().nullable(),
+  finishedAt: Timestamp.nullable(),
+  problem: z.string().nullable(),
+  /** The first round's shots, in page order, desktop then mobile. */
+  shots: z.array(ShotView),
+  /** Against the set before it: the run's "before" set, or for one taken by hand, the last. */
+  comparisons: z.array(ComparisonView),
+});
+export type ScreenshotSetView = z.infer<typeof ScreenshotSetView>;
+
+/** A site's part of a run: its "before" and "after" sets, and the comparisons between them. */
+export const RunScreenshots = z.object({
+  before: z
+    .object({ state: ScreenshotSetView.shape.state, problem: z.string().nullable() })
+    .nullable(),
+  after: z
+    .object({ state: ScreenshotSetView.shape.state, problem: z.string().nullable() })
+    .nullable(),
+  comparisons: z.array(ComparisonView),
+});
+export type RunScreenshots = z.infer<typeof RunScreenshots>;
+
+/** CSS selectors: hidden before every shot, or left out of every comparison. */
+const Selectors = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .regex(/^[^{}<>\n\r]+$/),
+  )
+  .max(20);
+export const ScreenshotSettings = z.object({ hide: Selectors, mask: Selectors });
+export type ScreenshotSettings = z.infer<typeof ScreenshotSettings>;
+
+export const SiteScreenshotsResponse = z.object({
+  /** The latest set that's finished, of any kind. */
+  latest: ScreenshotSetView.nullable(),
+  /** One taken by hand that's waiting or being taken. */
+  pending: ScreenshotSetView.nullable(),
+  /** The pages it shoots: the home page, then the check pages. */
+  pages: z.array(z.string()),
+  settings: ScreenshotSettings,
+});
+export type SiteScreenshotsResponse = z.infer<typeof SiteScreenshotsResponse>;
+
 export const BatchSiteView = z.object({
   siteId: z.string(),
   siteName: z.string(),
@@ -1083,6 +1198,8 @@ export const BatchSiteView = z.object({
   /** The backup evidence as recorded for this run. */
   backup: z.string().nullable(),
   items: z.array(BatchItemView),
+  /** Screenshot checks, when the run took any. */
+  screenshots: RunScreenshots.nullable().optional(),
 });
 export type BatchSiteView = z.infer<typeof BatchSiteView>;
 

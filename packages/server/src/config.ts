@@ -63,6 +63,7 @@ export interface Config {
   wordfenceFeedFile: string | undefined;
   /** Sites' icons, beside the database (checks/icons.ts). */
   iconsDir: string;
+  shotsDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -99,8 +100,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ),
     wordfenceFeedFile: env.KAMAJI_WORDFENCE_FEED_FILE || undefined,
     iconsDir: join(dirname(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`), 'icons'),
+    /** Screenshot sets' images (shots/), beside the database. */
+    shotsDir: shotsDir(env),
     digestAt: /^\d\d:\d\d$/.test(env.KAMAJI_DIGEST_AT ?? '')
       ? String(env.KAMAJI_DIGEST_AT)
       : '07:30',
   };
+}
+
+/** Where screenshot sets' images live: data/screenshots, beside the database. */
+export function shotsDir(env: NodeJS.ProcessEnv): string {
+  return join(dirname(env.KAMAJI_DB ?? `${repoRoot}data/kamaji.db`), 'screenshots');
 }
