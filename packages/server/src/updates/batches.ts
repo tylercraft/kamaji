@@ -1,6 +1,7 @@
 // Approving a batch, and what the app shows of batches (calcifer explore/kamaji.md, "Updating,
 // end to end" and "Selecting and approving a batch"). The approval is stored with its exact
 // scope; the updater (updater/) runs it. The app never holds the update key.
+import { runScreenshots } from '../shots/sets.js';
 import { randomUUID } from 'node:crypto';
 import type {
   ApproveRequest,
@@ -219,6 +220,7 @@ export function batchViews(db: Db, limit = 10, siteId?: string): BatchView[] {
                 : (String(i.outcome) as BatchView['sites'][number]['items'][number]['outcome']),
             detail: i.detail === null ? null : String(i.detail),
           })),
+        screenshots: runScreenshots(db, id, String(s.site_id)),
       })),
     };
   });

@@ -885,3 +885,84 @@ describe('rollbacks, from the updater’s side', () => {
     });
   });
 });
+
+describe('screenshot checks, from the updater’s side', () => {
+  /** A screenshots process that finishes each set as soon as it's started. */
+  function shots(db: Db, order: string[]) {
+    return {
+      start: () => {
+        const set = db
+          .prepare("SELECT id, kind FROM screenshot_sets WHERE state = 'waiting'")
+          .get();
+        if (!set) return;
+        order.push(`shots ${String(set.kind)}`);
+        db.prepare("UPDATE screenshot_sets SET state = 'done' WHERE id = ?").run(String(set.id));
+      },
+    };
+  }
+
+  it('shoots just before the first update and just after the last', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    const order: string[] = [];
+    const send = deps().send;
+    await runUpdater({
+      ...deps(),
+      screenshots: shots(db, order),
+      send: async (home, key, endpoint, body, options) => {
+        if (endpoint === 'update') order.push(`update ${String(body.item)}`);
+        return send(home, key, endpoint, body, options);
+      },
+    });
+    expect(order).toEqual([
+      'shots before',
+      'update core',
+      'update akismet/akismet.php',
+      'shots after',
+    ]);
+    expect(site.akismet).toBe('5.7.2');
+    expect(
+      db
+        .prepare(
+          'SELECT kind, batch_id IS NOT NULL AS run FROM screenshot_sets ORDER BY requested_at, rowid',
+        )
+        .all(),
+    ).toEqual([
+      { kind: 'before', run: 1 },
+      { kind: 'after', run: 1 },
+    ]);
+  });
+
+  it('shoots after a held site too, and a run without them takes none', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    site.behave.breaksHomePage = true;
+    const order: string[] = [];
+    await runUpdater({ ...deps(), screenshots: shots(db, order) });
+    expect(outcomes(db)[0]).toEqual(['core', 'done', 'checks_failed']);
+    expect(order).toEqual(['shots before', 'shots after']);
+
+    const plain = setup();
+    expect((await approve(plain.db)).ok).toBe(true);
+    await runUpdater(plain.deps());
+    expect(plain.db.prepare('SELECT COUNT(*) AS n FROM screenshot_sets').get()).toEqual({ n: 0 });
+  });
+
+  it('a screenshot failure changes nothing about the run', async () => {
+    const { db, deps } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater({
+      ...deps(),
+      screenshots: {
+        start: () =>
+          db
+            .prepare(
+              "UPDATE screenshot_sets SET state = 'failed', problem = 'Docker isn’t answering'",
+            )
+            .run(),
+      },
+    });
+    expect(outcomes(db).every(([, , outcome]) => outcome === 'passed')).toBe(true);
+    expect(db.prepare('SELECT state FROM batch_sites').get()).toEqual({ state: 'done' });
+  });
+});

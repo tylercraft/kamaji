@@ -3,6 +3,7 @@
 // carry the one allowed login, as the Calcifer dashboard does. No login configured, nobody gets in.
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -11,6 +12,7 @@ import {
   ConfigureSiteRequest,
   KinstaAccessInput,
   RollbackCountRequest,
+  ScreenshotSettings,
   RollbackRequest,
   UndoRequest,
   DetectPlatformRequest,
@@ -62,6 +64,7 @@ import type { Db } from './db.js';
 import { readUpdateTime, writeUpdateTime } from './settings.js';
 import { markSeen, news } from './viewers.js';
 import { recordEvent } from './events.js';
+import { requestSet, saveSettings, setFile, siteScreenshots } from './shots/sets.js';
 import { updateTimes } from './sitebackups/schedule.js';
 import { jobDetail, type JobFiles } from './molcajete/detail.js';
 import {
@@ -101,6 +104,10 @@ export interface AppOptions {
   fetchExport?: FetchExport;
   /** Wakes the backups process for a request from a site's Backups panel. */
   startBackups?: () => void;
+  /** Wakes the screenshots process for Take screenshots now (shots/main.ts). */
+  startShots?: () => void;
+  /** Where screenshot sets' images are (config.ts, shotsDir). Without it, none are served. */
+  shotsDir?: string;
   /** The passkeys writes need (TY-170). Without it, every guarded write is refused. */
   passkeys?: PasskeyConfig;
   /** Where sites' icons are kept (checks/icons.ts). Without it, no site has one. */
@@ -167,8 +174,9 @@ const PASSKEY_FREE = new Set([
 // access and okaying a size take a passkey.
 // Rollback's count: orders, comments and users since the restore point, read only, for the
 // dialog before the passkey.
+// Take screenshots now: the site's check pages in a headless browser, read only.
 const PASSKEY_FREE_SITE_STEP =
-  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test|rollback\/count)$/;
+  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test|rollback\/count|screenshots)$/;
 // Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
 const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
@@ -232,6 +240,8 @@ export function createApp({
   backup,
   fetchExport,
   startBackups = () => {},
+  startShots = () => {},
+  shotsDir,
   passkeys = NO_PASSKEYS,
   iconsDir,
   iconFetch,
@@ -606,6 +616,48 @@ export function createApp({
   });
   // Kinsta's SSH access for whole-site backups (sitebackups/kinsta.ts): saved here; tested, and
   // pulled, by the backups process, which holds the key.
+  // Screenshot checks (shots/): a site's latest set, Take screenshots now (no passkey: it changes
+  // nothing on the site), what's hidden and masked (a passkey, as Configure), and the images,
+  // only those a set's rows name.
+  app.get('/api/sites/:id/screenshots', (c) => {
+    const id = c.req.param('id');
+    if (!db.prepare('SELECT 1 FROM sites WHERE id = ? AND removed_at IS NULL').get(id))
+      return c.json({ error: 'not_found' }, 404);
+    return c.json(siteScreenshots(db, id));
+  });
+  app.post('/api/sites/:id/screenshots', (c) => {
+    const id = requestSet(
+      db,
+      { siteId: c.req.param('id'), batchId: null, kind: 'manual', by: login },
+      now(),
+    );
+    if (!id) return c.json({ error: 'not_found' }, 404);
+    startShots();
+    return c.json({ queued: true, id }, 202);
+  });
+  app.post('/api/sites/:id/screenshots/settings', async (c) => {
+    const body = await readJson(c, ScreenshotSettings);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    if (!saveSettings(db, c.req.param('id'), body, now(), login))
+      return c.json({ error: 'not_found' }, 404);
+    return c.json({ ok: true });
+  });
+  app.get('/api/screenshots/:set/:file', async (c) => {
+    const found = shotsDir ? setFile(db, shotsDir, c.req.param('set'), c.req.param('file')) : null;
+    if (!found) return c.json({ error: 'not_found' }, 404);
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(found.path);
+    } catch {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    return c.body(new Uint8Array(bytes), 200, {
+      'Content-Type': found.type,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'",
+      'Cache-Control': 'private, max-age=31536000, immutable',
+    });
+  });
   app.post('/api/sites/:id/kinsta', async (c) => {
     const body = await readJson(c, KinstaAccessInput);
     if (!body) return c.json({ error: 'bad_request' }, 400);
