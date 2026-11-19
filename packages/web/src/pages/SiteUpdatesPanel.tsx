@@ -1,6 +1,7 @@
 // A site's own Updates panel: what's waiting on it, ticked and approved exactly as on the Updates
 // page (the same review and POST /api/batches), with the site's latest run under it: its outcome
-// in a line, the components and backup evidence one click down (open when the run is held).
+// in a line, the components and backup evidence one click down (open when the run is held), and
+// its Rollback (Rollback.tsx).
 import { UpdatesResponse, type Known, type SiteSummary } from '@kamaji/shared';
 import { useState } from 'react';
 import { PrimaryButton } from '../components/forms';
@@ -12,6 +13,7 @@ import { useResource } from '../useResource';
 import { useSiteReload } from '../siteReload';
 import { Flags, ReviewBody, RunSite } from './UpdatesPage';
 import { RememberedDetails } from '../components/remembered';
+import { RollbackSection } from './Rollback';
 
 /** Items of this site's unfinished runs, held or still going (the batches are this site's only). */
 function inRuns(batches: UpdatesResponse['batches']): { held: number; running: number } {
@@ -211,6 +213,7 @@ export function SiteUpdatesPanel({
                   </RememberedDetails>
                 </div>
               )}
+              {latest && <RollbackSection siteId={siteId} />}
             </>
           );
         }}

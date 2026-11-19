@@ -24,6 +24,7 @@ import { recordObservation } from '../observations.js';
 import { readPages } from '../sites/pages.js';
 import { BEFORE_UPDATE, needsFreshBackup } from '../backups/beforeUpdate.js';
 import { eligible } from '../sitebackups/eligible.js';
+import { checkRollbacks } from '../rollback/checks.js';
 import {
   latestGoodSnapshot,
   snapshotBeforeUpdate,
@@ -119,7 +120,7 @@ interface Item {
   sentAt: number | null;
 }
 
-interface Checks {
+export interface Checks {
   ok: boolean;
   problems: string[];
   siteHealth: string[];
@@ -137,6 +138,8 @@ export const OUTCOME_WORDS: Record<Outcome, string> = {
 export async function runUpdater(deps: UpdaterDeps): Promise<void> {
   for (;;) {
     if (deps.signal.aborted) throw deps.signal.reason;
+    // A rollback the backups process finished: its checks, before any more updates.
+    await checkRollbacks(deps);
     const batch = nextBatch(deps.db);
     if (!batch) return;
     const problem = deps.approvalProblem(batch.id);
@@ -206,7 +209,7 @@ async function runBatch(deps: UpdaterDeps, batchId: string, oneSiteFirst: boolea
   }
 }
 
-function siteRow(db: Db, id: string): RunSite {
+export function siteRow(db: Db, id: string): RunSite {
   const r = db
     .prepare(
       'SELECT id, name, url, host_kind, expected_text, important_pages FROM sites WHERE id = ?',
@@ -228,6 +231,16 @@ function siteRow(db: Db, id: string): RunSite {
 async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Promise<boolean> {
   const { db } = deps;
   const site = siteRow(db, siteId);
+  // A rollback waiting or running puts files back under the updater's feet: one at a time.
+  const rolling = db
+    .prepare(
+      "SELECT 1 FROM rollbacks WHERE site_id = ? AND state IN ('waiting', 'running') LIMIT 1",
+    )
+    .get(siteId);
+  if (rolling) {
+    hold(db, batchId, siteId, 'Held: a rollback is waiting or running for this site', deps.now());
+    return true;
+  }
   db.prepare(
     "UPDATE batch_sites SET state = 'running', started_at = COALESCE(started_at, ?) WHERE batch_id = ? AND site_id = ?",
   ).run(deps.now(), batchId, siteId);
@@ -444,7 +457,7 @@ async function pause(deps: UpdaterDeps, site: RunSite): Promise<void> {
 }
 
 /** Ends the pause, and re-checks the site at once from the mini and from outside. */
-async function resume(deps: UpdaterDeps, site: RunSite): Promise<void> {
+export async function resume(deps: UpdaterDeps, site: RunSite): Promise<void> {
   deps.db.prepare('UPDATE sites SET updating_until = NULL WHERE id = ?').run(site.id);
   if (deps.worker) {
     const ok = await pushOutsideSites(deps.db, deps.worker, { now: deps.now, signal: deps.signal });
@@ -535,7 +548,7 @@ function recentSnapshot(db: Db, siteId: string): BackupResult {
 }
 
 /** A report, stored as the app stores one: the installed versions after an update. */
-async function freshReport(deps: UpdaterDeps, site: RunSite): Promise<CareReport | null> {
+export async function freshReport(deps: UpdaterDeps, site: RunSite): Promise<CareReport | null> {
   const result = await deps.send(
     new URL(site.url),
     deps.keys.report,
@@ -576,7 +589,10 @@ async function freshReport(deps: UpdaterDeps, site: RunSite): Promise<CareReport
   return parsed.data;
 }
 
-function installedVersion(report: CareReport, item: Item): string | null {
+export function installedVersion(
+  report: CareReport,
+  item: Pick<Item, 'type' | 'item'>,
+): string | null {
   if (item.type === 'core') return report.core.version;
   if (item.type === 'plugin')
     return report.plugins.find((p) => p.file === item.item)?.version ?? null;
@@ -588,7 +604,7 @@ function installedVersion(report: CareReport, item: Item): string | null {
  * its expected text and no PHP error, each important page, no new Site Health critical item,
  * and no .maintenance left. Passing means these passed, nothing more.
  */
-async function runChecks(
+export async function runChecks(
   deps: UpdaterDeps,
   site: RunSite,
   siteHealth: string[],

@@ -1008,6 +1008,8 @@ export const FinishedRunView = z.object({
   lines: z.array(z.string()),
   /** Its first site's place on Updates: /updates#<anchor>. */
   anchor: z.string(),
+  /** Where its toast's link goes instead, for a rollback: the site's page. */
+  href: z.string().optional(),
 });
 export type FinishedRunView = z.infer<typeof FinishedRunView>;
 
@@ -1312,3 +1314,94 @@ export const PasskeyChallenge = z.object({
   ids: z.array(z.string()),
 });
 export type PasskeyChallenge = z.infer<typeof PasskeyChallenge>;
+
+/** Rollback (ops/rollback-plan.md): one item a rollback puts back. */
+export const RollbackItemView = z.object({
+  type: z.enum(['core', 'plugin', 'theme']),
+  name: z.string(),
+  /** What the site has now (what the run installed). */
+  now: z.string(),
+  /** What it goes back to. */
+  back: z.string(),
+});
+export type RollbackItemView = z.infer<typeof RollbackItemView>;
+
+/** What the database box would lose: counted on the site, read only, before the passkey. */
+export const RollbackCounts = z.object({
+  /** Null when the site isn't a WooCommerce shop. */
+  orders: z.number().int().nullable(),
+  comments: z.number().int(),
+  users: z.number().int(),
+});
+export type RollbackCounts = z.infer<typeof RollbackCounts>;
+
+/** Asking for the count, for the run Roll back would undo. */
+export const RollbackCountRequest = z.object({ batchId: z.string().min(1).max(64) });
+export type RollbackCountRequest = z.infer<typeof RollbackCountRequest>;
+
+/** A count as it stands: asked, being counted by the backups process, or its answer. */
+export const RollbackCountView = z.object({
+  id: z.string(),
+  state: z.enum(['waiting', 'running', 'done', 'failed']),
+  /** The restore point counted from. */
+  since: Timestamp,
+  counts: RollbackCounts.nullable(),
+  problem: z.string().nullable(),
+});
+export type RollbackCountView = z.infer<typeof RollbackCountView>;
+
+/** A rollback or undo as it stands, from asked to checked. */
+export const RollbackView = z.object({
+  id: z.string(),
+  kind: z.enum(['rollback', 'undo']),
+  state: z.enum(['waiting', 'running', 'done', 'failed']),
+  requestedAt: Timestamp,
+  requestedBy: z.string(),
+  finishedAt: Timestamp.nullable(),
+  withDatabase: z.boolean(),
+  databaseAt: Timestamp.nullable(),
+  step: z.string().nullable(),
+  problem: z.string().nullable(),
+  /** What the push left: none, files, all, partial, broken or unknown (migrations.ts, 27). */
+  changed: z.string().nullable(),
+  warnings: z.array(z.string()),
+  /** The checks after: null until they've run (or when nothing changed). */
+  checksOk: z.boolean().nullable(),
+  checksProblem: z.string().nullable(),
+  items: z.array(RollbackItemView),
+});
+export type RollbackView = z.infer<typeof RollbackView>;
+
+export const SiteRollbackResponse = z.object({
+  /** What Roll back would do now; null with `why` when it isn't offered. */
+  offer: z
+    .object({
+      batchId: z.string(),
+      runApprovedAt: Timestamp,
+      snapshotAt: Timestamp,
+      /** The database it would put back: craftish's export before the run, or the snapshot's. */
+      databaseAt: Timestamp,
+      databaseFrom: z.enum(['export', 'snapshot']),
+      items: z.array(RollbackItemView),
+      majorCore: z.boolean(),
+      prominent: z.boolean(),
+    })
+    .nullable(),
+  why: z.string().nullable(),
+  latest: RollbackView.nullable(),
+  undo: z.object({ rollbackId: z.string(), canDatabase: z.boolean(), until: Timestamp }).nullable(),
+  undoWhy: z.string().nullable(),
+});
+export type SiteRollbackResponse = z.infer<typeof SiteRollbackResponse>;
+
+export const RollbackRequest = z.object({
+  batchId: z.string().min(1).max(64),
+  withDatabase: z.boolean(),
+});
+export type RollbackRequest = z.infer<typeof RollbackRequest>;
+
+export const UndoRequest = z.object({
+  rollbackId: z.string().regex(/^[0-9a-f]{16}$/),
+  withDatabase: z.boolean(),
+});
+export type UndoRequest = z.infer<typeof UndoRequest>;

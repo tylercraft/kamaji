@@ -294,6 +294,11 @@ export function kinstaCommand(
   script: Script,
   body: string = readScript(script),
 ): string[] | null {
+  return kinstaSsh(db, ssh, siteId, remoteCommand(body, script, siteId));
+}
+
+/** ssh's argv to run `remote` on a Kinsta site's login (rollback/ssh.ts sends the push this way). */
+export function kinstaSsh(db: Db, ssh: KinstaSsh, siteId: string, remote: string): string[] | null {
   const r = accessRow(db, siteId);
   if (!r) return null;
   return [
@@ -319,6 +324,6 @@ export function kinstaCommand(
     String(r.user),
     '--',
     String(r.host),
-    remoteCommand(body, script, siteId),
+    remote,
   ];
 }

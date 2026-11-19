@@ -10,6 +10,9 @@ import {
   ApproveRequest,
   ConfigureSiteRequest,
   KinstaAccessInput,
+  RollbackCountRequest,
+  RollbackRequest,
+  UndoRequest,
   DetectPlatformRequest,
   type DetectPlatformResponse,
   WholeSiteRequest,
@@ -32,6 +35,8 @@ import { z } from 'zod';
 import { openDownload, type FetchExport } from './backups/download.js';
 import { latestExport, recordEvidence, siteBackups } from './backups/evidence.js';
 import { okSize, requestTest, saveAccess } from './sitebackups/kinsta.js';
+import { requestRollback, requestUndo, siteRollback } from './rollback/request.js';
+import { countView, requestCount } from './rollback/count.js';
 import { requestWholeSite } from './sitebackups/view.js';
 import type { CareKeys } from './care/keys.js';
 import { pluginZip } from './care/zip.js';
@@ -160,8 +165,10 @@ const PASSKEY_FREE = new Set([
 // Domain check: the daily RDAP read of the site's renewal date, now.
 // Kinsta's Test connection: fixed read-only commands over SSH (kinsta-pull/test). Saving the
 // access and okaying a size take a passkey.
+// Rollback's count: orders, comments and users since the restore point, read only, for the
+// dialog before the passkey.
 const PASSKEY_FREE_SITE_STEP =
-  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test)$/;
+  /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test|rollback\/count)$/;
 // Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
 const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
@@ -176,11 +183,13 @@ const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
  *
  * Approving a batch always signs: the updater checks that approval's own signature again before
  * it runs anything (passkeys/guard.ts, approvalProblem), so a batch written straight into the
- * database doesn't run. An approval sent under the window would have no signature to check.
+ * database doesn't run. An approval sent under the window would have no signature to check. A
+ * rollback and its undo the same: the backups process checks theirs before it pushes
+ * (rollbackApprovalProblem).
  */
 export const PASSKEY_WINDOW_MS = 10 * 60_000;
 const WINDOW_COOKIE = 'kamaji_passkey';
-const SIGN_EACH_TIME = new Set(['POST /api/batches']);
+const SIGN_EACH_TIME = /^\/api\/(batches|sites\/[^/]+\/rollback(\/undo)?)$/;
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('base64url');
 
 const passkeyFree = (method: string, path: string) =>
@@ -262,7 +271,7 @@ export function createApp({
     // A passkey, for every write that starts or changes work on a site.
     const method = c.req.method;
     const guarded = !['GET', 'HEAD'].includes(method) && !passkeyFree(method, c.req.path);
-    if (guarded && !SIGN_EACH_TIME.has(`${method} ${c.req.path}`)) {
+    if (guarded && !(method === 'POST' && SIGN_EACH_TIME.test(c.req.path))) {
       for (const [hash, closes] of passkeyWindows) if (closes <= now()) passkeyWindows.delete(hash);
       const token = getCookie(c, WINDOW_COOKIE);
       if (token && passkeyWindows.has(tokenHash(token))) return next();
@@ -557,6 +566,43 @@ export function createApp({
     if (result === 'already') return c.json({ error: 'already_requested' }, 409);
     startBackups();
     return c.json({ queued: true }, 202);
+  });
+  // Rollback (rollback/): what it would do, and asking for it or its undo, each signed with the
+  // passkey, never under the window. The backups process takes what's asked, and checks the
+  // signature again first. The database box's count comes before: no passkey, read only.
+  app.get('/api/sites/:id/rollback', (c) => {
+    const id = c.req.param('id');
+    if (!db.prepare('SELECT 1 FROM sites WHERE id = ? AND removed_at IS NULL').get(id))
+      return c.json({ error: 'not_found' }, 404);
+    return c.json(siteRollback(db, id, now()));
+  });
+  app.post('/api/sites/:id/rollback/count', async (c) => {
+    const body = await readJson(c, RollbackCountRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = requestCount(db, c.req.param('id'), body, now());
+    if (!result.ok) return c.json({ error: result.error, problem: result.why }, 409);
+    startBackups();
+    return c.json({ queued: true, id: result.id }, 202);
+  });
+  app.get('/api/sites/:id/rollback/count/:count', (c) => {
+    const view = countView(db, c.req.param('id'), c.req.param('count'));
+    return view ? c.json(view) : c.json({ error: 'not_found' }, 404);
+  });
+  app.post('/api/sites/:id/rollback', async (c) => {
+    const body = await readJson(c, RollbackRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = requestRollback(db, c.req.param('id'), body, login, now(), c.get('approval'));
+    if (!result.ok) return c.json({ error: result.error, problem: result.why }, 409);
+    startBackups();
+    return c.json({ queued: true, id: result.id }, 202);
+  });
+  app.post('/api/sites/:id/rollback/undo', async (c) => {
+    const body = await readJson(c, UndoRequest);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const result = requestUndo(db, c.req.param('id'), body, login, now(), c.get('approval'));
+    if (!result.ok) return c.json({ error: result.error, problem: result.why }, 409);
+    startBackups();
+    return c.json({ queued: true, id: result.id }, 202);
   });
   // Kinsta's SSH access for whole-site backups (sitebackups/kinsta.ts): saved here; tested, and
   // pulled, by the backups process, which holds the key.

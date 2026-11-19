@@ -14,6 +14,7 @@ import { checkDirectory } from './inventory/directory.js';
 import { checkReports, reportAll } from './inventory/report.js';
 import { checkReady } from './ready.js';
 import { announceRuns } from './updates/announce.js';
+import { announceRollbacks } from './rollback/announce.js';
 import { checkWordfence } from './wordfence/feed.js';
 import { checkEndOfLife } from './endOfLife/check.js';
 import { backupsLauncher, updaterLauncher } from './updates/launcher.js';
@@ -155,6 +156,8 @@ const runChecks = async (signal: AbortSignal) => {
       await notifyNow(db, Date.now(), discord, notify);
       // Each finished run, once: what changed, or why it's held (updates/announce.ts).
       await announceRuns(db, Date.now(), discord, config.kamajiUrl, signal);
+      // Each checked rollback or undo, once (rollback/announce.ts).
+      await announceRollbacks(db, discord, config.kamajiUrl, signal);
       await sendDigest(db, Date.now(), discord, notify);
     });
     return checked + servers;

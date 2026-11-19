@@ -19,6 +19,7 @@
     "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.mjs",
     "compare:mainwp": "node scripts/guard.mjs compare:mainwp && tsc -b packages/server && node --disable-warning=ExperimentalWarning packages/server/dist/inventory/compareMainwp.js",
     "test:plugin": "NODE_EXTRA_CA_CERTS=\"$(mkcert -CAROOT)/rootCA.pem\" vitest run -c plugin/vitest.config.ts",
+    "test:rollback": "vitest run -c site-push/vitest.config.ts",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p packages/web",
     "lint": "eslint .",
     "format": "prettier --write .",

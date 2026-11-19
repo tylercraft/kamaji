@@ -14,6 +14,9 @@ import type { Restic } from './restic.js';
 import { checkPull, readTar } from './tar.js';
 import { readUpdateTime } from '../settings.js';
 import { isDue, KAMAJI_ZONE, wallClock, type Schedule } from './schedule.js';
+import { rollbacksWaiting } from '../rollback/request.js';
+import { orphaned } from '../rollback/push.js';
+import { countsWaiting, orphanedCounts } from '../rollback/count.js';
 
 const DAY = 24 * 60 * 60_000;
 export const RESTORE_EVERY = 30 * DAY;
@@ -39,6 +42,10 @@ export interface BackupsDeps {
   pullCommand: (siteId: string, host: PullHost) => string[] | null;
   /** Configure's "Test connection" on a Kinsta site, over SSH with the backups process's key. */
   kinstaTest: (siteId: string) => Promise<TestResult>;
+  /** One waiting rollback or undo, pushed to the site's host (rollback/push.ts). */
+  rollback: (id: string) => Promise<void>;
+  /** One waiting count of what the database box would lose, asked of the host (rollback/count.ts). */
+  count: (id: string) => Promise<void>;
   now: () => number;
   log: (message: string) => void;
   signal?: AbortSignal;
@@ -269,7 +276,10 @@ export interface Request {
 export function requestsWaiting(db: Db): boolean {
   return (
     db.prepare('SELECT 1 FROM site_backup_requests WHERE taken_at IS NULL LIMIT 1').get() !==
-      undefined || testsWaiting(db).length > 0
+      undefined ||
+    testsWaiting(db).length > 0 ||
+    rollbacksWaiting(db).length > 0 ||
+    countsWaiting(db).length > 0
   );
 }
 
@@ -312,6 +322,11 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
   const { db, now } = deps;
   const stopped = () => deps.signal?.aborted === true;
   const backedUp = new Set<string>();
+  // Only one backups process runs at a time, so a rollback still "running" was left by one that
+  // stopped part way: none can still be going.
+  orphanedCounts(db, now());
+  const left = orphaned(db, now());
+  if (left > 0) deps.log(`backups: ${left} rollback(s) left running by an earlier run`);
   /** Restore checks asked for from the panel: one stands in for the night's fallback. */
   const asked = new Set<string>();
   // Requests first, and again after each scheduled site: an update waiting on its backup
@@ -321,6 +336,16 @@ export async function runBackups(deps: BackupsDeps): Promise<void> {
     // the updater asked for isn't. The checks wait until every backup taken here is done, so an
     // update waiting on its own backup isn't held behind one.
     const toCheck: { siteId: string; snapshotId: string | null }[] = [];
+    // Counts first: quick, read only, and the rollback dialog is waiting on one.
+    for (const id of countsWaiting(db)) {
+      if (stopped()) return;
+      await deps.count(id);
+    }
+    // Then rollbacks: a site may be down, and Tyler is waiting on it.
+    for (const id of rollbacksWaiting(db)) {
+      if (stopped()) return;
+      await deps.rollback(id);
+    }
     // Kinsta's "Test connection": quick, and Tyler is watching for it.
     for (const siteId of testsWaiting(db)) {
       if (stopped()) return;

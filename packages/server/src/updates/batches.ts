@@ -232,6 +232,12 @@ export function pendingWork(db: Db): boolean {
         `SELECT 1 FROM batch_sites s JOIN batches b ON b.id = s.batch_id
          WHERE b.state IN ('approved', 'running') AND s.state IN ('waiting', 'running') LIMIT 1`,
       )
+      .get() !== undefined ||
+    // A rollback pushed and not yet checked: the updater runs its checks (rollback/checks.ts).
+    db
+      .prepare(
+        "SELECT 1 FROM rollbacks WHERE state IN ('done', 'failed') AND checked_at IS NULL LIMIT 1",
+      )
       .get() !== undefined
   );
 }

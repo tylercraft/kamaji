@@ -392,7 +392,7 @@ Restic snapshots of a craftish site's files and a fresh database, pulled over SS
 
 - **Repository:** `/Users/tylercraft/kamaji-backups/restic`, mode 700, encrypted. Arq takes it off-site as ciphertext. Restore checks unpack into `/Users/tylercraft/kamaji-restore` (mode 700, emptied after each check), outside what Arq copies.
 - **Secrets:** Doppler project `kamaji`, config `backup`, scoped to `~/.kamaji-backups`, read by this process only. Names only: `RESTIC_PASSWORD`. Tyler keeps a copy in his password manager: without it the backups can't be read.
-- **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_KINSTA_SSH_KEY` (default `~/.ssh/kamaji-kinsta`) and `KAMAJI_KINSTA_KNOWN_HOSTS` (default `~/.ssh/kamaji-kinsta.known_hosts`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
+- **Settings** (not secret): `RESTIC_REPOSITORY` in the plist. Optionally `KAMAJI_PULL_SSH_KEY` (default `~/.ssh/kamaji-pull`), `KAMAJI_PUSH_SSH_KEY` (default `~/.ssh/kamaji-push`, rollbacks), `KAMAJI_KINSTA_SSH_KEY` (default `~/.ssh/kamaji-kinsta`) and `KAMAJI_KINSTA_KNOWN_HOSTS` (default `~/.ssh/kamaji-kinsta.known_hosts`), `KAMAJI_RESTIC` (default `/opt/homebrew/bin/restic`), `KAMAJI_RESTORE_DIR` (default `~/kamaji-restore`) and `KAMAJI_DOCKER` (default `/usr/local/bin/docker`) for the process, and `KAMAJI_FETCH_SSH_KEY` (default `~/.ssh/kamaji-fetch`) for the app.
 - **Log:** `~/Library/Logs/kamaji-backups.log`: one line per site, never restic's own output. Results go to Activity and the site's Backups panel. A failed backup or restore check goes to Discord at once; a backup 2 days overdue goes in the morning digest.
 
 Tyler runs these one at a time, in order.
@@ -709,13 +709,131 @@ Remove it only once you know why it changed (Kinsta moved the site, say), then T
 /usr/bin/ssh-keygen -R '[HOST]:PORT' -f /Users/tylercraft/.ssh/kamaji-kinsta.known_hosts
 ```
 
+## Rollback
+
+Putting a site back the way it was before an update run, from the site's page (`ops/rollback-plan.md`), and undoing that. The backups process does it, with a key of its own on craftish, forced to `kamaji-site-push` (`site-push/README.md`); on Kinsta it uses Kinsta's key, which the pulls already have, so Kinsta needs nothing new. The updater runs the checks after, and the app tells Discord. Before it pushes, the backups process checks the request's passkey signature against `/etc/kamaji/passkeys`, as the updater does for a batch. Nothing else changes on the mini: no new LaunchAgent or secret.
+
+Tyler runs these one at a time, in order.
+
+On the mini:
+
+1. Make the push key (no passphrase: the process can't type one):
+
+```
+/usr/bin/ssh-keygen -t ed25519 -N '' -C kamaji-push@molcajete -f /Users/tylercraft/.ssh/kamaji-push
+```
+
+2. Show its public key, to paste in step 11:
+
+```
+/bin/cat /Users/tylercraft/.ssh/kamaji-push.pub
+```
+
+On the laptop:
+
+3. Copy the two scripts up (not `check`: it's for a throwaway container, never craftish):
+
+```
+/usr/bin/scp /Users/tyler/kamaji/site-push/kamaji-site-push /Users/tyler/kamaji/site-push/push craftish:/tmp/
+```
+
+On craftish (`ssh craftish`):
+
+4. Check what the push needs is there (expect five paths). If `setfacl` and `getfacl` are missing, install them with `sudo apt-get install acl`: without them, a core rollback is refused rather than leaving core files your SFTP user can't write:
+
+```
+command -v setfacl getfacl flock realpath tac
+```
+
+5. Install them, owned by root:
+
+```
+sudo install -m 755 -o root -g root /tmp/kamaji-site-push /usr/local/bin/ && sudo install -m 755 -o root -g root /tmp/push /usr/local/lib/kamaji/site-push && rm /tmp/kamaji-site-push /tmp/push
+```
+
+6. Make its user (a shell only so sshd can run the forced command; it has no password):
+
+```
+sudo adduser --system --group --home /var/lib/kamaji-push --shell /bin/sh kamaji-push
+```
+
+7. The one sudo rule, written to a file:
+
+```
+echo 'kamaji-push ALL=(www-data) NOPASSWD: /usr/local/lib/kamaji/site-push' | sudo tee /etc/sudoers.d/kamaji-push && sudo chmod 440 /etc/sudoers.d/kamaji-push
+```
+
+8. Check sudo accepts it (expect `parsed OK`; if not, delete the file before anything else):
+
+```
+sudo visudo -cf /etc/sudoers.d/kamaji-push
+```
+
+9. The push's allowlist, with the one site to start:
+
+```
+echo aleyahoerlein.com | sudo tee /etc/kamaji/site-push.sites && sudo chmod 644 /etc/kamaji/site-push.sites
+```
+
+10. Check www-data can read the site's exports and make the holding folder beside `public` (expect `ok`):
+
+```
+sudo -u www-data test -r /var/backups/kamaji/aleyahoerlein.com && sudo -u www-data test -w /var/www/aleyahoerlein.com && echo ok
+```
+
+11. Give the user the key, with the line from `site-push/README.md` (the whole line between the quotes, step 2's key at the end):
+
+```
+sudo install -d -m 700 -o kamaji-push -g kamaji-push /var/lib/kamaji-push/.ssh && printf '%s\n' 'PASTE-THE-PUSH-LINE' | sudo tee /var/lib/kamaji-push/.ssh/authorized_keys && sudo chown kamaji-push: /var/lib/kamaji-push/.ssh/authorized_keys && sudo chmod 600 /var/lib/kamaji-push/.ssh/authorized_keys
+```
+
+12. Check sshd will let that user in (if this prints an `allowusers` or `allowgroups` line, add `kamaji-push` to it and reload sshd):
+
+```
+sudo sshd -T | grep -i -E '^(allowusers|allowgroups|denyusers)'
+```
+
+13. Check it refuses a site off the list (expect `"problem":"not on the push allowlist"`):
+
+```
+sudo -u kamaji-push env SSH_ORIGINAL_COMMAND='result example.com 0123456789abcdef rollback' /usr/local/bin/kamaji-site-push
+```
+
+14. Check it answers for one on the list, changing nothing (expect `"problem":"no such rollback here"`):
+
+```
+sudo -u kamaji-push env SSH_ORIGINAL_COMMAND='result aleyahoerlein.com 0123456789abcdef rollback' /usr/local/bin/kamaji-site-push
+```
+
+On the mini:
+
+15. Check the key can't do anything else (expect `"problem":"not a site name"`, never `uid=…`):
+
+```
+/usr/bin/ssh -i /Users/tylercraft/.ssh/kamaji-push -o IdentitiesOnly=yes -o UserKnownHostsFile=/Users/tylercraft/.ssh/kamaji_known_hosts -T kamaji-push@100.77.122.31 id
+```
+
+16. Deploy Kamaji (migration 27 adds the rollback tables):
+
+```
+/Users/tylercraft/kamaji/ops/deploy.sh
+```
+
+The first rollback, on aleyahoerlein.com, waits for Tyler's review: an update run there with Kamaji's whole-site backup first, then the site → Updates → Rollback → Roll back…, files only. Then Undo rollback…; then the same with the database. Each shows on the site's page and in Activity, with one Discord line. Then, for Briardale on Kinsta: files only first, while you watch. A site on Kinsta needs only its Kinsta SSH access, saved and tested.
+
+If a rollback stops part way (Discord says "left it part way"), nothing more runs on that site until it's looked at. Its folder on the server holds the journal of what moved and the database saved first:
+
+```
+sudo ls -la /var/www/aleyahoerlein.com/.kamaji-rollback/
+```
+
 ## Passkeys
 
 TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake and refreshing a report don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
 
 The passkeys Kamaji accepts are in `/etc/kamaji/passkeys`, one JSON line each, a file only root can change. Kamaji and every agent on the mini run as `tylercraft`, so a list kept anywhere `tylercraft` can write, Kamaji's database included, an agent could add its own key to. Kamaji refuses the file if it or `/etc/kamaji` isn't root's and writable by root only. It's read on every check, so a change takes effect at once, without a restart.
 
-An approval keeps the request as signed and its proof. The updater checks both again before it runs a batch, against the same file, and holds a batch whose approval doesn't hold, with an urgent issue: so a batch written straight into the database, changed after approval, or reusing an approval doesn't run.
+An approval keeps the request as signed and its proof. The updater checks both again before it runs a batch, against the same file, and holds a batch whose approval doesn't hold, with an urgent issue: so a batch written straight into the database, changed after approval, or reusing an approval doesn't run. A rollback and its undo work the same way: always signed (the 10-minute window doesn't cover them, as it doesn't cover approving a batch), and checked again by the backups process before it pushes, which stops one whose approval doesn't hold with nothing changed. The rollback dialog's count needs no passkey: it only reads the site's database.
 
 ### First setup
 

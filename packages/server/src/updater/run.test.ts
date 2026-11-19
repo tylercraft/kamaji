@@ -756,3 +756,72 @@ describe('a whole-site backup before an update', () => {
     ).toEqual({ n: 0 });
   });
 });
+
+describe('rollbacks, from the updater’s side', () => {
+  /** A rollback the backups process pushed for the run that took Akismet to 5.7.2. */
+  function pushed(db: Db, changed = 'all') {
+    const batchId = String(db.prepare('SELECT id FROM batches').get()!.id);
+    db.prepare(
+      `INSERT INTO rollbacks (id, kind, site_id, batch_id, host, requested_at, requested_by,
+         with_database, state, changed, step, finished_at)
+       VALUES ('r1', 'rollback', ?, ?, 'craftish', ?, 'tyler', 0, 'done', ?, 'done', ?)`,
+    ).run(SITE, batchId, T, changed, T);
+    db.prepare(
+      `INSERT INTO rollback_items (rollback_id, position, type, item, name, now_version, back_version)
+       VALUES ('r1', 0, 'plugin', 'akismet/akismet.php', 'Akismet', '5.7.2', '5.3')`,
+    ).run();
+    db.prepare('UPDATE sites SET updating_until = ? WHERE id = ?').run(T + 15 * 60_000, SITE);
+  }
+  const checked = (db: Db) =>
+    db.prepare('SELECT checked_at, checks_ok, checks_problem FROM rollbacks').get();
+
+  it('holds a site’s run while a rollback waits for it', async () => {
+    const { db, deps } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    const batchId = String(db.prepare('SELECT id FROM batches').get()!.id);
+    db.prepare(
+      `INSERT INTO rollbacks (id, kind, site_id, batch_id, host, requested_at, requested_by, with_database, state)
+       VALUES ('r0', 'rollback', ?, ?, 'craftish', ?, 'tyler', 0, 'waiting')`,
+    ).run(SITE, batchId, T);
+    await runUpdater(deps());
+    expect(db.prepare('SELECT state, held_reason FROM batch_sites').get()).toEqual({
+      state: 'held',
+      held_reason: 'Held: a rollback is waiting or running for this site',
+    });
+    expect(outcomes(db).every(([, state]) => state === 'held')).toBe(true);
+  });
+
+  it('checks a pushed rollback as an update is checked, the versions from a fresh report, then ends the pause', async () => {
+    const { db, deps, site, worker } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater(deps());
+    expect(site.akismet).toBe('5.7.2');
+    pushed(db);
+    site.akismet = '5.3';
+    worker.length = 0;
+    await runUpdater(deps());
+    expect(checked(db)).toEqual({ checked_at: T, checks_ok: 1, checks_problem: null });
+    expect(db.prepare('SELECT updating_until FROM sites').get()!.updating_until).toBeNull();
+    expect(worker).toContain(`POST /v1/check/${SITE}`);
+    expect(
+      db.prepare("SELECT summary FROM events WHERE kind = 'site.rollback'").get()!.summary,
+    ).toBe('Rolled back One: Akismet 5.7.2 → 5.3; checks passed');
+  });
+
+  it('fails the checks when the report doesn’t show what the rollback put back, or the home page fails', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater(deps());
+    pushed(db);
+    site.homeOk = false;
+    await runUpdater(deps());
+    expect(checked(db)).toEqual({
+      checked_at: T,
+      checks_ok: 0,
+      checks_problem: 'home page: PHP error on the page; Akismet is at 5.7.2, not 5.3',
+    });
+    expect(
+      db.prepare("SELECT summary FROM events WHERE kind = 'site.rollback-failed'").get()!.summary,
+    ).toContain('checks failed');
+  });
+});

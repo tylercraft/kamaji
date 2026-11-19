@@ -45,7 +45,7 @@ export function NewsProvider({ children }: { children: ReactNode }) {
         duration: held ? Infinity : 15_000,
         action: {
           label: 'See the run',
-          onClick: () => window.location.assign(`/updates#${run.anchor}`),
+          onClick: () => window.location.assign(run.href ?? `/updates#${run.anchor}`),
         },
       });
     }
