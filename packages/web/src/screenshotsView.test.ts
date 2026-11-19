@@ -16,6 +16,7 @@ const shot = (o: Partial<ShotView> = {}): ShotView => ({
   blocked: false,
   jsErrors: 0,
   failedRequests: 0,
+  blockedRequests: 0,
   problem: null,
   ...o,
 });

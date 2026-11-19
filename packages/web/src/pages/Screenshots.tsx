@@ -162,6 +162,9 @@ function Comparison({
           ? ` After: ${c.after?.jsErrors ?? 0} JavaScript errors and ${c.after?.failedRequests ?? 0} failed requests in all.`
           : ''}
         {c.after?.cut ? ' The page is taller than 15,000 px, so it was cut there.' : ''}
+        {(c.after?.blockedRequests ?? 0) > 0
+          ? ` ${c.after?.blockedRequests} ${c.after?.blockedRequests === 1 ? 'request' : 'requests'} to the mini, the LAN or the tailnet blocked.`
+          : ''}
       </Muted>
       <div
         css={{

@@ -1090,6 +1090,8 @@ export const ShotView = z.object({
   blocked: z.boolean(),
   jsErrors: z.number().int(),
   failedRequests: z.number().int(),
+  /** Requests the guard refused: to the mini, the LAN or the tailnet. Not the site's failure. */
+  blockedRequests: z.number().int(),
   problem: z.string().nullable(),
 });
 export type ShotView = z.infer<typeof ShotView>;

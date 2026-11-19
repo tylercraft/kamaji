@@ -138,6 +138,7 @@ In report-only mode a screenshot failure never fails, holds or delays an update 
 - Browsers other than Chromium, and sizes other than 1440 and 390.
 - Comparing across runs (drift since last month) beyond the manual set's look at the previous one.
 - Sending the shots anywhere: they stay on the mini.
+- DNS rebinding (Tyler, 2026-11-19). The guard (below) does connect to the exact address it checked, so a name that answers with a public address at the check and a private one a moment later still can't get the browser in. What it doesn't cover is DNS itself: the browser's own lookups go to Docker's resolver.
 
 ## Settled (Tyler, 2026-11-19)
 
@@ -160,3 +161,14 @@ Where the build differs from the plan above:
 - **Console errors that are failed loads aren't counted twice.** Chromium logs `Failed to load resource: …` as a console error for every request that failed, blocked ones included (captured in `shots/fixtures/chromium-console.txt`); those are counted as failed requests (or not at all, when Kamaji blocked them), never as JavaScript errors.
 - **The end-to-end test uses a fixture page served from the laptop,** not the DDEV site: the container reaches the laptop through Docker Desktop's `host.docker.internal`, but not DDEV's `*.ddev.site` names without changing the run's own flags. The fixture has what matters: an animation, a carousel, a lazy image, a cookie banner, an analytics tag; then the same page unchanged, and broken.
 - **Changed** means 1% or more of the pixels outside the masks, a different height, a new JavaScript error or failed request, or a page shot before and not after (unless a bot check answered). It's only words and a count: nothing holds.
+
+### The guard: no way to the mini, the LAN or the tailnet
+
+The browser has the internet, so a page it loads could reach the mini through `host.docker.internal` (the \*arr apps, Transmission and the Calcifer dashboard listen on 127.0.0.1), the LAN or the tailnet (Tyler, 2026-11-19). `shots/guard.mjs` is a forward proxy in the container that Chromium has to use for every connection, loopback included (`<-loopback>`), with QUIC off and WebRTC kept to proxied connections. It refuses, before connecting:
+
+- names: `host.docker.internal`, `gateway.docker.internal` and anything else under `.internal`; `localhost` and `*.localhost`; `*.local`; any `*.ts.net`; a name without a dot (a search domain could make it a tailnet host);
+- addresses, written in the URL or resolved from a name: loopback, RFC 1918, 100.64.0.0/10, link-local (169.254/16, fe80::/10), 0/8, `::1`, `::`, fc00::/7, and private IPv4 mapped or translated into IPv6.
+
+The only exception is the site under test: its own origins (scheme, host and port of its pages), so the accounting sites, which are tailnet hosts, still load. Their other ports don't.
+
+It's a proxy rather than Playwright's route handler because the route handler never sees a redirect's next hop (tested: a page's 302 to `http://127.0.0.1` went straight past it). Through the proxy, each hop is a request of its own and is checked. A refused request is counted as blocked (`screenshots.blocked_requests`), never as a failed request or a JavaScript error. The console errors Chromium logs for one (a WebSocket's failed tunnel, a CORS error for the 403) aren't counted either, since they name a URL the guard refused (`shots/fixtures/chromium-console.txt`). `npm run test:shots` has a page that tries `host.docker.internal` on another port, `127.0.0.1`, `192.168.1.1` and another `.ts.net` host, plus a redirect, a `fetch()` and a WebSocket to the mini. All of them are refused, the stand-in for the mini gets no request, and the page still shoots.

@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
+import { hostPort, originOf, startGuard } from './guard.mjs';
 
 const { chromium } = createRequire('/usr/lib/node_modules/')('playwright-core');
 
@@ -31,6 +32,26 @@ const fingerprint = (text) =>
     )
     .digest('hex')
     .slice(0, 16);
+
+// What the guard refused while the current shot loads: counted as blocked, never as failed.
+let refused = { count: 0, hosts: new Set() };
+const requestHost = (request) => {
+  try {
+    const u = new URL(request.url());
+    return hostPort(
+      u.hostname,
+      u.port || (u.protocol === 'https:' || u.protocol === 'wss:' ? '443' : '80'),
+    );
+  } catch {
+    return '';
+  }
+};
+
+/** Whether a console message names a URL whose host:port the guard refused in this shot. */
+const namesRefused = (text) =>
+  [...text.matchAll(/\b(?:https?|wss?):\/\/[^\s'"]+/g)].some(([u]) =>
+    refused.hosts.has(requestHost({ url: () => u })),
+  );
 
 const blockedHost = (host) => job.blocked.some((b) => host === b || host.endsWith(`.${b}`));
 
@@ -60,6 +81,7 @@ async function shoot(browser, round, position, url, viewport) {
   });
   const jsKeys = [];
   const failedKeys = [];
+  refused = { count: 0, hosts: new Set() };
   try {
     await context.route('**/*', (route) => {
       let host = '';
@@ -76,17 +98,24 @@ async function shoot(browser, round, position, url, viewport) {
     page.on('popup', (p) => p.close().catch(() => {}));
     page.on('pageerror', (e) => jsKeys.push(fingerprint(`${e.name}: ${e.message}`)));
     page.on('console', (m) => {
-      // A load that failed is a failed request, counted below (fixtures/chromium-console.txt).
-      if (m.type() === 'error' && !m.text().startsWith('Failed to load resource:'))
+      // A load that failed is a failed request, counted below; one the guard refused is Kamaji's
+      // doing, whatever Chromium says about it (fixtures/chromium-console.txt).
+      if (
+        m.type() === 'error' &&
+        !m.text().startsWith('Failed to load resource:') &&
+        !namesRefused(m.text())
+      )
         jsKeys.push(fingerprint(`${m.text()} ${m.location().url}`));
     });
     page.on('requestfailed', (r) => {
       const why = r.failure()?.errorText ?? 'failed';
       // What Kamaji blocked isn't the site's failure.
-      if (!why.includes('BLOCKED_BY_CLIENT')) failedKeys.push(requestKey(r, 'failed'));
+      if (!why.includes('BLOCKED_BY_CLIENT') && !refused.hosts.has(requestHost(r)))
+        failedKeys.push(requestKey(r, 'failed'));
     });
     page.on('response', (r) => {
-      if (r.status() >= 400) failedKeys.push(requestKey(r.request(), r.status()));
+      if (r.status() >= 400 && !r.headers()['x-kamaji-blocked'])
+        failedKeys.push(requestKey(r.request(), r.status()));
     });
 
     const response = await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
@@ -204,6 +233,9 @@ async function shoot(browser, round, position, url, viewport) {
       jsKeys: [...new Set(jsKeys)].slice(0, 100),
       failedRequests: failedKeys.length,
       failedKeys: [...new Set(failedKeys)].slice(0, 100),
+      blockedRequests: refused.count,
+      // For the end-to-end test only; Kamaji keeps the count.
+      blockedHosts: [...refused.hosts].slice(0, 20),
     });
   } catch (error) {
     const what =
@@ -214,13 +246,31 @@ async function shoot(browser, round, position, url, viewport) {
       problem: what,
       jsErrors: jsKeys.length,
       failedRequests: failedKeys.length,
+      blockedRequests: refused.count,
     });
   } finally {
     await context.close().catch(() => {});
   }
 }
 
-const browser = await chromium.launch({ chromiumSandbox: true, args: ['--disable-dev-shm-usage'] });
+const guard = await startGuard({
+  own: new Set(job.pages.map(originOf)),
+  blocked: (where) => {
+    refused.count += 1;
+    refused.hosts.add(where);
+  },
+});
+const browser = await chromium.launch({
+  chromiumSandbox: true,
+  // Every connection through the guard, loopback too (<-loopback> takes away Chromium's own
+  // exception for it); no QUIC, which a proxy can't carry; and WebRTC kept from going around it.
+  proxy: { server: guard.server, bypass: '<-loopback>' },
+  args: [
+    '--disable-dev-shm-usage',
+    '--disable-quic',
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+  ],
+});
 try {
   for (let round = 1; round <= job.rounds; round += 1) {
     if (round > 1) await delay(job.gapMs);
@@ -229,5 +279,6 @@ try {
   }
 } finally {
   await browser.close().catch(() => {});
+  guard.close();
 }
 say({ kind: 'done' });

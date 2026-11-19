@@ -744,7 +744,8 @@ export const migrations: Migration[] = [
     // seconds apart, and what differs between its rounds is masked when it's compared. A
     // comparison is one page and size, a later set against an earlier one. The images live on
     // disk (data/screenshots/<site>/<set>/), never here. A JavaScript error or failed request is
-    // kept only as a count and a fingerprint (a hash), never its text. sites.screenshot_hide and
+    // kept only as a count and a fingerprint (a hash), never its text; a request the browser's
+    // guard refused (the mini, the LAN, the tailnet) only as a count. sites.screenshot_hide and
     // screenshot_mask are CSS selectors (JSON lists): hidden before every shot (cookie banners,
     // chat bubbles), or left out of every comparison (a cart count, a date).
     sql: `
@@ -782,6 +783,7 @@ export const migrations: Migration[] = [
         js_keys TEXT NOT NULL DEFAULT '[]',
         failed_requests INTEGER NOT NULL DEFAULT 0,
         failed_keys TEXT NOT NULL DEFAULT '[]',
+        blocked_requests INTEGER NOT NULL DEFAULT 0,
         masks TEXT NOT NULL DEFAULT '[]',
         problem TEXT,
         UNIQUE (set_id, round, position, viewport)

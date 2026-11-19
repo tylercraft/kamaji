@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { Exec } from '../sitebackups/restore.js';
 
 export const IMAGE = 'kamaji-shots';
-const FILES = ['Dockerfile', '.dockerignore', 'shoot.mjs'];
+const FILES = ['Dockerfile', '.dockerignore', 'shoot.mjs', 'guard.mjs'];
 const BUILD_MS = 30 * 60_000;
 
 /** kamaji-shots:<12 hex>, from the files the image is built from. */

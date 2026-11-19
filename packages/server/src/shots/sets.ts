@@ -153,6 +153,7 @@ function shotView(r: Row): ShotView {
     blocked: Number(r.blocked) === 1,
     jsErrors: Number(r.js_errors),
     failedRequests: Number(r.failed_requests),
+    blockedRequests: Number(r.blocked_requests),
     problem: text(r.problem),
   };
 }

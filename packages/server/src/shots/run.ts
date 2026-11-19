@@ -83,6 +83,7 @@ const ShotLine = z.object({
     .optional(),
   failedRequests: z.number().int().min(0).optional(),
   failedKeys: z.array(z.string().max(400)).max(100).optional(),
+  blockedRequests: z.number().int().min(0).optional(),
   problem: z.string().max(200).optional(),
 });
 type ShotLine = z.infer<typeof ShotLine>;
@@ -233,8 +234,8 @@ export async function runSet(deps: ShotsDeps, id: string): Promise<void> {
   const insert = db.prepare(
     `INSERT OR REPLACE INTO screenshots (set_id, round, position, page_url, viewport, file, thumb,
        width, height, cut, quiet, status, blocked, js_errors, js_keys, failed_requests,
-       failed_keys, masks, problem)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       failed_keys, blocked_requests, masks, problem)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   let good = 0;
   for (const s of shots) {
@@ -263,6 +264,7 @@ export async function runSet(deps: ShotsDeps, id: string): Promise<void> {
       JSON.stringify(s.jsKeys ?? []),
       s.failedRequests ?? 0,
       JSON.stringify(s.failedKeys ?? []),
+      s.blockedRequests ?? 0,
       JSON.stringify(s.masks ?? []),
       ok ? null : (s.problem ?? 'the browser took no shot'),
     );

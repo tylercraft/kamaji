@@ -15,7 +15,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../packages/server/src/db.js';
 import { realExec } from '../packages/server/src/sitebackups/exec.js';
 import { ensureImage } from '../packages/server/src/shots/image.js';
-import { runShots, type ShotsDeps } from '../packages/server/src/shots/run.js';
+import {
+  dockerArgs,
+  readShots,
+  runShots,
+  VIEWPORTS,
+  type ShotsDeps,
+} from '../packages/server/src/shots/run.js';
 import { requestSet, saveSettings, setView } from '../packages/server/src/shots/sets.js';
 import { testDb } from '../packages/server/src/testing.js';
 
@@ -28,8 +34,29 @@ let mode: 'normal' | 'broken' = 'normal';
 const requests: string[] = [];
 let server: Server;
 let port = 0;
+/** Stands in for what listens on the mini's 127.0.0.1: nothing may reach it. */
+let mini: Server;
+let miniPort = 0;
+const miniHits: string[] = [];
 let db: Db;
 let deps: ShotsDeps;
+
+/** A page that tries the mini, its loopback, the LAN and another tailnet host, every way. */
+function probe(): string {
+  const at = `host.docker.internal:${miniPort}`;
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body>
+<h1>Probe</h1>
+<img src="http://${at}/img" width="10" height="10" alt="">
+<img src="http://127.0.0.1:${miniPort}/loopback" width="10" height="10" alt="">
+<img src="http://192.168.1.1/lan" width="10" height="10" alt="">
+<img src="https://other.tailb3044a.ts.net/tailnet" width="10" height="10" alt="">
+<img src="/redirect" width="10" height="10" alt="">
+<script>
+  fetch('http://${at}/fetch').catch(() => {});
+  try { const w = new WebSocket('ws://${at}/ws'); w.onerror = () => {}; } catch {}
+</script>
+</body></html>`;
+}
 
 function page(): string {
   const broken = mode === 'broken';
@@ -62,8 +89,23 @@ ${broken ? '<div style="height:400px;background:#fcc">An update broke this.</div
 }
 
 beforeAll(async () => {
+  mini = createServer((req, res) => {
+    miniHits.push(req.url ?? '');
+    res.end('the mini');
+  });
+  await new Promise<void>((resolve) => mini.listen(0, '127.0.0.1', resolve));
+  miniPort = (mini.address() as { port: number }).port;
   server = createServer((req, res) => {
     requests.push(req.url ?? '');
+    if (req.url === '/probe') {
+      res.setHeader('Content-Type', 'text/html');
+      return res.end(probe());
+    }
+    // The site itself redirecting to the mini: the browser's next hop is checked too.
+    if (req.url === '/redirect') {
+      res.writeHead(302, { Location: `http://host.docker.internal:${miniPort}/redirected` });
+      return res.end();
+    }
     if (req.url === '/lazy.svg') {
       res.setHeader('Content-Type', 'image/svg+xml');
       return res.end(
@@ -103,6 +145,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   server?.close();
+  mini?.close();
 });
 
 const ask = (kind: 'before' | 'after' | 'manual') =>
@@ -172,6 +215,50 @@ describe('screenshots with the real browser', () => {
         expect(c.changedPct!).toBeGreaterThan(1);
         expect(c.diff).toMatch(/^\/api\/screenshots\/[0-9a-f]{16}\/diff-p0-(desktop|mobile)\.png$/);
       }
+    },
+    5 * 60_000,
+  );
+
+  it(
+    'blocks the mini, its loopback, the LAN and another tailnet host, and still shoots the page',
+    async () => {
+      const out = mkdtempSync(join(tmpdir(), 'kamaji-shots-probe-'));
+      const job = {
+        rounds: 1,
+        gapMs: 0,
+        pages: [`http://host.docker.internal:${port}/probe`],
+        viewports: VIEWPORTS,
+        hide: [],
+        mask: [],
+        blocked: [],
+        maxHeight: 15_000,
+      };
+      const ran = await realExec()(DOCKER, dockerArgs(deps, 'kamaji-shots-probe', out, job), {
+        timeoutMs: 120_000,
+      });
+      const lines = ran.stdout
+        .split('\n')
+        .filter((l) => l.includes('"kind":"shot"'))
+        .map((l) => JSON.parse(l) as { blockedHosts: string[] });
+      const { shots } = readShots(ran.stdout);
+      expect(shots).toHaveLength(2);
+      for (const [i, s] of shots.entries()) {
+        expect(s).toMatchObject({ ok: true, status: 200, failedRequests: 0, jsErrors: 0 });
+        expect(new Set(lines[i]!.blockedHosts)).toEqual(
+          new Set([
+            `host.docker.internal:${miniPort}`,
+            `127.0.0.1:${miniPort}`,
+            '192.168.1.1:80',
+            'other.tailb3044a.ts.net:443',
+          ]),
+        );
+        // The four images, the redirect's next hop, the fetch and the WebSocket.
+        expect(s.blockedRequests).toBeGreaterThanOrEqual(7);
+      }
+      expect(miniHits).toEqual([]);
+      // The site's own origin still loaded: the page, and the redirect it answered itself.
+      expect(requests).toContain('/probe');
+      expect(requests).toContain('/redirect');
     },
     5 * 60_000,
   );
