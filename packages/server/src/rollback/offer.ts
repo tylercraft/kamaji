@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import type { Db } from '../db.js';
 import { pullHost, type PullHost } from '../sitebackups/eligible.js';
 import { exportTime } from '../backups/exportTime.js';
+import { KAMAJI_ZONE } from '../sitebackups/schedule.js';
 
 const DAY = 24 * 60 * 60_000;
 /** How long the holding folder on the server keeps what a rollback replaced (site-push/push). */
@@ -85,8 +86,30 @@ export function siteBusy(db: Db, siteId: string, except: string | null = null): 
   return null;
 }
 
+/**
+ * Why a run can't be rolled back, in words about "this run" when it's the site's latest, and
+ * naming it when it isn't: after a rollback, the line is about the run before (aleyahoerlein.com,
+ * 2026-11-19), so it says which.
+ */
+interface Why {
+  latest: string;
+  earlier: string;
+}
+
+const dayFormat = new Intl.DateTimeFormat('en-NZ', {
+  timeZone: KAMAJI_ZONE,
+  day: 'numeric',
+  month: 'short',
+});
+
+function runWhy(why: Why, latest: boolean, approvedAt: number): string {
+  return latest
+    ? why.latest
+    : `The run on ${dayFormat.format(approvedAt)} can’t be rolled back: ${why.earlier}`;
+}
+
 /** The items a run changed that are still as it left them, or why the site has moved on. */
-function runItems(db: Db, batchId: string, siteId: string): RollbackItem[] | string {
+function runItems(db: Db, batchId: string, siteId: string): RollbackItem[] | Why {
   const rows = db
     .prepare(
       `SELECT type, item, name, from_version, to_version, outcome FROM batch_items
@@ -115,9 +138,16 @@ function runItems(db: Db, batchId: string, siteId: string): RollbackItem[] | str
     }
     // An item that didn't pass and isn't at its new version never went in.
     if (now === from && r.outcome !== 'passed') continue;
+    const name = String(r.name);
     return now === null
-      ? `Since this run, ${String(r.name)} has gone from the site, so it isn’t the way the run left it`
-      : `Since this run, ${String(r.name)} went from ${to} to ${now} outside Kamaji, so the site isn’t the way the run left it`;
+      ? {
+          latest: `Since this run, ${name} has gone from the site, so it isn’t the way the run left it`,
+          earlier: `${name} has gone from the site since`,
+        }
+      : {
+          latest: `Since this run, ${name} went from ${to} to ${now} outside Kamaji, so the site isn’t the way the run left it`,
+          earlier: `${name} went from ${to} to ${now} outside Kamaji since`,
+        };
   }
   return items;
 }
@@ -145,7 +175,7 @@ function restorePoint(
   startedAt: number,
   host: PullHost,
   now: number,
-): RestorePoint | string {
+): RestorePoint | Why {
   const snapshot =
     db
       .prepare(
@@ -161,9 +191,16 @@ function restorePoint(
       )
       .get(siteId, startedAt, startedAt - RELIED_ON);
   if (!snapshot)
-    return 'No whole-site backup came before this run, so Kamaji has no files to put back';
+    return {
+      latest: 'No whole-site backup came before this run, so Kamaji has no files to put back',
+      earlier: 'no whole-site backup came before it',
+    };
+  const pruned = 'been pruned (Kamaji keeps 14 days of them, then one a week and one a month)';
   if (snapshot.forgotten_at !== null)
-    return 'This run’s whole-site backup has been pruned (Kamaji keeps 14 days of them, then one a week and one a month)';
+    return {
+      latest: `This run’s whole-site backup has ${pruned}`,
+      earlier: `its whole-site backup has ${pruned}`,
+    };
   const snapshotAt = Number(snapshot.started_at);
   const exported =
     host === 'craftish'
@@ -228,15 +265,19 @@ export function rollbackOffer(
        ORDER BY b.approved_at DESC, s.batch_id DESC`,
     )
     .all(siteId);
-  for (const run of runs) {
+  for (const [n, run] of runs.entries()) {
     const batchId = String(run.batch_id);
     if (rolledBack(db, batchId, siteId)) continue;
+    const why = (w: Why) => ({
+      ok: false as const,
+      why: runWhy(w, n === 0, Number(run.approved_at)),
+    });
     const items = runItems(db, batchId, siteId);
-    if (typeof items === 'string') return { ok: false, why: items };
+    if (!Array.isArray(items)) return why(items);
     // A run that changed nothing leaves the site as the run before it left it.
     if (items.length === 0) continue;
     const point = restorePoint(db, siteId, batchId, Number(run.started_at), host!, now);
-    if (typeof point === 'string') return { ok: false, why: point };
+    if ('latest' in point) return why(point);
     const core = items.find((i) => i.type === 'core');
     return {
       ok: true,

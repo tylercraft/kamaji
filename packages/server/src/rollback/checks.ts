@@ -1,9 +1,11 @@
 // The checks after a rollback or undo, run by the updater, which holds the Care keys: the same
-// checks as after an update (updater/run.ts, runChecks), against the Site Health the run started
-// from, plus a fresh report that each item is at the version it should now be. Then the uptime
-// pause ends and the site is checked from the mini and from outside at once.
+// checks as after an update (updater/run.ts, runChecks), against the Site Health of the site's
+// last report before it was asked for, plus a fresh report that each item is at the version it
+// should now be. Then the uptime pause ends and the site is checked from the mini and from
+// outside at once.
 import type { Db } from '../db.js';
 import { recordEvent } from '../events.js';
+import { REPORT_CHECK } from '../inventory/report.js';
 import {
   freshReport,
   installedVersion,
@@ -16,17 +18,42 @@ import { rollbackItems } from './offer.js';
 
 const count = (n: number) => `${n} ${n === 1 ? 'update' : 'updates'}`;
 
-/** Site Health's critical items before the run, which aren't counted against the rollback. */
-function healthBefore(db: Db, batchId: string, siteId: string): string[] {
-  const raw = db
+/**
+ * Site Health's critical items before the rollback or undo, which aren't counted against it: the
+ * site's last good report from before it was asked for. Only when there's none, the run's own
+ * baseline, which may be days old: WordPress offering a release that came out since isn't the
+ * rollback's doing (aleyahoerlein.com, 2026-11-19).
+ */
+function healthBefore(db: Db, rollback: Record<string, unknown>): string[] {
+  const siteId = String(rollback.site_id);
+  const report = db
+    .prepare(
+      `SELECT value FROM observations WHERE resource_type = 'site' AND resource_id = ?
+         AND check_name = ? AND source = 'plugin' AND ok = 1 AND at <= ?
+       ORDER BY at DESC, id DESC LIMIT 1`,
+    )
+    .get(siteId, REPORT_CHECK, Number(rollback.requested_at))?.value;
+  if (report !== undefined) {
+    const labels = readHealth(report, (h) =>
+      h && typeof h === 'object' && 'label' in h ? (h as { label: unknown }).label : null,
+    );
+    if (labels) return labels;
+  }
+  const baseline = db
     .prepare('SELECT baseline FROM batch_sites WHERE batch_id = ? AND site_id = ?')
-    .get(batchId, siteId)?.baseline;
-  if (raw === null || raw === undefined) return [];
+    .get(String(rollback.batch_id), siteId)?.baseline;
+  return readHealth(baseline, (h) => h) ?? [];
+}
+
+/** The siteHealth list of a stored JSON value, as strings, or null when it has none. */
+function readHealth(raw: unknown, label: (h: unknown) => unknown): string[] | null {
+  if (raw === null || raw === undefined) return null;
   try {
     const parsed = JSON.parse(String(raw)) as { siteHealth?: unknown };
-    return Array.isArray(parsed.siteHealth) ? parsed.siteHealth.map(String) : [];
+    if (!Array.isArray(parsed.siteHealth)) return null;
+    return parsed.siteHealth.map(label).filter((l) => typeof l === 'string');
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -45,16 +72,13 @@ export async function checkRollbacks(deps: UpdaterDeps): Promise<void> {
     const site = siteRow(db, siteId);
     const items = rollbackItems(db, id);
     const problems: string[] = [];
+    // Read before the fresh report below, which is newer than the request.
+    const before = healthBefore(db, r);
     let ok: boolean;
     try {
       const report = await freshReport(deps, site);
       const health = report?.site_health.map((h) => h.label) ?? [];
-      const checks = await runChecks(
-        deps,
-        site,
-        health,
-        healthBefore(db, String(r.batch_id), siteId),
-      );
+      const checks = await runChecks(deps, site, health, before);
       problems.push(...checks.problems);
       if (!report) problems.push('the plugin didn’t report, so the versions aren’t confirmed');
       // The swap may have stopped part way, so each item is checked, whatever the push said.

@@ -64,6 +64,8 @@ Where Roll back isn't offered, the run says why, in one line:
 - "Since this run, Yoast SEO went from 23.2 to 23.3 outside Kamaji, so the site isn't the way the run left it." (The latest report doesn't show the run's to-versions.)
 - "A rollback or update is already running for this site."
 
+After a rollback, the line is about the run before it, so it names that run instead of "this run": "The run on 15 Nov can't be rolled back: no whole-site backup came before it." (aleyahoerlein.com trial, 2026-11-19.)
+
 Discord gets counts and the site name only:
 
 - `↩️ Rolled back Briardale Wealth: 3 updates put back, files only, checks passed`
@@ -139,7 +141,7 @@ A site is busy while it's in a batch that's approved or running, or has a backup
 
 Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback/count` (no passkey: it changes nothing; body `{ batchId }`, answers the count's id), `GET /api/sites/:id/rollback/count/:count`, `POST /api/sites/:id/rollback` (passkey each time, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey each time, body `{ rollbackId, withDatabase }`).
 
-Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause; the app's cycle sends the one Discord line, and the toast goes to whoever asked.
+Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause. Site Health is measured against the site's last report from before the rollback or undo was asked for, and only without one against the run's own baseline, which may be days old and miss a release that came out since (aleyahoerlein.com trial, 2026-11-19); the app's cycle sends the one Discord line, and the toast goes to whoever asked.
 
 ## When a step fails
 
