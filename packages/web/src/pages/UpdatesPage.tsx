@@ -46,6 +46,7 @@ import {
 } from '../runHistory';
 import { useResource } from '../useResource';
 import { WithIcon } from '../components/SiteIcon';
+import { RunScreenshotsView } from './Screenshots';
 import {
   bySite as queueBySite,
   byUpdate,
@@ -640,6 +641,7 @@ export function RunSite({
           </tbody>
         </Table>
       </div>
+      {s.screenshots && <RunScreenshotsView shots={s.screenshots} />}
       {s.state === 'held' && <HeldActions batch={b} site={s} reload={reload} />}
     </div>
   );
