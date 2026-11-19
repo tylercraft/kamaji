@@ -1,6 +1,6 @@
 # Screenshot checks plan
 
-During an update run, screenshot each of the site's check pages just before its first update and just after its last, compare them, and show them side by side on the run's record, so a broken layout is caught even when the expected text is still there (calcifer `explore/kamaji.md`, "Later ideas", "Screenshot checks", 2026-11-18). Written 2026-11-19 for Tyler's review, from his brief; nothing built yet. The numbers below were measured on the laptop the same day (Docker Desktop 29.9.3, arm64, like the mini), against the DDEV site and two heavy public pages that aren't clients' (a WordPress news blog and a WooCommerce marketing home page), never a client site.
+During an update run, screenshot each of the site's check pages just before its first update and just after its last, compare them, and show them side by side on the run's record, so a broken layout is caught even when the expected text is still there (calcifer `explore/kamaji.md`, "Later ideas", "Screenshot checks", 2026-11-18). Written 2026-11-19 from Tyler's brief, approved the same day with his answers ("Settled", at the end), and built on branch `screenshots` ("As built", where it differs from what's below). The numbers below were measured on the laptop the same day (Docker Desktop 29.9.3, arm64, like the mini), against the DDEV site and two heavy public pages that aren't clients' (a WordPress news blog and a WooCommerce marketing home page), never a client site.
 
 ## Where this differs from the brief
 
@@ -33,10 +33,10 @@ Your brief, with the places I'd change it. Each one comes up again below.
 
 ## The flow
 
-1. **The updater reaches a site** and passes its baseline checks, as now. It asks for a "before" set (`screenshot_sets`, kind `before`, with the batch) and waits for it, polling every 2 s, up to 6 minutes. If the screenshots process hasn't shown a heartbeat in the last 2 minutes, it doesn't wait at all.
+1. **The updater reaches a site** and passes its baseline checks, as now. It asks for a "before" set (`screenshot_sets`, kind `before`, with the batch) and waits for it, polling every 2 s, up to 4 minutes, after starting the screenshots process. If the set still waits after 45 s and the process hasn't shown a heartbeat, it stops waiting.
 2. **The screenshots process takes it:** two rounds 5 s apart, in one container (the second round is only for the masks). It writes the PNGs and thumbnails to the set's folder and a row per shot, then marks the set done or failed.
 3. **The updater runs the items,** as now.
-4. **After the last item,** whether it passed or the site was held (the "after" shots are most useful then), the updater asks for an "after" set and waits up to 4 minutes.
+4. **After the last item,** whether it passed or the site was held (the "after" shots are most useful then), the updater asks for an "after" set and waits up to 3 minutes.
 5. **The screenshots process takes it and compares:** each page and size, before against after, with the masks (below). A row per comparison, with a diff image. Then the second "before" round's images are deleted: they've done their job.
 6. **The updater finishes the site** as now: resumes the alerts and the checks. In report-only mode the shots never change an outcome, a hold or anything else.
 
@@ -46,14 +46,14 @@ Your brief, with the places I'd change it. Each one comes up again below.
 
 What the measured runs did, in the container (`shots/shoot.mjs`), a fresh browser context for each page and size so nothing carries over:
 
-1. Desktop 1440 × 900 at 1×; mobile 390 × 844 at 2×, touch, a phone user agent. Reduced motion, service workers blocked, the blocked hosts aborted.
+1. Desktop 1440 × 900 and mobile 390 × 844, both at 1×; mobile with touch and a phone user agent. Reduced motion, service workers blocked, the blocked hosts aborted.
 2. Go to the page and wait for `load` (30 s cap); then for the network to go quiet (10 s cap; a page that never goes quiet is noted, not failed).
 3. Turn off animations and transitions, and hide the caret, with injected CSS; wait for `document.fonts.ready`.
 4. Scroll through a screen at a time (100 ms each), so lazy images load, then back to the top; wait for quiet again (5 s cap).
 5. Hide the "hide" selectors (below), measure the "mask" selectors' boxes, then take the full-page PNG with Playwright's own animation freezing, up to 15,000 px tall (a taller page is cut there and says so), and a JPEG of the first screen as the thumbnail.
 6. Count JavaScript errors (`pageerror` and console errors), failed requests and responses of 400 and over, with their fingerprints.
 
-The container gets one JSON job as its argument (the URLs, sizes, selectors, the blocked hosts) and prints one JSON line per shot, as the push script does. The round's cap is 30 s a shot plus 30 s, at most 6 minutes, then `docker kill`; the shots it finished are kept.
+The container gets one JSON job as its argument (the URLs, sizes, selectors, the blocked hosts) and prints one JSON line per shot, as the push script does. The container's cap is 225 s for a "before" set and 165 s otherwise, inside the updater's waits, then `docker kill`; the shots it finished are kept.
 
 ### Masks
 
@@ -88,7 +88,7 @@ followed by a strip of before | after thumbnail pairs, the changed ones first, e
 `dev.craftish.kamaji-shots`, a fourth LaunchAgent beside the app, the updater and the backups process. It holds no keys and no secrets: Docker, the screenshots folder and the database. One set at a time:
 
 - On start, it marks sets left `running` failed ("the screenshots process stopped while it shot"), and builds `kamaji-shots` if that image's tag (the Dockerfile and script's hash) isn't there. The build pulls the base by digest. Sets asked for meanwhile wait.
-- It writes a heartbeat to `state` every 30 s, which the updater and the site page read.
+- It writes a heartbeat to `state` every 15 s while it runs, which the updater reads.
 - Daily, it deletes sets past retention (below).
 
 The updater only writes requests and reads results; the app only writes `manual` requests and serves images. Neither runs Docker.
@@ -139,13 +139,24 @@ In report-only mode a screenshot failure never fails, holds or delays an update 
 - Comparing across runs (drift since last month) beyond the manual set's look at the previous one.
 - Sending the shots anywhere: they stay on the mini.
 
-## Open questions for Tyler
+## Settled (Tyler, 2026-11-19)
 
-1. **The rule in `CLAUDE.md`** (above, 6): may Kamaji load client pages in a real browser, running their scripts, during a run and from Take screenshots now? It needs your word, then the edit here and in `explore/kamaji.md`.
-2. **The analytics block list** (above, 5): block those hosts, accepting a shot that's slightly unlike a visitor's, or load everything and let the visits count?
-3. **Mobile at 2×** (a phone's real density, twice the pixels and size) or 1× (a layout break still shows, half the storage and time)? I'd take 1× if storage matters, 2× if text rendering issues matter to you.
-4. **The image's 3.5 GB** in Docker Desktop's disk on the mini: fine, or should I build a Chromium-only image from `node` instead (not the official image, probably about 1 GB; I haven't measured it)?
-5. **The process builds its own image** at start when the Dockerfile changes, or should `deploy.sh` do it (a slower deploy, but no wait on the first run after)?
-6. **Cloudflare:** your production sites are behind it. If its bot protection challenges headless Chrome from the mini, would you allow the mini's address in Cloudflare for those zones, or should a challenged shot just say so?
-7. **The waits:** up to 6 minutes for "before" and 4 for "after", per site. Too long for a run you're watching?
-8. **Kept 30 days** plus each site's latest set: right, or longer?
+1. **The rule:** yes. The screenshots process may load a site's check pages in a headless browser, read only: no sign-in, clicks, form submits or consent. `CLAUDE.md` says so; Calcifer updates `explore/kamaji.md`.
+2. **Block the list.** HubSpot's tracking only (`js.hs-analytics.net`, `js.hs-scripts.com`, `track.hubspot.com`, `js.hs-banner.com`, `js.usemessages.com`), never `js.hsforms.net` or `forms.hsforms.com`: Briardale's forms must still render.
+3. **Mobile at 1×.**
+4. **The official image** is fine at 3.5 GB.
+5. **The screenshots process builds the image** at start; `deploy.sh` stays as it is.
+6. **Cloudflare:** a challenged shot says so; no allowlist unless it actually happens.
+7. **Waits:** 4 minutes before, 3 after.
+8. **Kept** 30 days, plus each site's latest set.
+
+## As built
+
+Where the build differs from the plan above:
+
+- **The process starts when asked and exits when done,** like the updater and the backups process, rather than staying up: `deploy.sh` restarts only the app, so a process that stayed up would go on running old code. The updater, the app (Take screenshots now) and the app's cycle (a set that waits) start it with `launchctl kickstart`. Its heartbeat is written every 15 s while it runs; the updater stops waiting if a set it asked for is still waiting after 45 s with no heartbeat.
+- **Hide and mask are two site-wide lists,** not per page: a selector that matches nothing on a page does nothing there, so one list does the job, the home page included. They're edited in the site page's Screenshots panel (with the passkey), not under Configure.
+- **The container's caps** are 225 s for "before" and 165 s for "after" and one taken by hand, inside the updater's waits, so it's the container that stops first. It runs with 2 CPUs, 2 GB and 512 processes at most.
+- **Console errors that are failed loads aren't counted twice.** Chromium logs `Failed to load resource: …` as a console error for every request that failed, blocked ones included (captured in `shots/fixtures/chromium-console.txt`); those are counted as failed requests (or not at all, when Kamaji blocked them), never as JavaScript errors.
+- **The end-to-end test uses a fixture page served from the laptop,** not the DDEV site: the container reaches the laptop through Docker Desktop's `host.docker.internal`, but not DDEV's `*.ddev.site` names without changing the run's own flags. The fixture has what matters: an animation, a carousel, a lazy image, a cookie banner, an analytics tag; then the same page unchanged, and broken.
+- **Changed** means 1% or more of the pixels outside the masks, a different height, a new JavaScript error or failed request, or a page shot before and not after (unless a bot check answered). It's only words and a count: nothing holds.

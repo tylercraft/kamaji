@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Kamaji's screenshots process on molcajete (ops/screenshots-plan.md): started by the updater
+     when it asks for a run's screenshots, by the app for a site's Take screenshots now, and by the
+     app's cycle when a set waits. It shoots every set that waits in a kamaji-shots container,
+     builds that image first when shots/ changed, then exits. It holds no keys or secrets, so it
+     runs without Doppler. Runbook: ops/README.md, "Screenshots". -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.craftish.kamaji-shots</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>packages/server/dist/shots/main.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/tylercraft/kamaji</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- /usr/local/bin for Docker Desktop's CLI and its credential helper. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-shots.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tylercraft/Library/Logs/kamaji-shots.log</string>
+</dict>
+</plist>
