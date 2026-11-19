@@ -46,9 +46,12 @@ class FakeSite {
   } = {};
   homeOk = true;
   maintenance = false;
+  /** Site Health's critical items beyond the fixture's. */
+  health: string[] = [];
 
   report(): unknown {
     const r = structuredClone(REPORT);
+    r.site_health.push(...this.health.map((label) => ({ test: 'x', label })));
     r.core.version = this.core;
     r.core.offers =
       this.core === '7.1.4'
@@ -823,5 +826,58 @@ describe('rollbacks, from the updater’s side', () => {
     expect(
       db.prepare("SELECT summary FROM events WHERE kind = 'site.rollback-failed'").get()!.summary,
     ).toContain('checks failed');
+  });
+
+  const NEW_RELEASE = 'WordPress update available (7.1.5)';
+
+  it('measures Site Health against the last report before the rollback, not the run’s baseline', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater(deps());
+    // Days after the run, WordPress offers a release the run's baseline didn't know of, and the
+    // site's report says so before the rollback is asked for.
+    site.health = [NEW_RELEASE];
+    recordObservation(db, {
+      resourceType: 'site',
+      resourceId: SITE,
+      check: 'report',
+      source: 'plugin',
+      at: T,
+      ok: true,
+      value: { ok: true, siteHealth: CareReport.parse(site.report()).site_health },
+    });
+    pushed(db);
+    site.akismet = '5.3';
+    await runUpdater(deps());
+    expect(checked(db)).toEqual({ checked_at: T, checks_ok: 1, checks_problem: null });
+  });
+
+  it('still fails an item that’s new since that report', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater(deps());
+    pushed(db);
+    site.akismet = '5.3';
+    site.health = ['A plugin has failed to load'];
+    await runUpdater(deps());
+    expect(checked(db)).toMatchObject({
+      checks_ok: 0,
+      checks_problem: 'Site Health: A plugin has failed to load',
+    });
+  });
+
+  it('falls back to the run’s baseline when there’s no report from before the rollback', async () => {
+    const { db, deps, site } = setup();
+    expect((await approve(db)).ok).toBe(true);
+    await runUpdater(deps());
+    db.prepare("DELETE FROM observations WHERE check_name = 'report'").run();
+    pushed(db);
+    site.akismet = '5.3';
+    site.health = [NEW_RELEASE];
+    await runUpdater(deps());
+    expect(checked(db)).toMatchObject({
+      checks_ok: 0,
+      checks_problem: `Site Health: ${NEW_RELEASE}`,
+    });
   });
 });

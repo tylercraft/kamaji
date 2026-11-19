@@ -176,6 +176,40 @@ describe('what Roll back offers', () => {
       batchId: 'batch1',
     });
   });
+
+  it('after a rollback, names the run before when it can’t be rolled back, not “this run”', () => {
+    const db = testDb();
+    site(db);
+    // 15 Nov in Christchurch, with no whole-site backup before it.
+    run(db, {
+      id: 'batch0',
+      at: T - 4 * DAY,
+      items: [{ ...THEME, from: '1.5', to: '1.6' }],
+      snapshot: 'none',
+    });
+    run(db, { id: 'batch1', at: T, items: [AKISMET] });
+    expect(rollbackOffer(db, 'one.test', NOW)).toMatchObject({ ok: true, batchId: 'batch1' });
+    rolledBack(db);
+    installed(db, 'one.test', 'theme', THEME.item, '1.6');
+    expect(rollbackOffer(db, 'one.test', NOW + DAY)).toEqual({
+      ok: false,
+      why: 'The run on 15 Nov can’t be rolled back: no whole-site backup came before it',
+    });
+    // The same for a site that's moved on since that run.
+    installed(db, 'one.test', 'theme', THEME.item, '1.6.2');
+    expect(rollbackOffer(db, 'one.test', NOW + DAY)).toEqual({
+      ok: false,
+      why: 'The run on 15 Nov can’t be rolled back: Twenty X went from 1.6 to 1.6.2 outside Kamaji since',
+    });
+    // The latest run's own reasons still say “this run”.
+    const fresh = testDb();
+    site(fresh);
+    run(fresh, { snapshot: 'none' });
+    expect(rollbackOffer(fresh, 'one.test', NOW)).toEqual({
+      ok: false,
+      why: 'No whole-site backup came before this run, so Kamaji has no files to put back',
+    });
+  });
 });
 
 describe('one thing at a time', () => {
