@@ -4,7 +4,7 @@
 // site with nothing left drops off; one updated since is listed last and says only when, with no
 // backup state, and the header counts only the sites still waiting (Tyler, 2026-11-18).
 import type { ReadyBackup, ReadySite, ReadyToUpdate as Data } from '@kamaji/shared';
-import { Dot, Muted, Panel, PanelHead, Pill, Time } from '../components/ui';
+import { Dot, Muted, Panel, PanelHead, Pill, Time, When } from '../components/ui';
 import { WithIcon } from '../components/SiteIcon';
 import { doneSite, readyHeader } from '../readyView';
 import { useLink } from '../router';
@@ -125,8 +125,15 @@ export function ReadyToUpdate({ ready }: { ready: Data }) {
           </strong>
         ) : null}
         {waiting} update{waiting === 1 ? '' : 's'} waiting, rechecked <Time iso={ready.sentAt} />.
-        Nothing is approved until you approve it.
+        Nothing {ready.rules.length > 0 ? 'else ' : ''}is approved until you approve it.
       </p>
+      {ready.rules.map((r) => (
+        <p key={r.name + r.startsAt} css={{ margin: '0 0 6px' }}>
+          Rule “{r.name}” runs {r.updates} update{r.updates === 1 ? '' : 's'} on {r.sites} site
+          {r.sites === 1 ? '' : 's'} at <When iso={r.startsAt} />, unless you pause it under
+          Updates.
+        </p>
+      ))}
       <ul css={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {ready.sites.map((s) => (
           <SiteRow key={s.siteId} site={s} />

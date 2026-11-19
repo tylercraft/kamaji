@@ -16,6 +16,7 @@ const item = (name: string, outcome: 'passed' | 'checks_failed' = 'passed') => (
 
 const batch = (id: string, sites: [string, ReturnType<typeof item>[]][]): BatchView => ({
   id,
+  rule: null,
   approvedAt: '2026-11-13T01:00:00Z',
   approvedBy: 'tyler',
   finishedAt: '2026-11-13T01:10:00Z',

@@ -561,6 +561,39 @@ await shootWith();
 requestSet(db, { siteId: OK, batchId: 'recent', kind: 'after', by: null }, now - 4 * H + MIN);
 await shootWith((_round, position) => (position === 1 ? { band: 30 } : {}));
 
+// Rules: one signed rule on photogravure.com, and a run it set out, waiting out its hour.
+const { saveRule } = await imp('rules/store.js');
+const ruled = await (async () => {
+  const photo = db.prepare("SELECT url FROM sites WHERE id = 'photogravure.com'").get();
+  const body = {
+    ruleId: null,
+    name: 'Minor plugin updates',
+    sites: [{ id: 'photogravure.com', url: String(photo.url), backup: 'host' }],
+    types: ['plugin'],
+    only: [],
+    leaveOut: ['woocommerce'],
+    change: 'minor',
+    waitDays: 3,
+    securityWaitDays: 0,
+    when: { weekday: 2, hour: 19 },
+    most: { perSite: 10, sites: 10 },
+  };
+  const { id } = saveRule(db, body, '{}', 'smoke@localhost', now - 24 * H);
+  db.prepare(
+    `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state, rule_id, rule_version, update_at, starts_at)
+     VALUES ('ruled', ?, 'rule', 1, 'approved', ?, 1, ?, ?)`,
+  ).run(now - 10 * MIN, id, now - 10 * MIN, now + 50 * MIN);
+  db.prepare(
+    `INSERT INTO batch_sites (batch_id, site_id, position, backup_kind, state)
+     VALUES ('ruled', 'photogravure.com', 0, 'host', 'waiting')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO batch_items (id, batch_id, site_id, position, type, item, name, from_version, to_version, state)
+     VALUES ('ruled-1', 'ruled', 'photogravure.com', 0, 'plugin', 'kamaji-smoke/kamaji-smoke.php', 'Smoke plugin', '1.0', '1.1', 'waiting')`,
+  ).run();
+  return id;
+})();
+
 const LOGIN = 'smoke@localhost';
 // Passkeys: a file of the smoke's own, filled from the Passkeys page by Chrome's virtual
 // authenticator. A passkey can't belong to an IP address, so that part runs on localhost.
@@ -1280,6 +1313,52 @@ for (const view of VIEWS) {
     console.log(
       'ok   screenshots: the run’s strip, changed first, opens a comparison; Take screenshots now',
     );
+}
+
+// Rules: the rule as a sentence with what it would take, its editor, and its run waiting on
+// Updates with Pause this run.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/rules` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const text = await evaluate(`document.querySelector('main').textContent`);
+  for (const want of [
+    'Minor plugin updates',
+    'Patch and minor updates to any plugin, except woocommerce',
+    'What it would take at its next run',
+    // photogravure.com isn't connected in the smoke's records, so the rule says it won't run.
+    'won’t run',
+  ])
+    if (!text.includes(want)) problems.push(`the Rules page lacks “${want}”`);
+  await evaluate(
+    `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Edit')?.click()`,
+  );
+  await new Promise((r) => setTimeout(r, 500));
+  const editor = await evaluate(`(() => {
+    const s = document.getElementById('rule-editor')?.closest('section');
+    if (!s) return null;
+    return {
+      sign: s.textContent.includes('Sign and save'),
+      ticked: [...s.querySelectorAll('input[type=checkbox]')].filter((c) => c.checked).length,
+      name: s.querySelector('#rule-name')?.value,
+    };
+  })()`);
+  if (!editor?.sign || editor.name !== 'Minor plugin updates' || editor.ticked < 1)
+    problems.push(`the editor: ${JSON.stringify(editor)}`);
+  await send('Page.navigate', { url: `http://localhost:${appPort}/updates` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const waiting = await evaluate(
+    `document.getElementById('rule-runs')?.closest('section')?.innerText ?? ''`,
+  );
+  if (!waiting.includes('“Minor plugin updates” runs 1 update on 1 site'))
+    problems.push(`Updates’ rule run says “${waiting.slice(0, 120)}”`);
+  if (!waiting.includes('Pause this run')) problems.push('no Pause this run');
+  if (problems.length) failures.push(`rules: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   rules: a rule as a sentence, its editor, its run waiting with Pause this run',
+    );
+  void ruled;
 }
 
 // One save, the whole page: Configure on First & Last turns its whole-site backups from weekly to

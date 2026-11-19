@@ -31,6 +31,7 @@ import {
   ResourceView,
   Table,
   Time,
+  When,
   type Tone,
 } from '../components/ui';
 import { reveal, RevealLink } from '../components/reveal';
@@ -105,6 +106,11 @@ export function Flags({ item }: { item: QueueItem }) {
       {item.rolledBackAt && (
         <Pill tone="amber">
           <Dot /> {rolledBackWords(item.rolledBackAt)}
+        </Pill>
+      )}{' '}
+      {item.rule && (
+        <Pill tone="copper" title={`Rule “${item.rule.name}” would take it`}>
+          <Dot /> Rule, <When iso={item.rule.at} />
         </Pill>
       )}
     </>
@@ -587,9 +593,15 @@ function HeldActions({
       <Button type="button" disabled={busy} onClick={() => call('recheck')}>
         Re-run the checks
       </Button>
-      <Button type="button" disabled={busy} onClick={() => call('carry-on')}>
-        I’ve looked, carry on
-      </Button>
+      {batch.rule ? (
+        <Muted>
+          A rule’s run doesn’t carry on: its updates are back in the queue, for you to approve.
+        </Muted>
+      ) : (
+        <Button type="button" disabled={busy} onClick={() => call('carry-on')}>
+          I’ve looked, carry on
+        </Button>
+      )}
       {said && <Muted>{said}</Muted>}
     </div>
   );
@@ -770,7 +782,8 @@ function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; relo
         >
           <dt>Approved</dt>
           <dd>
-            <Exact iso={b.approvedAt} /> by {b.approvedBy}
+            <Exact iso={b.approvedAt} />{' '}
+            {b.rule ? `by rule “${b.rule.name}” (version ${b.rule.version})` : `by ${b.approvedBy}`}
           </dd>
           <dt>Started</dt>
           <dd>{s.startedAt ? <Exact iso={s.startedAt} /> : 'Not yet'}</dd>
@@ -802,9 +815,59 @@ function RunEntry({ run, latest, reload }: { run: SiteRun; latest: boolean; relo
   );
 }
 
+/** A rule's runs not started yet (waiting out their hour), each with Pause this run. */
+function RuleRunsWaiting({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const waiting = batches.filter(
+    (b) => b.rule && b.state === 'approved' && b.sites.every((s) => s.state === 'waiting'),
+  );
+  if (waiting.length === 0) return null;
+  const pause = async (id: string) => {
+    setBusy(true);
+    const result = await postJson(`/api/batches/${id}/pause`, {}, z.object({ ok: z.boolean() }));
+    setBusy(false);
+    if (result.ok) saved('Paused: its updates are back in the queue');
+    reload();
+  };
+  return (
+    <Panel aria-labelledby="rule-runs" css={{ borderLeft: '3px solid var(--copper)' }}>
+      <PanelTitle id="rule-runs">Set out by rules</PanelTitle>
+      {waiting.map((b) => {
+        const n = b.sites.reduce((sum, s) => sum + s.items.length, 0);
+        return (
+          <div key={b.id} css={{ display: 'grid', gap: 6 }}>
+            <p css={{ margin: 0 }}>
+              “{b.rule!.name}” runs {n} {n === 1 ? 'update' : 'updates'} on {b.sites.length}{' '}
+              {b.sites.length === 1 ? 'site' : 'sites'} at <When iso={b.rule!.startsAt} />, one site
+              first: {b.sites.map((s) => s.siteName).join(', ')}.
+            </p>
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => pause(b.id)}
+              css={{ justifySelf: 'start' }}
+            >
+              Pause this run
+            </Button>
+          </div>
+        );
+      })}
+    </Panel>
+  );
+}
+
 /** Runs still going or held: the first thing to see, and where held sites are handled. */
 function Active({ batches, reload }: { batches: BatchView[]; reload: () => void }) {
-  const runs = siteRuns(batches).filter(isActive);
+  // A rule's run waiting out its hour shows above, with Pause this run.
+  const runs = siteRuns(batches).filter(
+    (r) =>
+      isActive(r) &&
+      !(
+        r.batch.rule &&
+        r.batch.state === 'approved' &&
+        r.batch.sites.every((s) => s.state === 'waiting')
+      ),
+  );
   if (runs.length === 0) return null;
   const held = runs.some((r) => r.site.state === 'held');
   return (
@@ -820,7 +883,8 @@ function Active({ batches, reload }: { batches: BatchView[]; reload: () => void 
           css={{ display: 'grid', gap: 6 }}
         >
           <Muted>
-            Approved <Time iso={r.batch.approvedAt} /> · {r.site.siteName}
+            {r.batch.rule ? `Rule “${r.batch.rule.name}”, set out` : 'Approved'}{' '}
+            <Time iso={r.batch.approvedAt} /> · {r.site.siteName}
           </Muted>
           <RunSite batch={r.batch} site={r.site} reload={reload} />
         </div>
@@ -1064,6 +1128,7 @@ export function UpdatesPage() {
           }
           return (
             <>
+              <RuleRunsWaiting batches={data.batches} reload={reload} />
               <Active batches={data.batches} reload={reload} />
               <Queue
                 data={data}

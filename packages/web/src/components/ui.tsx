@@ -2,7 +2,7 @@
 import styled from '@emotion/styled';
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Resource } from '../useResource';
-import { absoluteTime, relativeTime } from '../time';
+import { absoluteTime, relativeTime, upcomingTime } from '../time';
 
 export const Panel = styled.section`
   background: var(--panel);
@@ -319,6 +319,11 @@ export function ResourceView<T>({
       {children(resource.data)}
     </>
   );
+}
+
+/** A time still to come: a rule's next run, a run's start. */
+export function When({ iso }: { iso: string }) {
+  return <time dateTime={iso}>{upcomingTime(iso)}</time>;
 }
 
 export function Time({ iso }: { iso: string }) {
