@@ -14,6 +14,7 @@ import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import { recordEvent } from '../events.js';
 import { updatableSites } from './queue.js';
+import { batchRule } from '../rules/runs.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -135,6 +136,9 @@ export function carryOn(
     .prepare('SELECT state FROM batch_sites WHERE batch_id = ? AND site_id = ?')
     .get(batchId, siteId);
   if (!site || site.state !== 'held') return false;
+  // A rule's run never carries on: its updates went back to the queue, for Tyler to approve.
+  const rule = db.prepare('SELECT rule_id FROM batches WHERE id = ?').get(batchId)?.rule_id;
+  if (rule !== null && rule !== undefined) return false;
   transaction(db, () => {
     // The look is the decision: a failing baseline counts as accepted, and missing backup
     // evidence is recorded as carried on without it, rather than held again.
@@ -191,6 +195,7 @@ export function batchViews(db: Db, limit = 10, siteId?: string): BatchView[] {
       id,
       approvedAt: iso(Number(b.approved_at)),
       approvedBy: String(b.approved_by),
+      rule: b.rule_id === null ? null : batchRule(db, id),
       finishedAt: b.finished_at === null ? null : iso(Number(b.finished_at)),
       state: String(b.state) as BatchView['state'],
       oneSiteFirst: Number(b.one_site_first) === 1,

@@ -10,7 +10,8 @@ import { openDb } from '../db.js';
 import { backupConfig, craftishBackup } from './backup.js';
 import { releaseLock, takeLock } from './lock.js';
 import { passkeyConfig } from '../config.js';
-import { approvalProblem } from '../passkeys/guard.js';
+import { approvalProblem, ruleApprovalProblem } from '../passkeys/guard.js';
+import { orgLookup } from '../rules/org.js';
 import { runUpdater, type Send } from './run.js';
 import { shotsLauncher } from '../updates/launcher.js';
 
@@ -78,6 +79,8 @@ try {
     signal: controller.signal,
     log,
     approvalProblem: (batchId) => approvalProblem(db, passkeyConfig(env), batchId),
+    ruleApproval: (ruleId, version) => ruleApprovalProblem(db, passkeyConfig(env), ruleId, version),
+    org: orgLookup(),
     // launchd on the mini, where the updater's own plist sets nothing; a child on the laptop.
     screenshots: { start: shotsLauncher(env.KAMAJI_UPDATER ?? 'launchd', log) },
   });

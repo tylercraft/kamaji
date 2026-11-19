@@ -13,6 +13,15 @@ import { queue } from '../updates/queue.js';
 import { backupHistory } from '../backups/evidence.js';
 import { runUpdater, type UpdaterDeps } from './run.js';
 import { dueSites } from '../sitebackups/run.js';
+import { randomBytes } from 'node:crypto';
+import type { RuleBody } from '@kamaji/shared';
+import { ruleApprovalProblem } from '../passkeys/guard.js';
+import { testAuthenticator } from '../passkeys/testing.js';
+import { bodyHash, challengeFor } from '../passkeys/webauthn.js';
+import type { OrgLookup } from '../rules/org.js';
+import { makeRuleRuns } from '../rules/runs.js';
+import { pauseRule, saveRule } from '../rules/store.js';
+import { KAMAJI_ZONE, wallClock } from '../sitebackups/schedule.js';
 
 const REPORT = CareReport.parse(
   JSON.parse(
@@ -964,5 +973,373 @@ describe('screenshot checks, from the updater’s side', () => {
     });
     expect(outcomes(db).every(([, , outcome]) => outcome === 'passed')).toBe(true);
     expect(db.prepare('SELECT state FROM batch_sites').get()).toEqual({ state: 'done' });
+  });
+});
+
+describe('a rule’s run, from the updater’s side (ops/rules-plan.md)', () => {
+  const tyler = testAuthenticator();
+  const HOUR = 60 * 60_000;
+  const DAY = 24 * HOUR;
+  // T is on the hour, so the rule's update time is T itself.
+  const wall = wallClock(KAMAJI_ZONE, T);
+  const rule = (patch: Partial<RuleBody> = {}): RuleBody => ({
+    ruleId: null,
+    name: 'Minor plugin updates',
+    sites: [{ id: SITE, url: 'https://one.test/', backup: 'host' }],
+    types: ['plugin'],
+    only: [],
+    leaveOut: ['woocommerce'],
+    change: 'minor',
+    waitDays: 3,
+    securityWaitDays: 0,
+    when: { weekday: wall.weekday, hour: wall.hour },
+    most: { perSite: 10, sites: 10 },
+    ...patch,
+  });
+  /** What the page sends: the body as signed, and the passkey's proof over it. */
+  const sign = (body: RuleBody, path = '/api/rules') => {
+    const text = JSON.stringify(body);
+    const nonce = randomBytes(32).toString('base64url');
+    return JSON.stringify({
+      body: text,
+      proof: tyler.assert(nonce, challengeFor(nonce, 'POST', path, bodyHash(text))),
+    });
+  };
+  const AFTER = T + HOUR + 60_000;
+
+  function ruled(body = rule(), approval = sign(body)) {
+    const s = setup('host');
+    const { id } = saveRule(s.db, body, approval, 'tyler', T - DAY);
+    let release = { version: '5.7.2', at: T - 10 * DAY };
+    const org: OrgLookup = async () => release;
+    const hosts: string[] = [];
+    const run = (now: number, extra: Partial<UpdaterDeps> = {}) => {
+      const base = s.deps();
+      return runUpdater({
+        ...base,
+        now: () => now,
+        send: (home, key, endpoint, body, options) => {
+          hosts.push(`${endpoint} ${home.host}`);
+          return base.send(home, key, endpoint, body, options);
+        },
+        ruleApproval: (r, v) => ruleApprovalProblem(s.db, tyler.config, r, v),
+        org,
+        ...extra,
+      });
+    };
+    return {
+      ...s,
+      id,
+      org,
+      run,
+      hosts,
+      sent: () => hosts.filter((h) => h.startsWith('update ')),
+      releasedAt: (at: number) => (release = { version: '5.7.2', at }),
+    };
+  }
+
+  const ruleState = (db: Db, id: string) =>
+    db.prepare('SELECT paused_by, paused_reason FROM rules WHERE id = ?').get(id);
+  const items = (db: Db) =>
+    db
+      .prepare('SELECT site_id, item, state, outcome, detail FROM batch_items ORDER BY site_id')
+      .all()
+      .map((r) => ({ ...r }));
+
+  it('waits out its hour after the update time, then runs what it matches, never core', async () => {
+    const r = ruled();
+    expect(await makeRuleRuns(r.db, T, r.org)).toBe(1);
+    // Once per update time.
+    expect(await makeRuleRuns(r.db, T + 60_000, r.org)).toBe(0);
+    expect(queue(r.db).items.map((i) => i.item)).toEqual(['core']);
+    await r.run(T + 30 * 60_000);
+    expect(r.sent()).toEqual([]);
+    await r.run(AFTER);
+    expect(r.sent()).toEqual(['update one.test']);
+    expect([r.site.akismet, r.site.core]).toEqual(['5.7.2', '7.1.3']);
+    const view = batchViews(r.db)[0]!;
+    expect(view).toMatchObject({ approvedBy: 'rule', oneSiteFirst: true });
+    expect(view.rule).toMatchObject({ id: r.id, name: 'Minor plugin updates', version: 1 });
+    expect(outcomes(r.db)).toEqual([['plugin', 'done', 'passed']]);
+    expect(ruleState(r.db, r.id)).toEqual({ paused_by: null, paused_reason: null });
+  });
+
+  describe('runs nothing when the signed rule doesn’t hold, and pauses it', () => {
+    async function refused(
+      r: ReturnType<typeof ruled>,
+      problem: RegExp,
+      now = AFTER,
+    ): Promise<void> {
+      await r.run(now);
+      expect(r.sent()).toEqual([]);
+      expect(r.site.akismet).toBe('5.3');
+      const site = batchViews(r.db)[0]!.sites[0]!;
+      expect(site.state).toBe('held');
+      expect(site.heldReason).toMatch(problem);
+      // Its update is back in the queue, for Tyler.
+      expect(items(r.db)).toMatchObject([{ state: 'done', outcome: null }]);
+      expect(queue(r.db).items.map((i) => i.item)).toContain('akismet/akismet.php');
+      expect(ruleState(r.db, r.id)).toMatchObject({ paused_by: 'kamaji' });
+      expect(openIssues(r.db)).toContainEqual(
+        expect.objectContaining({ kind: 'rule-paused', severity: 'urgent' }),
+      );
+    }
+
+    it('a body changed after it was signed', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      const stored = JSON.parse(
+        String(r.db.prepare('SELECT approval FROM rule_versions').get()!.approval),
+      ) as { body: string; proof: unknown };
+      const wider = { ...rule(), change: 'security', waitDays: 0 };
+      r.db
+        .prepare('UPDATE rule_versions SET approval = ?')
+        .run(JSON.stringify({ ...stored, body: JSON.stringify(wider) }));
+      await refused(r, /passkey/);
+    });
+
+    it('a proof signed for another write', async () => {
+      const r = ruled(rule(), sign(rule(), '/api/batches'));
+      await makeRuleRuns(r.db, T, r.org);
+      await refused(r, /passkey/);
+    });
+
+    it('a nonce that signed something else too', async () => {
+      const approval = sign(rule());
+      const r = ruled(rule(), approval);
+      await makeRuleRuns(r.db, T, r.org);
+      r.db
+        .prepare(
+          `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state, approval)
+           VALUES ('other', 0, 'tyler', 0, 'finished', ?)`,
+        )
+        .run(approval);
+      await refused(r, /more than once/);
+    });
+
+    it('a rule changed after its run was set out, or paused, or deleted', async () => {
+      const changed = ruled();
+      await makeRuleRuns(changed.db, T, changed.org);
+      const next = rule({ ruleId: changed.id });
+      saveRule(changed.db, next, sign(next), 'tyler', T + 60_000);
+      await refused(changed, /changed after this run/);
+
+      const paused = ruled();
+      await makeRuleRuns(paused.db, T, paused.org);
+      pauseRule(paused.db, paused.id, 'tyler', 'Paused by Tyler', T + 60_000);
+      await paused.run(AFTER);
+      expect(paused.sent()).toEqual([]);
+      expect(batchViews(paused.db)[0]!.sites[0]!.heldReason).toMatch(/the rule is paused/);
+      // Tyler's own pause stands, with his reason, and raises nothing.
+      expect(ruleState(paused.db, paused.id)).toMatchObject({ paused_by: 'tyler' });
+    });
+
+    it('too late after its update time', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      await refused(r, /too late/, T + 7 * HOUR);
+    });
+
+    it('a run whose start was moved earlier in the database', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      r.db.prepare('UPDATE batches SET starts_at = ?').run(T);
+      await refused(r, /too early/, T + 10 * 60_000);
+    });
+  });
+
+  describe('a change to a site’s row can’t widen a signed rule', () => {
+    function another(db: Db, id: string) {
+      db.prepare(
+        `INSERT INTO sites (id, name, url, host_kind, mode, setup, backup_expectation, expected_text, own, created_at)
+         VALUES (?, 'Two', ?, 'craftish', 'connected', 'done', 'host', 'Two', 1, 0)`,
+      ).run(id, `https://${id}/`);
+      recordObservation(db, {
+        resourceType: 'site',
+        resourceId: id,
+        check: 'hello',
+        source: 'plugin',
+        at: T,
+        ok: true,
+        value: { ok: true, hello: new FakeSite().hello() },
+      });
+      storeReport(db, { id, name: 'Two' }, CareReport.parse(new FakeSite().report()), T);
+    }
+
+    it('a site the rule doesn’t name, added to its run: nothing runs anywhere', async () => {
+      const r = ruled();
+      another(r.db, 'two.test');
+      await makeRuleRuns(r.db, T, r.org);
+      // The rule never took two.test, own site or not.
+      expect(batchViews(r.db)[0]!.sites.map((s) => s.siteId)).toEqual([SITE]);
+      const batch = String(r.db.prepare('SELECT id FROM batches').get()!.id);
+      r.db
+        .prepare(
+          `INSERT INTO batch_sites (batch_id, site_id, position, backup_kind, state)
+           VALUES (?, 'two.test', 1, 'host', 'waiting')`,
+        )
+        .run(batch);
+      r.db
+        .prepare(
+          `INSERT INTO batch_items (id, batch_id, site_id, position, type, item, name, from_version, to_version, state)
+           VALUES ('forged', ?, 'two.test', 0, 'plugin', 'akismet/akismet.php', 'Akismet', '5.3', '5.7.2', 'waiting')`,
+        )
+        .run(batch);
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(
+        batchViews(r.db)[0]!.sites.map((s) => [
+          s.siteId,
+          s.state,
+          s.heldReason?.includes('two.test isn’t one of the rule’s sites'),
+        ]),
+      ).toEqual([
+        [SITE, 'held', true],
+        ['two.test', 'held', true],
+      ]);
+    });
+
+    it('a new address in the row: nothing goes to it, or to the old one', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      r.db.prepare("UPDATE sites SET url = 'https://elsewhere.test/' WHERE id = ?").run(SITE);
+      await r.run(AFTER);
+      expect(r.hosts.some((h) => h.includes('elsewhere.test'))).toBe(false);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toBe(
+        'Not run: its address changed since the rule was signed',
+      );
+      expect(ruleState(r.db, r.id)).toMatchObject({ paused_by: 'kamaji' });
+    });
+
+    it('a backup changed in the row, from what was signed: not run', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      r.db.prepare("UPDATE sites SET backup_expectation = 'tyler' WHERE id = ?").run(SITE);
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toBe(
+        'Not run: its backup changed since the rule was signed',
+      );
+    });
+
+    it('a release dated long ago in the row, or a major written into the run: left out', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      // Kamaji's own record says the offer is old; wordpress.org says it came out yesterday.
+      r.db.prepare('UPDATE components SET offer_seen_at = 0').run();
+      r.releasedAt(AFTER - DAY);
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(items(r.db)).toMatchObject([
+        { state: 'done', outcome: null, detail: 'Left out: out 1 day; the rule waits 3 days' },
+      ]);
+      // Left out isn't a failure: the rule carries on.
+      expect(ruleState(r.db, r.id)).toEqual({ paused_by: null, paused_reason: null });
+
+      const major = ruled();
+      await makeRuleRuns(major.db, T, major.org);
+      major.db.prepare("UPDATE batch_items SET to_version = '6.0'").run();
+      major.db
+        .prepare("UPDATE components SET offer_version = '6.0' WHERE item = 'akismet/akismet.php'")
+        .run();
+      await major.run(AFTER);
+      expect(major.sent()).toEqual([]);
+      expect(items(major.db)).toMatchObject([
+        { detail: 'Left out: WordPress no longer offers this version' },
+      ]);
+    });
+
+    it('a backup and baseline written into the run don’t stand in for its own', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      r.db
+        .prepare('UPDATE batch_sites SET backup = ?, baseline = ?')
+        .run('forged', JSON.stringify({ ok: true, problems: [], siteHealth: [] }));
+      r.site.homeOk = false;
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toMatch(
+        /already failing its checks before any update/,
+      );
+    });
+  });
+
+  it('a held site pauses the whole rule, and the rest of its run goes back to the queue', async () => {
+    const body = rule({
+      sites: [
+        { id: SITE, url: 'https://one.test/', backup: 'host' },
+        { id: 'two.test', url: 'https://two.test/', backup: 'host' },
+      ],
+    });
+    const r = ruled(body);
+    r.db
+      .prepare(
+        `INSERT INTO sites (id, name, url, host_kind, mode, setup, backup_expectation, expected_text, created_at)
+       VALUES ('two.test', 'Two', 'https://two.test/', 'craftish', 'connected', 'done', 'host', 'Two', 0)`,
+      )
+      .run();
+    recordObservation(r.db, {
+      resourceType: 'site',
+      resourceId: 'two.test',
+      check: 'hello',
+      source: 'plugin',
+      at: T,
+      ok: true,
+      value: { ok: true, hello: r.site.hello() },
+    });
+    storeReport(r.db, { id: 'two.test', name: 'Two' }, CareReport.parse(r.site.report()), T);
+    await makeRuleRuns(r.db, T, r.org);
+    r.site.behave.breaksHomePage = true;
+    await r.run(AFTER);
+    expect(r.sent()).toEqual(['update one.test']);
+    const sites = batchViews(r.db)[0]!.sites;
+    expect(sites.map((s) => [s.siteId, s.state])).toEqual([
+      [SITE, 'held'],
+      ['two.test', 'held'],
+    ]);
+    expect(sites[1]!.heldReason).toBe('the rule paused: One was held');
+    expect(ruleState(r.db, r.id)).toEqual({
+      paused_by: 'kamaji',
+      paused_reason: 'its run stopped: One was held',
+    });
+    expect(
+      queue(r.db)
+        .items.filter((i) => i.siteId === 'two.test')
+        .map((i) => i.item),
+    ).toContain('akismet/akismet.php');
+    // A rule's run never carries on.
+    expect(carryOn(r.db, batchViews(r.db)[0]!.id, SITE, 'tyler', AFTER)).toBe(false);
+  });
+
+  it('screenshots that changed pause the rule, though the run passed', async () => {
+    const r = ruled();
+    await makeRuleRuns(r.db, T, r.org);
+    const screenshots = {
+      start: () => {
+        const set = r.db
+          .prepare("SELECT id, kind, site_id FROM screenshot_sets WHERE state = 'waiting'")
+          .get();
+        if (!set) return;
+        r.db.prepare("UPDATE screenshot_sets SET state = 'done' WHERE id = ?").run(String(set.id));
+        if (set.kind === 'after') {
+          const before = r.db
+            .prepare("SELECT id FROM screenshot_sets WHERE kind = 'before'")
+            .get()!;
+          r.db
+            .prepare(
+              `INSERT INTO screenshot_comparisons (set_id, against_set_id, site_id, page_url, viewport, compared, changed_pct, at)
+               VALUES (?, ?, ?, 'https://one.test/', 'desktop', 'page', 5, 0)`,
+            )
+            .run(String(set.id), String(before.id), SITE);
+        }
+      },
+    };
+    await r.run(AFTER, { screenshots });
+    expect(outcomes(r.db)).toEqual([['plugin', 'done', 'passed']]);
+    expect(ruleState(r.db, r.id)).toEqual({
+      paused_by: 'kamaji',
+      paused_reason: 'its run stopped: the screenshots changed on One',
+    });
   });
 });
