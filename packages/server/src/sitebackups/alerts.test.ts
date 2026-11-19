@@ -45,6 +45,7 @@ function deps(db: Db, pull: (s: string) => Buffer | { problem: string }, now: nu
     pullCommand: () => [],
     kinstaTest: async () => ({ ok: false, problem: 'not here' }),
     rollback: async () => {},
+    count: async () => {},
     now: () => now,
     log: () => {},
   };

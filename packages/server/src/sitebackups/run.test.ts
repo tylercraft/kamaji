@@ -60,6 +60,7 @@ function deps(
   const result: { value: RestoreResult } = { value: { ok: true } };
   const tested: string[] = [];
   const rolled: string[] = [];
+  const counted: string[] = [];
   const test: { value: TestResult } = {
     value: {
       ok: true,
@@ -88,10 +89,14 @@ function deps(
       rolled.push(id);
       db.prepare("UPDATE rollbacks SET state = 'done' WHERE id = ?").run(id);
     },
+    count: async (id) => {
+      counted.push(id);
+      db.prepare("UPDATE rollback_counts SET state = 'done' WHERE id = ?").run(id);
+    },
     now: () => now,
     log: () => {},
   };
-  return { d, ...fake, restored, restoredSnapshots, result, tested, test, rolled };
+  return { d, ...fake, restored, restoredSnapshots, result, tested, test, rolled, counted };
 }
 
 const rows = (db: Db, sql: string) => db.prepare(sql).all();
@@ -669,6 +674,48 @@ describe('rollbacks in the backups process', () => {
     expect(db.prepare("SELECT state, changed FROM rollbacks WHERE id = 'left'").get()).toEqual({
       state: 'failed',
       changed: 'unknown',
+    });
+  });
+});
+
+describe('counts in the backups process', () => {
+  it('wakes for one waiting and takes it first; one a stopped run left says so', async () => {
+    const db = testDb();
+    site(db, 'one.test');
+    db.prepare(
+      `INSERT INTO batches (id, approved_at, approved_by, one_site_first, state) VALUES ('b', 0, 'tyler', 0, 'finished')`,
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO rollback_counts (id, site_id, batch_id, host, since, requested_at, state)
+       VALUES (?, 'one.test', 'b', 'craftish', 0, ?, ?)`,
+    );
+    insert.run('left', 0, 'running');
+    expect(requestsWaiting(db)).toBe(false);
+    insert.run('asked', 1, 'waiting');
+    expect(requestsWaiting(db)).toBe(true);
+    db.prepare(
+      `INSERT INTO rollbacks (id, kind, site_id, batch_id, host, requested_at, requested_by, with_database, state)
+       VALUES ('r', 'rollback', 'one.test', 'b', 'craftish', 2, 'tyler', 0, 'waiting')`,
+    ).run();
+    const order: string[] = [];
+    const { d } = deps(db, () => pullOf('one.test'));
+    await runBackups({
+      ...d,
+      count: async (id) => {
+        order.push(`count ${id}`);
+        await d.count(id);
+      },
+      rollback: async (id) => {
+        order.push(`rollback ${id}`);
+        await d.rollback(id);
+      },
+    });
+    expect(order).toEqual(['count asked', 'rollback r']);
+    expect(
+      db.prepare("SELECT state, problem FROM rollback_counts WHERE id = 'left'").get(),
+    ).toEqual({
+      state: 'failed',
+      problem: 'the backups process stopped while it counted',
     });
   });
 });

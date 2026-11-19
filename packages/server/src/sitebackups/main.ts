@@ -14,6 +14,10 @@ import { restoreCheck } from './restore.js';
 import { realRestic } from './restic.js';
 import { runBackups } from './run.js';
 import { runRollback } from '../rollback/push.js';
+import { runCount } from '../rollback/count.js';
+import type { PullHost } from './eligible.js';
+import { passkeyConfig } from '../config.js';
+import { rollbackApprovalProblem } from '../passkeys/guard.js';
 import { readScript as readPushScript, pushCommand } from '../rollback/ssh.js';
 
 export const LOCK = 'sitebackups.process';
@@ -80,6 +84,12 @@ const restic = realRestic(env.KAMAJI_RESTIC ?? '/opt/homebrew/bin/restic');
 // go with Kinsta's own key, as its pulls do.
 const pushKey = env.KAMAJI_PUSH_SSH_KEY ?? `${homedir()}/.ssh/kamaji-push`;
 const restoreDir = env.KAMAJI_RESTORE_DIR ?? join(homedir(), 'kamaji-restore');
+const push = (site: string, host: PullHost, words: string[]) =>
+  pushCommand(db, site, host, words, {
+    craftish: { key: pushKey, host: craftish.host, knownHosts: craftish.knownHostsPath },
+    kinsta,
+    script: readPushScript(),
+  });
 
 try {
   log('backups: started');
@@ -104,17 +114,20 @@ try {
           exec: realExec(controller.signal),
           workDir: restoreDir,
           tar: '/usr/bin/tar',
-          pushCommand: (site, host, words) =>
-            pushCommand(db, site, host, words, {
-              craftish: { key: pushKey, host: craftish.host, knownHosts: craftish.knownHostsPath },
-              kinsta,
-              script: readPushScript(),
-            }),
+          pushCommand: push,
+          // The same passkeys and address as the app's: a rollback that didn't come through its
+          // dialog with a signature doesn't run.
+          approvalProblem: (rid) => rollbackApprovalProblem(db, passkeyConfig(env), rid),
           now: Date.now,
           sleep: (ms) => delay(ms, undefined, { signal: controller.signal }),
           log,
           signal: controller.signal,
         },
+        id,
+      ),
+    count: (id) =>
+      runCount(
+        { db, exec: realExec(controller.signal), pushCommand: push, now: Date.now, log },
         id,
       ),
     restore: (site, snapshotId) =>

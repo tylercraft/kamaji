@@ -3,8 +3,10 @@
 // the proof in the Kamaji-Passkey header. Kamaji checks it against the root-owned list (store.ts)
 // and spends the nonce. An approval keeps its proof, and the updater checks it again before it
 // runs anything (approvalProblem), so a batch written straight into the database doesn't run.
+// A rollback or undo keeps its proof the same way, checked by the backups process before it
+// pushes (rollbackApprovalProblem).
 import { randomBytes } from 'node:crypto';
-import { ApproveRequest } from '@kamaji/shared';
+import { ApproveRequest, RollbackRequest, UndoRequest } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import type { Loaded } from './store.js';
 import { bodyHash, challengeFor, readProof, verifyProof, type Proof } from './webauthn.js';
@@ -97,34 +99,53 @@ export interface Approval {
  * out for POST /api/batches with the stored body, and the batch's items, sites and one-site-first
  * exactly as that body says. Nonces and counters aren't checked again: they were spent at approval.
  */
-export function approvalProblem(db: Db, config: PasskeyConfig, batchId: string): string | null {
-  const row = db.prepare('SELECT approval, one_site_first FROM batches WHERE id = ?').get(batchId);
-  if (!row) return 'no such batch';
-  if (row.approval === null) return 'no passkey approval';
+/**
+ * A stored approval's body, once its proof checks out for a POST to `path` with that body and
+ * its nonce signed nothing else: in neither table, batches or rollbacks, more than this once.
+ */
+function signedBody(
+  db: Db,
+  config: PasskeyConfig,
+  stored: unknown,
+  path: string,
+): { ok: true; body: string } | { ok: false; problem: string } {
+  if (stored === null || stored === undefined) return { ok: false, problem: 'no passkey approval' };
   let approval: Approval;
   try {
-    approval = JSON.parse(String(row.approval)) as Approval;
+    approval = JSON.parse(String(stored)) as Approval;
   } catch {
-    return 'an unreadable approval';
+    return { ok: false, problem: 'an unreadable approval' };
   }
   const loaded = config.load();
-  if (!loaded.ok) return loaded.problem;
+  if (!loaded.ok) return { ok: false, problem: loaded.problem };
   const proof = readProof(Buffer.from(JSON.stringify(approval.proof)).toString('base64url'));
-  if (!proof || typeof approval.body !== 'string') return 'an unreadable approval';
+  if (!proof || typeof approval.body !== 'string')
+    return { ok: false, problem: 'an unreadable approval' };
   const verdict = verifyProof(proof, loaded.passkeys, {
-    challenge: challengeFor(proof.nonce, 'POST', '/api/batches', bodyHash(approval.body)),
+    challenge: challengeFor(proof.nonce, 'POST', path, bodyHash(approval.body)),
     rpId: config.rpId,
     origin: config.origin,
   });
-  if (!verdict.ok) return `the approval’s passkey: ${verdict.problem}`;
+  if (!verdict.ok) return { ok: false, problem: `the approval’s passkey: ${verdict.problem}` };
   const uses = db
-    .prepare("SELECT count(*) AS n FROM batches WHERE json_extract(approval, '$.proof.nonce') = ?")
+    .prepare(
+      `SELECT (SELECT count(*) FROM batches WHERE json_extract(approval, '$.proof.nonce') = ?1)
+         + (SELECT count(*) FROM rollbacks WHERE json_extract(approval, '$.proof.nonce') = ?1) AS n`,
+    )
     .get(proof.nonce);
-  if (Number(uses?.n) !== 1) return 'an approval used for more than one run';
+  if (Number(uses?.n) !== 1) return { ok: false, problem: 'an approval used more than once' };
+  return { ok: true, body: approval.body };
+}
+
+export function approvalProblem(db: Db, config: PasskeyConfig, batchId: string): string | null {
+  const row = db.prepare('SELECT approval, one_site_first FROM batches WHERE id = ?').get(batchId);
+  if (!row) return 'no such batch';
+  const signed = signedBody(db, config, row.approval, '/api/batches');
+  if (!signed.ok) return signed.problem;
 
   let request: ApproveRequest;
   try {
-    request = ApproveRequest.parse(JSON.parse(approval.body));
+    request = ApproveRequest.parse(JSON.parse(signed.body));
   } catch {
     return 'an unreadable approval';
   }
@@ -157,5 +178,47 @@ export function approvalProblem(db: Db, config: PasskeyConfig, batchId: string):
     Number(row.one_site_first) !== (request.oneSiteFirst ? 1 : 0)
   )
     return 'the run isn’t what was approved';
+  return null;
+}
+
+/**
+ * Why the backups process mustn't push this rollback or undo, or null when its approval holds: a
+ * proof that checks out for exactly its own POST (the site's rollback, or its undo) with the
+ * stored body, and the row as that body says: the run (or the rollback undone) and the database
+ * box. What it puts back isn't in the body: the push works that out again from the run before it
+ * sends anything (push.ts), and refuses when it differs from the row.
+ */
+export function rollbackApprovalProblem(db: Db, config: PasskeyConfig, id: string): string | null {
+  const row = db
+    .prepare(
+      'SELECT kind, site_id, batch_id, undoes, with_database, approval FROM rollbacks WHERE id = ?',
+    )
+    .get(id);
+  if (!row) return 'no such rollback';
+  const undo = row.kind === 'undo';
+  const path = `/api/sites/${encodeURIComponent(String(row.site_id))}/rollback${undo ? '/undo' : ''}`;
+  const signed = signedBody(db, config, row.approval, path);
+  if (!signed.ok) return signed.problem;
+  let json: unknown;
+  try {
+    json = JSON.parse(signed.body);
+  } catch {
+    return 'an unreadable approval';
+  }
+  const withDatabase = Number(row.with_database) === 1;
+  if (undo) {
+    const request = UndoRequest.safeParse(json);
+    if (!request.success) return 'an unreadable approval';
+    if (
+      request.data.rollbackId !== String(row.undoes) ||
+      request.data.withDatabase !== withDatabase
+    )
+      return 'the undo isn’t what was approved';
+  } else {
+    const request = RollbackRequest.safeParse(json);
+    if (!request.success) return 'an unreadable approval';
+    if (request.data.batchId !== String(row.batch_id) || request.data.withDatabase !== withDatabase)
+      return 'the rollback isn’t what was approved';
+  }
   return null;
 }

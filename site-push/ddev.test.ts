@@ -18,6 +18,7 @@ import type { Restic } from '../packages/server/src/sitebackups/restic.js';
 import { testDb } from '../packages/server/src/testing.js';
 import { requestRollback, requestUndo } from '../packages/server/src/rollback/request.js';
 import { runRollback, type PushDeps } from '../packages/server/src/rollback/push.js';
+import { countView, requestCount, runCount } from '../packages/server/src/rollback/count.js';
 
 const CONTAINER = 'ddev-kamaji-wp-web';
 const SITE = 'kamaji-wp.ddev.site';
@@ -123,6 +124,8 @@ function setUpKamaji(before: typeof start, after: typeof start, snapshotAt: numb
       'kinsta',
       ...words,
     ],
+    // The passkey's part is the app's and its tests' (rollback/app.test.ts); here, it holds.
+    approvalProblem: () => null,
     now: Date.now,
     sleep: async () => {},
     log: () => {},
@@ -224,7 +227,19 @@ describe('rollback on the DDEV site', () => {
     expect(home()).toBe('200');
     checked();
 
-    // With the database: the comment since the restore point is counted, then lost.
+    // With the database: first the dialog's count, read only, which finds the comment since the
+    // restore point; then the rollback, which loses it.
+    const count = requestCount(db, SITE, { batchId: 'ddev-run' }, Date.now());
+    expect(count).toMatchObject({ ok: true });
+    const countId = count.ok ? count.id : '';
+    await runCount(deps, countId);
+    expect(countView(db, SITE, countId)).toMatchObject({
+      state: 'done',
+      counts: { orders: null, comments: 1 },
+    });
+    // It changed nothing.
+    expect(versions()).toEqual(after);
+    expect(wp(`comment get ${comment} --field=content`)).toBe('after the snapshot');
     const withDb = requestRollback(
       db,
       SITE,
@@ -235,7 +250,6 @@ describe('rollback on the DDEV site', () => {
     expect(withDb).toMatchObject({ ok: true });
     await runRollback(deps, withDb.ok ? withDb.id : '');
     expect(latest()).toMatchObject({ state: 'done', changed: 'all' });
-    expect(JSON.parse(String(latest().counts))).toMatchObject({ orders: null, comments: 1 });
     expect(versions()).toEqual(before);
     expect(() => wp(`comment get ${comment} --field=content`)).toThrow();
     expect(home()).toBe('200');

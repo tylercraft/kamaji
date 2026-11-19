@@ -1,18 +1,77 @@
 // The site's Rollback, under its latest run (ops/rollback-plan.md): what Roll back would put back
 // and from when, or why it isn't offered; the dialog, with the database box and its warning; how
 // the latest rollback or undo went; and Undo while the site is as the rollback left it. Each is
-// asked for with the passkey; the backups process does it, and the toast says when it's done.
-import { SiteRollbackResponse } from '@kamaji/shared';
-import { useState } from 'react';
+// signed with the passkey every time; the backups process does it, and the toast says when it's
+// done. Ticking the database box first asks for a count of what it would lose, read only, and
+// Roll back waits for the numbers (or for the count to fail, which leaves the kinds only).
+import { RollbackCountView, SiteRollbackResponse } from '@kamaji/shared';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
-import { postJson } from '../api';
+import { getJson, postJson } from '../api';
 import { FormError, PrimaryButton } from '../components/forms';
 import { saved } from '../components/toast';
 import { Button, Dot, Muted, Pill, Time } from '../components/ui';
-import { ago, itemLine, latestWords, rollbackPollMs } from '../rollbackView';
+import { ago, countsWords, itemLine, latestWords, rollbackPollMs } from '../rollbackView';
 import { useResource } from '../useResource';
 
 const QUEUED = z.object({ queued: z.literal(true) });
+const COUNT_QUEUED = z.object({ queued: z.literal(true), id: z.string() });
+/** The backups process may be part way through a site's backup before it gets to the count. */
+const COUNT_WAIT_MS = 3 * 60_000;
+const COUNT_POLL_MS = 2_000;
+
+type Counting =
+  | { state: 'counting' }
+  | { state: 'done'; view: RollbackCountView }
+  | { state: 'failed'; problem: string | null };
+
+/** The database box's count: asked for when it's ticked, followed until it's in. */
+function useCount(path: string) {
+  const [counting, setCounting] = useState<Counting | null>(null);
+  // Each start or stop moves this on, so an answer to an earlier one is dropped.
+  const run = useRef({ n: 0 });
+  useEffect(() => {
+    const box = run.current;
+    return () => {
+      box.n++;
+    };
+  }, []);
+
+  async function start(batchId: string) {
+    const n = ++run.current.n;
+    const current = () => run.current.n === n;
+    setCounting({ state: 'counting' });
+    const asked = await postJson(`${path}/count`, { batchId }, COUNT_QUEUED);
+    if (!current()) return;
+    if (!asked.ok) {
+      setCounting({ state: 'failed', problem: WORDS[asked.error] ?? null });
+      return;
+    }
+    const until = Date.now() + COUNT_WAIT_MS;
+    while (Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, COUNT_POLL_MS));
+      if (!current()) return;
+      let view: RollbackCountView;
+      try {
+        view = await getJson(
+          `${path}/count/${encodeURIComponent(asked.data.id)}`,
+          RollbackCountView,
+        );
+      } catch {
+        continue;
+      }
+      if (!current()) return;
+      if (view.state === 'done') return setCounting({ state: 'done', view });
+      if (view.state === 'failed') return setCounting({ state: 'failed', problem: view.problem });
+    }
+    if (current()) setCounting({ state: 'failed', problem: 'it didn’t come back in time' });
+  }
+  function stop() {
+    run.current.n++;
+    setCounting(null);
+  }
+  return { counting, start, stop };
+}
 
 const WORDS: Record<string, string> = {
   not_offered: 'It isn’t offered any more; the reason is below',
@@ -40,6 +99,7 @@ export function RollbackSection({ siteId }: { siteId: string }) {
   const [withDatabase, setWithDatabase] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const count = useCount(path);
   if (resource.state !== 'ready') return null;
   const { offer, why, latest, undo, undoWhy } = resource.data;
   const now = resource.loadedAt;
@@ -56,13 +116,16 @@ export function RollbackSection({ siteId }: { siteId: string }) {
     }
     setOpen(null);
     setWithDatabase(false);
+    count.stop();
     saved(done);
   }
   const close = () => {
     setOpen(null);
     setWithDatabase(false);
+    count.stop();
     setError(null);
   };
+  const counting = withDatabase ? count.counting : null;
   const status = latest ? latestWords(latest) : null;
 
   return (
@@ -105,20 +168,34 @@ export function RollbackSection({ siteId }: { siteId: string }) {
             <input
               type="checkbox"
               checked={withDatabase}
-              onChange={(e) => setWithDatabase(e.target.checked)}
+              onChange={(e) => {
+                setWithDatabase(e.target.checked);
+                if (e.target.checked) void count.start(offer.batchId);
+                else count.stop();
+              }}
               aria-describedby="rollback-database"
             />
             <span>
               <strong>Also put back the database</strong>
             </span>
           </label>
-          <p id="rollback-database" css={withDatabase ? warn : { margin: 0 }}>
+          <p id="rollback-database" css={withDatabase ? warn : { margin: 0 }} aria-live="polite">
             {withDatabase ? (
               <>
                 Everything written to the database since <Time iso={offer.databaseAt} /> (
-                {ago(offer.databaseAt, now)}) is lost: orders, form entries, new users, comments,
-                and any settings changed since. Kamaji counts them before it changes anything, and
-                says how many. Leave this off unless the site is broken without it.
+                {ago(offer.databaseAt, now)}) is lost
+                {counting?.state === 'done' ? (
+                  <>
+                    : <strong>{countsWords(counting.view.counts!)}</strong>, along with form entries
+                    and any settings changed since.
+                  </>
+                ) : (
+                  <>: orders, form entries, new users, comments, and any settings changed since.</>
+                )}{' '}
+                {counting?.state === 'counting' && 'Counting them on the site… '}
+                {counting?.state === 'failed' &&
+                  `Kamaji couldn’t count them${counting.problem ? ` (${counting.problem})` : ''}. `}
+                Leave this off unless the site is broken without it.
               </>
             ) : (
               <>
@@ -146,7 +223,7 @@ export function RollbackSection({ siteId }: { siteId: string }) {
           <div css={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <PrimaryButton
               type="button"
-              disabled={busy}
+              disabled={busy || counting?.state === 'counting'}
               onClick={() =>
                 void ask(
                   path,

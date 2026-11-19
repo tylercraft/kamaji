@@ -11,6 +11,9 @@
 #   push <host> rollback <site> <id>             a tar on stdin: plan.txt, then the files
 #   push <host> undo <site> <id> files|database  puts back what that rollback replaced
 #   push <host> result <site> <id> rollback|undo what that rollback or undo ended with
+#   push <host> count <site> <id> <since>        what putting the database back would lose: orders
+#                                                (WooCommerce only), comments and users since
+#                                                then, read only; <id> is the count's own
 #
 # Progress goes to stdout as JSON lines, {"format":1,"step":"…","ok":true}; the last line is the
 # result, also kept in the rollback's folder as result.json (undo-result.json), so a dropped SSH
@@ -19,7 +22,8 @@
 # What it touches: the live copies of the plugin and theme folders the plan names, core's
 # wp-admin, wp-includes and root files (never wp-config.php, wp-content or .htaccess), the
 # database through wp-cli, and its holding folder beside the site, where the replaced copies and
-# a database export from just before are kept for 14 days so the rollback can be undone.
+# a database export from just before are kept for 14 days so the rollback can be undone. A count
+# touches nothing and keeps nothing.
 set -u -o pipefail
 export LC_ALL=C
 umask 077
@@ -87,6 +91,7 @@ case $mode in
   rollback) [ -z "$extra" ] || fail check 'too many arguments' none 2 ;;
   undo) [[ $extra == files || $extra == database ]] || fail check 'undo takes files or database' none 2 ;;
   result) [[ $extra == rollback || $extra == undo ]] || fail check 'result takes rollback or undo' none 2 ;;
+  count) [[ $extra =~ $TIME_RE ]] || fail count 'count takes a time' none 2 ;;
   *) fail check 'not a mode' none 2 ;;
 esac
 
@@ -112,6 +117,29 @@ home_host=${home#*://}
 home_host=${home_host%%/*}
 home_host=${home_host%%:*}
 [ "${home_host#www.}" = "${site#www.}" ] || fail check 'this login is another site' none 2
+
+# What putting the database back would lose since <since>: read only, before the passkey. No lock
+# and no holding folder: it changes nothing, so it can run beside anything.
+if [ "$mode" = count ]; then
+  at="${extra:0:4}-${extra:4:2}-${extra:6:2} ${extra:9:2}:${extra:11:2}:${extra:13:2}"
+  prefix=$("${wp[@]}" config get table_prefix 2>/dev/null) || fail count 'the table prefix couldn’t be read'
+  [[ $prefix =~ ^[A-Za-z0-9_]+$ ]] || fail count 'an unexpected table prefix'
+  count() { "${wp[@]}" db query "$1" --skip-column-names 2>/dev/null | head -n 1; }
+  comments=$(count "SELECT COUNT(*) FROM ${prefix}comments WHERE comment_approved IN ('0', '1') AND comment_date_gmt > '$at'")
+  users=$(count "SELECT COUNT(*) FROM ${prefix}users WHERE user_registered > '$at'")
+  [[ $comments =~ ^[0-9]+$ && $users =~ ^[0-9]+$ ]] || fail count 'the comments and users couldn’t be counted'
+  orders=null
+  if "${wp[@]}" plugin is-active woocommerce >/dev/null 2>&1; then
+    if [ -n "$(count "SHOW TABLES LIKE '${prefix//_/\\_}wc\\_orders'")" ]; then
+      orders=$(count "SELECT COUNT(*) FROM ${prefix}wc_orders WHERE type = 'shop_order' AND date_created_gmt > '$at'")
+    else
+      orders=$(count "SELECT COUNT(*) FROM ${prefix}posts WHERE post_type = 'shop_order' AND post_date_gmt > '$at'")
+    fi
+    [[ $orders =~ ^[0-9]+$ ]] || fail count 'the orders couldn’t be counted'
+  fi
+  say count "\"orders\":$orders,\"comments\":$comments,\"users\":$users"
+  exit 0
+fi
 
 mkdir -p -- "$hold" && chmod 700 -- "$hold" || fail check 'the holding folder couldn’t be made'
 [ "$(stat -c %d -- "$hold")" = "$(stat -c %d -- "$root")" ] ||
@@ -172,7 +200,6 @@ nows=()
 backs=()
 database=''
 export_time=''
-since=''
 read_plan() { # file
   local key a b c d more seen_format=0 seen_id=0 seen_site=0
   while IFS=' ' read -r key a b c d more; do
@@ -201,14 +228,12 @@ read_plan() { # file
           *) fail check 'the plan names a database it doesn’t know' ;;
         esac
         database=$a ;;
-      since) [[ $a =~ $TIME_RE ]] || fail check 'the plan has a time it doesn’t know'; since=$a ;;
       '') ;;
       *) fail check 'the plan has a line it doesn’t know' ;;
     esac
   done <"$1"
   [ $seen_format = 1 ] && [ $seen_id = 1 ] && [ $seen_site = 1 ] || fail check 'the plan is incomplete'
   [ ${#types[@]} -gt 0 ] || fail check 'the plan has nothing to put back'
-  if [ -n "$database" ] && [ -z "$since" ]; then fail check 'the plan has no restore point time'; fi
 }
 
 # --- Moving files, journaled --------------------------------------------------------------------
@@ -399,27 +424,6 @@ rollback() {
   fi
   room $((core >= 0)) || fail check 'there isn’t room on the server for the copies'
   say check
-
-  # What putting the database back would lose: counted, read only, before anything changes.
-  if [ -n "$database" ]; then
-    local prefix at orders=null comments users
-    prefix=$("${wp[@]}" config get table_prefix 2>/dev/null) || fail count 'the table prefix couldn’t be read'
-    [[ $prefix =~ ^[A-Za-z0-9_]+$ ]] || fail count 'an unexpected table prefix'
-    at="${since:0:4}-${since:4:2}-${since:6:2} ${since:9:2}:${since:11:2}:${since:13:2}"
-    count() { "${wp[@]}" db query "$1" --skip-column-names 2>/dev/null | head -n 1; }
-    comments=$(count "SELECT COUNT(*) FROM ${prefix}comments WHERE comment_approved IN ('0', '1') AND comment_date_gmt > '$at'")
-    users=$(count "SELECT COUNT(*) FROM ${prefix}users WHERE user_registered > '$at'")
-    [[ $comments =~ ^[0-9]+$ && $users =~ ^[0-9]+$ ]] || fail count 'the comments and users couldn’t be counted'
-    if wp_ok plugin is-active woocommerce; then
-      if [ -n "$(count "SHOW TABLES LIKE '${prefix//_/\\_}wc\\_orders'")" ]; then
-        orders=$(count "SELECT COUNT(*) FROM ${prefix}wc_orders WHERE type = 'shop_order' AND date_created_gmt > '$at'")
-      else
-        orders=$(count "SELECT COUNT(*) FROM ${prefix}posts WHERE post_type = 'shop_order' AND post_date_gmt > '$at'")
-      fi
-      [[ $orders =~ ^[0-9]+$ ]] || fail count 'the orders couldn’t be counted'
-    fi
-    say count "\"orders\":$orders,\"comments\":$comments,\"users\":$users"
-  fi
 
   if [ $core -ge 0 ]; then
     local locale used

@@ -17,9 +17,9 @@ Tyler's brief, with the places I'd change it. Each one comes up again below.
 ## The flow
 
 1. **Tyler opens the site's page** and finds the run under Updates. The run's line has **Roll back…** when the site can be rolled back (below). It's a quiet button on a run that went through, and a primary one, next to the ⚠️, on a run held after a failed check or one Tyler carried on past.
-2. **The dialog** says exactly what will happen and asks for the passkey.
-3. **The app records the request** (`rollbacks`, state `waiting`) and starts the backups process, as it does for "Back up now". The updater won't start the site while it waits.
-4. **The backups process takes it** between sites, as it takes other requests. It holds the restic password and the SSH keys, which the app and the updater don't. It checks, builds the push, and runs the push script on the host, step by step (below, "The push").
+2. **The dialog** says exactly what will happen and asks for the passkey, every time: the 10-minute passkey window doesn't cover a rollback or an undo. With the database box ticked, it first asks the backups process to count what the database would lose (below) and shows the numbers before the button works.
+3. **The app records the request** (`rollbacks`, state `waiting`) with the passkey's proof and the body as signed, and starts the backups process, as it does for "Back up now". The updater won't start the site while it waits.
+4. **The backups process takes it** between sites, as it takes other requests. It holds the restic password and the SSH keys, which the app and the updater don't. It checks the signature again (as the updater does for a batch), so a row written straight into the database never runs; then it checks, builds the push, and runs the push script on the host, step by step (below, "The push").
 5. **The app's cycle finishes it:** a fresh report (versions), the site's checks from the mini and from outside, a line in Activity, one Discord message and a toast for Tyler.
 6. **Undo rollback** stays on the run for 14 days, and puts back what was there before the rollback, the same way.
 
@@ -43,6 +43,8 @@ The dialog:
 >
 > ☐ **Also put back the database**
 > Everything written to the database since 19 Nov 03:02 (2 days ago) is lost: orders, form entries, new users, comments, and any settings changed since. Leave this off unless the site is broken without it.
+>
+> Ticked, it reads "Counting them on the site…" with the button off, then: "Everything written to the database since 19 Nov 03:02 (2 days ago) is lost: **12 orders, 3 comments and 1 new user**, along with form entries and any settings changed since." A count that fails says "Kamaji couldn't count them (why)" with the kinds as above, and the button works.
 >
 > With the database left as it is, an update that changed the plugin's tables may not run cleanly on the older version. The checks afterwards will say.
 >
@@ -130,11 +132,12 @@ A site is busy while it's in a batch that's approved or running, or has a backup
 ## Data model (migration 27)
 
 - **The restore point, as built:** worked out when Roll back is offered, from what's already recorded, and kept on the rollback's row as used: the snapshot whose `batch_id` is the run's, else the newest good snapshot that finished before the run's site started and began within a day of it (the one the run relied on); and on craftish the run's own export from `backup_evidence`, while it's under 13 days old (craftish keeps 14). That gives the same answer the `batch_sites` columns would have, for past runs too, with nothing to backfill, so those columns weren't added.
-- **`rollbacks`:** one row each for a rollback and an undo (`kind`; an undo names the rollback it `undoes`), so both go through the same states: `waiting`, `running`, then `done` or `failed`, with `step`, `problem`, a scrubbed `problem_detail`, and `changed` (what the push left: `none`, `files`, `all`, `partial`, `broken`, `unknown`). Also the restore point used (`snapshot_id`, `snapshot_at`, `export_time`, `database_at`), the `counts` the database box lost, `warnings`, and the checks after (`checked_at`, `checks_ok`, `checks_problem`), then `announced_at`.
+- **`rollbacks`:** one row each for a rollback and an undo (`kind`; an undo names the rollback it `undoes`), so both go through the same states: `waiting`, `running`, then `done` or `failed`, with `step`, `problem`, a scrubbed `problem_detail`, and `changed` (what the push left: `none`, `files`, `all`, `partial`, `broken`, `unknown`). Also the restore point used (`snapshot_id`, `snapshot_at`, `export_time`, `database_at`), the passkey's `approval` (proof and body as signed), `warnings`, and the checks after (`checked_at`, `checks_ok`, `checks_problem`), then `announced_at`.
+- **`rollback_counts`:** the dialog's count before the passkey: the site, the run, `since` (the restore point's database time), `state`, then `orders` (null off WooCommerce), `comments`, `users` or a `problem`.
 - **`rollback_items`:** `rollback_id`, `type`, `item`, `name`, `from_version` (what it found), `to_version` (what it put back), `state`.
 - **Shared:** a `Rollback` view on the site's run history, with `canRollBack` and `whyNot` worked out on the server, so the web shows them and doesn't decide.
 
-Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback` (passkey, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey, body `{ rollbackId, withDatabase }`).
+Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback/count` (no passkey: it changes nothing; body `{ batchId }`, answers the count's id), `GET /api/sites/:id/rollback/count/:count`, `POST /api/sites/:id/rollback` (passkey each time, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey each time, body `{ rollbackId, withDatabase }`).
 
 Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause; the app's cycle sends the one Discord line, and the toast goes to whoever asked.
 
@@ -187,10 +190,11 @@ The answers to the questions below, and what was added:
 6. Kinsta's cache: `wp kinsta cache purge` (no `--all`). A failure is a warning, not a failed rollback.
 7. `opcache.validate_timestamps` is at its default (on) on craftish, so swapped files are picked up.
 8. Tyler tells the client; out of scope.
-9. Orders (WooCommerce only), comments and users since the restore point are counted, read only, before the swap, and shown with the outcome only when the database came too.
+9. Orders (WooCommerce only), comments and users since the restore point are counted, read only. **Changed after review:** the count comes before the passkey, not with the outcome. Ticking the database box asks the backups process for it (`push … count`); the dialog shows "Counting…", then the numbers, and Roll back works only once they're in. A count that fails says so and leaves the box usable, with the kinds-only warning. The push itself no longer counts.
 10. **Added:** Undo follows Roll back's rule: only while nothing has changed since the rollback (no newer run, the versions as the rollback left them). The push checks it on the server too.
 11. **Added:** core files outside wp-content have no default ACL on craftish, and `www-data` can't give files to `tyler`. So staged core takes the replaced copy's group and modes (775 and 664 there), and an ACL entry for the replaced copy's owner when they can't write through the group; without `setfacl` on the server, a core rollback is refused before anything changes. Plugin and theme folders inherit their parent's default ACL, as a folder made in place would.
 12. **Added:** `/var/backups/kamaji/<site>/` isn't loosened. The mini keeps no copy of the exports, so there's none to send, but `www-data` owns them (craftish's `fetch-export` already streams them as `www-data`), so the push, running as `www-data`, reads the one its plan names. No second sudo rule.
+13. **Changed after review:** rollback and undo always sign, like approving a batch: no 10-minute passkey window for them. The row keeps the proof and the body as signed, and the backups process checks them again before it pushes (`rollbackApprovalProblem`): the proof for that exact route and body, the row as the body says (the run or the rollback undone, and the database box), and the nonce used once across batches and rollbacks.
 
 ## Open questions for Tyler (answered above)
 

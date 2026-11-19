@@ -321,7 +321,7 @@ describe('an approved batch, as the updater checks it', () => {
     const approval = signed(tyler);
     const first = store(db, approval);
     store(db, approval);
-    expect(approvalProblem(db, tyler.config, first)).toBe('an approval used for more than one run');
+    expect(approvalProblem(db, tyler.config, first)).toBe('an approval used more than once');
   });
 
   it('doesn’t hold once its passkey is taken out of the file', () => {

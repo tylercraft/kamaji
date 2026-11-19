@@ -1,7 +1,7 @@
-// Asking for a rollback or an undo (the app, with Tyler's passkey), and how they stand, for the
-// site's page. The backups process takes what's asked (push.ts).
+// Asking for a rollback or an undo (the app, signed with Tyler's passkey each time), and how they
+// stand, for the site's page. The row keeps the passkey's proof and the request as signed, which
+// the backups process checks again before it takes what's asked (push.ts).
 import type { RollbackView, SiteRollbackResponse } from '@kamaji/shared';
-import { RollbackCounts } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import { recordEvent } from '../events.js';
@@ -22,6 +22,11 @@ export function requestRollback(
   ask: { batchId: string; withDatabase: boolean },
   by: string,
   now: number,
+  /**
+   * The proof and the body as signed (passkeys/guard.ts, Approval), as JSON. Without one the row
+   * is written, but the backups process won't push it.
+   */
+  approval: string | null = null,
 ): Asked {
   const offer = rollbackOffer(db, siteId, now);
   if (!offer.ok) return { ok: false, error: 'not_offered', why: offer.why };
@@ -32,8 +37,8 @@ export function requestRollback(
   transaction(db, () => {
     db.prepare(
       `INSERT INTO rollbacks (id, kind, site_id, batch_id, host, requested_at, requested_by,
-         with_database, snapshot_id, snapshot_at, export_time, database_at, state)
-       VALUES (?, 'rollback', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')`,
+         with_database, snapshot_id, snapshot_at, export_time, database_at, state, approval)
+       VALUES (?, 'rollback', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)`,
     ).run(
       id,
       siteId,
@@ -46,6 +51,7 @@ export function requestRollback(
       p.snapshotAt,
       ask.withDatabase ? p.exportTime : null,
       ask.withDatabase ? p.databaseAt : null,
+      approval,
     );
     const item = db.prepare(
       `INSERT INTO rollback_items (rollback_id, position, type, item, name, now_version, back_version)
@@ -69,6 +75,11 @@ export function requestUndo(
   ask: { rollbackId: string; withDatabase: boolean },
   by: string,
   now: number,
+  /**
+   * The proof and the body as signed (passkeys/guard.ts, Approval), as JSON. Without one the row
+   * is written, but the backups process won't push it.
+   */
+  approval: string | null = null,
 ): Asked {
   const offer = undoOffer(db, siteId, now);
   if (!offer) return { ok: false, error: 'not_offered', why: 'There’s no rollback to undo' };
@@ -82,8 +93,8 @@ export function requestUndo(
   transaction(db, () => {
     db.prepare(
       `INSERT INTO rollbacks (id, kind, undoes, site_id, batch_id, host, requested_at, requested_by,
-         with_database, database_at, state)
-       VALUES (?, 'undo', ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')`,
+         with_database, database_at, state, approval)
+       VALUES (?, 'undo', ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)`,
     ).run(
       id,
       offer.rollbackId,
@@ -94,6 +105,7 @@ export function requestUndo(
       by,
       ask.withDatabase ? 1 : 0,
       ask.withDatabase ? Number(r.finished_at) : null,
+      approval,
     );
     const item = db.prepare(
       `INSERT INTO rollback_items (rollback_id, position, type, item, name, now_version, back_version)
@@ -120,15 +132,6 @@ export function rollbacksWaiting(db: Db): string[] {
     .map((r) => String(r.id));
 }
 
-function counts(raw: unknown) {
-  if (raw === null || raw === undefined) return null;
-  try {
-    const parsed = RollbackCounts.safeParse(JSON.parse(String(raw)));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
 function strings(raw: unknown): string[] {
   if (raw === null || raw === undefined) return [];
   try {
@@ -153,7 +156,6 @@ export function rollbackView(db: Db, r: Row): RollbackView {
     step: str(r.step),
     problem: str(r.problem),
     changed: str(r.changed),
-    counts: counts(r.counts),
     warnings: strings(r.warnings),
     checksOk: r.checks_ok === null ? null : Number(r.checks_ok) === 1,
     checksProblem: str(r.checks_problem),

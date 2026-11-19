@@ -167,7 +167,9 @@ ID2=fedcba9876543210
 # --- The forced command ------------------------------------------------------------------------
 for cmd in '' 'rollback' 'rollback ../etc 0123456789abcdef' 'rollback site.test 0123' \
   "rollback site.test $ID1; id" "rollback site.test $ID1 extra" "undo site.test $ID1 everything" \
-  "undo site.test $ID1 files more" "push site.test $ID1" "result site.test $ID1"; do
+  "undo site.test $ID1 files more" "push site.test $ID1" "result site.test $ID1" \
+  "count site.test $ID1" "count site.test $ID1 yesterday" "count site.test $ID1 20261119T030000Z; id" \
+  "count site.test $ID1 20261119T030000Z id"; do
   out=$(SSH_ORIGINAL_COMMAND=$cmd "$forced" 2>&1 </dev/null)
   code=$?
   expect "forced command refuses '$cmd'" '[ $code = 2 ] && [[ $out == *"\"ok\":false"* ]]'
@@ -281,24 +283,39 @@ plugin_main "$ROOT/wp-content/plugins/akismet" 5.3.1
 run_push /tmp/empty craftish undo "$SITE" $ID1 files
 expect 'undo refuses a site that changed since the rollback' 'grep -q "not the 5.3 the rollback left" /tmp/err'
 
+# --- The count, before the passkey: read only ------------------------------------------------------
+fresh_site
+touch "$STATE/woocommerce"
+run_push /tmp/empty craftish count "$SITE" $ID2 20261119T030000Z
+expect 'counts orders, comments and users since the restore point' '[ "$(last_out)" = "{\"format\":1,\"step\":\"count\",\"ok\":true,\"orders\":12,\"comments\":3,\"users\":1}" ]'
+expect '…from that time' 'grep -q "comment_date_gmt > .2026-11-19 03:00:00." "$STATE/calls"'
+expect '…changing nothing and keeping nothing' '[ ! -e "$HOLD" ] && grep -qx "DB after the run" "$STATE/db" && ! grep -qE "maintenance-mode activate|db (import|export)" "$STATE/calls"'
+rm "$STATE/woocommerce"
+run_push /tmp/empty craftish count "$SITE" $ID2 20261119T030000Z
+expect '…with no orders where it isn’t a shop' 'grep -q "\"orders\":null,\"comments\":3,\"users\":1" /tmp/out'
+run_push /tmp/empty craftish count "$SITE" $ID2 yesterday
+expect '…and refuses a time it doesn’t know' 'grep -q "count takes a time" /tmp/err'
+run_push /tmp/empty craftish count nosuch.test $ID2 20261119T030000Z
+expect '…or a site off the allowlist' 'grep -q "not on the push allowlist" /tmp/err'
+
 # --- With the database ---------------------------------------------------------------------------
 fresh_site
 touch "$STATE/woocommerce"
-t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z')
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'puts the database back from craftish’s own export' 'grep -qx "DB from the export before the run" "$STATE/db" && grep -q "\"database\":true" /tmp/out'
-expect '…counting what it loses first' 'grep -q "\"step\":\"count\",\"ok\":true,\"orders\":12,\"comments\":3,\"users\":1" /tmp/out'
+expect '…without counting: that came before the passkey' '! grep -q "\"step\":\"count\"" /tmp/out'
 expect '…from the export as www-data, which can read it' '[ "$(stat -c %U /var/backups/kamaji/$SITE/20261119T030000Z.sql.gz)" = www-data ]'
 run_push /tmp/empty craftish undo "$SITE" $ID1 database
 expect 'undoes the database too, when asked' 'grep -qx "DB after the run" "$STATE/db"'
 
 fresh_site
-t=$(make_tar /tmp/p.tar $ID1 'database export 20261101T030000Z' 'since 20261101T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261101T030000Z')
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'refuses an export that’s gone' 'grep -q "export from 20261101T030000Z is gone" /tmp/err'
 
 fresh_site
-t=$(make_tar /tmp/p.tar $ID1 'database tar' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database tar')
 echo 'DB from the snapshot' >"$t/database.sql"
 (cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content database.sql)
 run_push /tmp/p.tar kinsta rollback "$SITE" $ID1 2>/dev/null
@@ -306,7 +323,7 @@ run_push /tmp/p.tar kinsta rollback "$SITE" $ID1 2>/dev/null
 expect 'Kinsta’s mode needs its home' 'grep -q "\"ok\":false" /tmp/err'
 
 fresh_site
-t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z')
 echo 'DB from the export before the run' >"$STATE/import-fails"
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'a database that won’t import is put back as it was' 'grep -qx "DB after the run" "$STATE/db" && grep -q "\"changed\":\"files\"" /tmp/err && [ ! -e "$ROOT/.maintenance" ]'
@@ -315,7 +332,7 @@ run_push /tmp/empty craftish undo "$SITE" $ID1 files
 expect '…and undone, the files back as the run left them' 'grep -q "\"ok\":true" /tmp/out && [ "$(version_at "$ROOT/wp-content/plugins/akismet/akismet.php")" = 5.3.1 ]'
 
 fresh_site
-t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database export 20261119T030000Z')
 printf 'DB from the export before the run\nDB after the run\n' >"$STATE/import-fails"
 run_push /tmp/p.tar craftish rollback "$SITE" $ID1
 expect 'says where the saved copy is when neither import works' 'grep -q "\"changed\":\"broken\"" /tmp/err && grep -q "before.sql.gz" /tmp/err && [ -f "$HOLD/$ID1/before.sql.gz" ]'
@@ -366,7 +383,7 @@ rm -rf "$KHOME/public" "$KHOME/.kamaji-rollback"
 cp -a "$ROOT" "$KHOME/public"
 chown -R kuser:kuser "$KHOME"
 chmod 755 "$KHOME"
-t=$(make_tar /tmp/p.tar $ID1 'database tar' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID1 'database tar')
 echo 'DB from the snapshot' >"$t/database.sql"
 (cd "$t" && tar -cf /tmp/p.tar --format=gnu plan.txt wp-content database.sql)
 chmod 644 /tmp/p.tar
@@ -374,7 +391,7 @@ runuser -u kuser -- env HOME="$KHOME" bash -c "$(cat "$push")" kamaji-push kinst
 expect 'Kinsta: rolls back in ~/public, the database from the tar' 'grep -q "\"ok\":true" /tmp/out && grep -qx "DB from the snapshot" "$STATE/db" && [ "$(version_at "$KHOME/public/wp-content/plugins/akismet/akismet.php")" = 5.3 ]'
 expect '…keeping its copies in ~/.kamaji-rollback' '[ -d "$KHOME/.kamaji-rollback/$ID1/old" ] && [ "$(stat -c %a "$KHOME/.kamaji-rollback")" = 700 ]'
 expect '…and clears Kinsta’s cache' 'grep -qx purged "$STATE/calls"'
-t=$(make_tar /tmp/p.tar $ID2 'database export 20261119T030000Z' 'since 20261119T030000Z')
+t=$(make_tar /tmp/p.tar $ID2 'database export 20261119T030000Z')
 runuser -u kuser -- env HOME="$KHOME" bash -c "$(cat "$push")" kamaji-push kinsta rollback "$SITE" $ID2 </tmp/p.tar >/tmp/out 2>/tmp/err
 expect 'Kinsta: refuses an export, which only craftish has' 'grep -q "names an export oddly" /tmp/err'
 

@@ -1,5 +1,7 @@
 // A rollback or undo, run by the backups process (ops/rollback-plan.md, "The push"), which holds
-// the restic password and the SSH keys. For a rollback: ask again whether it's still offered;
+// the restic password and the SSH keys. First, the passkey's signature on the request is checked
+// again (passkeys/guard.ts), so a row written straight into the database never runs. For a
+// rollback: ask again whether it's still offered;
 // read the run's snapshot back and take out only the folders the run changed (and database.sql,
 // on Kinsta, when the database comes too); check each one's version is what the run replaced;
 // send them, with plan.txt first, as one tar to site-push/push on the host. An undo sends nothing
@@ -27,6 +29,8 @@ export interface PushDeps {
   tar: string;
   /** ssh's argv for site-push on the site's host with these words, or null with no access. */
   pushCommand: (siteId: string, host: PullHost, words: string[]) => string[] | null;
+  /** Why its passkey approval doesn't hold (rollbackApprovalProblem), or null when it does. */
+  approvalProblem: (id: string) => string | null;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (message: string) => void;
@@ -42,7 +46,7 @@ const RESULT_TRIES = 3;
 const RESULT_WAIT_MS = 20_000;
 
 const Changed = z.enum(['none', 'files', 'all', 'partial', 'broken', 'unknown']);
-/** One line from site-push/push (its header comment): progress, the count, or the result. */
+/** One line from site-push/push (its header comment): progress, a count, or the result. */
 const PushLine = z.looseObject({
   format: z.literal(1),
   ok: z.boolean(),
@@ -118,7 +122,6 @@ export function planText(o: {
   site: string;
   items: RollbackItem[];
   database: { from: 'export'; time: string } | { from: 'tar' } | null;
-  since: string | null;
 }): string {
   const lines = ['format 1', `id ${o.id}`, `site ${o.site}`];
   for (const i of o.items) lines.push(`item ${i.type} ${i.item} ${i.now} ${i.back}`);
@@ -126,11 +129,10 @@ export function planText(o: {
     lines.push(
       o.database.from === 'export' ? `database export ${o.database.time}` : 'database tar',
     );
-  if (o.since) lines.push(`since ${o.since}`);
   return `${lines.join('\n')}\n`;
 }
 
-/** db-export's own way of naming a time, which the plan's `since` uses too. */
+/** db-export's own way of naming a time, which the count's restore point uses too. */
 export const compactTime = (ms: number) =>
   new Date(ms)
     .toISOString()
@@ -162,7 +164,6 @@ type Outcome = {
   problem: string | null;
   detail?: string | null;
   changed: z.infer<typeof Changed>;
-  counts?: PushRead['counts'];
   warnings?: string[];
 };
 
@@ -175,14 +176,13 @@ function record(deps: PushDeps, row: Row, o: Outcome): void {
   const nothing = o.changed === 'none';
   db.prepare(
     `UPDATE rollbacks SET state = ?, step = ?, problem = ?, problem_detail = ?, changed = ?,
-       counts = ?, warnings = ?, finished_at = ?, checked_at = ? WHERE id = ?`,
+       warnings = ?, finished_at = ?, checked_at = ? WHERE id = ?`,
   ).run(
     o.state,
     o.step,
     o.problem,
     o.detail ?? null,
     o.changed,
-    o.counts ? JSON.stringify(o.counts) : null,
     o.warnings && o.warnings.length > 0 ? JSON.stringify(o.warnings) : null,
     at,
     // Nothing changed: no checks to run, so it's ready to tell.
@@ -245,7 +245,6 @@ async function outcomeOf(
           'the connection dropped after it began changing the site, and its result couldn’t be read; look on the server',
         detail: stderrTail(ran.stderr),
         changed: 'unknown',
-        counts: read.counts,
       };
   }
   const result = read.result;
@@ -265,7 +264,6 @@ async function outcomeOf(
       step: 'done',
       problem: null,
       changed: result.database === false && Number(row.with_database) === 1 ? 'files' : 'all',
-      counts: read.counts,
       warnings: result.warnings ?? [],
     };
   return {
@@ -273,7 +271,6 @@ async function outcomeOf(
     step: result.step,
     problem: result.problem ?? 'it failed',
     changed: result.changed ?? 'unknown',
-    counts: read.counts,
   };
 }
 
@@ -282,6 +279,11 @@ export async function runRollback(deps: PushDeps, id: string): Promise<void> {
   const { db } = deps;
   const row = db.prepare("SELECT * FROM rollbacks WHERE id = ? AND state = 'waiting'").get(id);
   if (!row) return;
+  const unsigned = deps.approvalProblem(id);
+  if (unsigned) {
+    record(deps, row, fail('approval', `its passkey approval doesn’t hold: ${unsigned}`));
+    return;
+  }
   db.prepare("UPDATE rollbacks SET state = 'running', started_at = ? WHERE id = ?").run(
     deps.now(),
     id,
@@ -375,7 +377,6 @@ async function rollback(deps: PushDeps, row: Row): Promise<Outcome> {
             ? { from: 'export', time: exportTime }
             : { from: 'tar' }
           : null,
-        since: withDatabase ? compactTime(Number(row.database_at)) : null,
       }),
       { mode: 0o600 },
     );

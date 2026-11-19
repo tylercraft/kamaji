@@ -711,7 +711,7 @@ Remove it only once you know why it changed (Kinsta moved the site, say), then T
 
 ## Rollback
 
-Putting a site back the way it was before an update run, from the site's page (`ops/rollback-plan.md`), and undoing that. The backups process does it, with a key of its own on craftish, forced to `kamaji-site-push` (`site-push/README.md`); on Kinsta it uses Kinsta's key, which the pulls already have, so Kinsta needs nothing new. The updater runs the checks after, and the app tells Discord. Nothing else changes on the mini: no new LaunchAgent or secret.
+Putting a site back the way it was before an update run, from the site's page (`ops/rollback-plan.md`), and undoing that. The backups process does it, with a key of its own on craftish, forced to `kamaji-site-push` (`site-push/README.md`); on Kinsta it uses Kinsta's key, which the pulls already have, so Kinsta needs nothing new. The updater runs the checks after, and the app tells Discord. Before it pushes, the backups process checks the request's passkey signature against `/etc/kamaji/passkeys`, as the updater does for a batch. Nothing else changes on the mini: no new LaunchAgent or secret.
 
 Tyler runs these one at a time, in order.
 
@@ -833,7 +833,7 @@ TY-170. Every write that starts or changes work on a site needs Tyler's passkey:
 
 The passkeys Kamaji accepts are in `/etc/kamaji/passkeys`, one JSON line each, a file only root can change. Kamaji and every agent on the mini run as `tylercraft`, so a list kept anywhere `tylercraft` can write, Kamaji's database included, an agent could add its own key to. Kamaji refuses the file if it or `/etc/kamaji` isn't root's and writable by root only. It's read on every check, so a change takes effect at once, without a restart.
 
-An approval keeps the request as signed and its proof. The updater checks both again before it runs a batch, against the same file, and holds a batch whose approval doesn't hold, with an urgent issue: so a batch written straight into the database, changed after approval, or reusing an approval doesn't run.
+An approval keeps the request as signed and its proof. The updater checks both again before it runs a batch, against the same file, and holds a batch whose approval doesn't hold, with an urgent issue: so a batch written straight into the database, changed after approval, or reusing an approval doesn't run. A rollback and its undo work the same way: always signed (the 10-minute window doesn't cover them, as it doesn't cover approving a batch), and checked again by the backups process before it pushes, which stops one whose approval doesn't hold with nothing changed. The rollback dialog's count needs no passkey: it only reads the site's database.
 
 ### First setup
 

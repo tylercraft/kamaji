@@ -5,6 +5,7 @@
 #   rollback <site> <id>                    (the files and the plan on stdin)
 #   undo <site> <id> files|database
 #   result <site> <id> rollback|undo
+#   count <site> <id> <since>               (read only)
 #
 # Anything else is refused here, before sudo. Then runs the push as www-data through one sudo
 # rule, where the site is checked against the push allowlist again.
@@ -25,6 +26,8 @@ extra=${words[3]:-}
 [[ $id =~ ^[0-9a-f]{16}$ ]] || refuse 'not a rollback id'
 case "$mode $extra" in
   'rollback ') exec sudo -n -u www-data /usr/local/lib/kamaji/site-push craftish rollback "$site" "$id" ;;
+  count\ [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z)
+    exec sudo -n -u www-data /usr/local/lib/kamaji/site-push craftish count "$site" "$id" "$extra" ;;
   'undo files' | 'undo database' | 'result rollback' | 'result undo')
     exec sudo -n -u www-data /usr/local/lib/kamaji/site-push craftish "$mode" "$site" "$id" "$extra" ;;
   *) refuse 'not something Kamaji asks' ;;

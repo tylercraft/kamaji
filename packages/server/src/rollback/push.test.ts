@@ -96,6 +96,7 @@ function harness(
     workDir,
     tar: '/usr/bin/tar',
     pushCommand: (_site, _host, words) => ['/usr/bin/ssh', 'host', words.join(' ')],
+    approvalProblem: () => null,
     now: () => NOW,
     sleep: async () => {},
     log: (m) => logged.push(m),
@@ -167,9 +168,7 @@ describe('the push', () => {
       exportAt: '20261119T025500Z',
     });
     await runRollback(one.deps, id);
-    expect(one.sent[0]!.plan).toContain(
-      'database export 20261119T025500Z\nsince 20261119T025500Z\n',
-    );
+    expect(one.sent[0]!.plan).toMatch(/\ndatabase export 20261119T025500Z\n$/);
     expect(one.sent[0]!.database).toBeNull();
 
     const db = testDb();
@@ -178,17 +177,17 @@ describe('the push', () => {
     const k = harness(db, restic);
     const kid = await asked(db, restic, true);
     await runRollback(k.deps, kid);
-    expect(k.sent[0]!.plan).toContain('database tar\nsince 20261119T025000Z\n');
+    expect(k.sent[0]!.plan).toMatch(/\ndatabase tar\n$/);
     expect(k.sent[0]!.database).toBe('-- the dump from before\n');
     expect(readdirSync(k.workDir)).toEqual([]);
   });
 
-  it('records the count, and what the script said when it stopped', async () => {
+  it('records what the script said when it stopped', async () => {
     const { db, restic, deps } = setup({
       answer: () => ({
         code: 1,
         stdout:
-          '{"format":1,"step":"check","ok":true}\n{"format":1,"step":"count","ok":true,"orders":12,"comments":3,"users":1}\n{"format":1,"ok":false,"step":"database","problem":"the database didn’t import; it’s as it was, and the files were rolled back","changed":"files"}\n',
+          '{"format":1,"step":"check","ok":true}\n{"format":1,"ok":false,"step":"database","problem":"the database didn’t import; it’s as it was, and the files were rolled back","changed":"files"}\n',
       }),
     });
     const id = await asked(db, restic, true);
@@ -197,8 +196,32 @@ describe('the push', () => {
       state: 'failed',
       step: 'database',
       changed: 'files',
-      counts: JSON.stringify({ orders: 12, comments: 3, users: 1 }),
       checked_at: null,
+    });
+  });
+
+  it('pushes nothing when its passkey approval doesn’t hold', async () => {
+    const { db, restic, deps, sent } = setup();
+    const id = await asked(db, restic);
+    const checked: string[] = [];
+    await runRollback(
+      {
+        ...deps,
+        approvalProblem: (rid) => {
+          checked.push(rid);
+          return 'no passkey approval';
+        },
+      },
+      id,
+    );
+    expect(checked).toEqual([id]);
+    expect(sent).toEqual([]);
+    expect(row(db)).toMatchObject({
+      state: 'failed',
+      step: 'approval',
+      changed: 'none',
+      problem: 'its passkey approval doesn’t hold: no passkey approval',
+      checked_at: NOW,
     });
   });
 
@@ -351,10 +374,7 @@ describe('the pieces', () => {
         site: 's.test',
         items: [{ ...AKISMET, name: 'A', now: '2', back: '1' }],
         database: { from: 'tar' },
-        since: '20261119T030000Z',
       }),
-    ).toBe(
-      'format 1\nid abc\nsite s.test\nitem plugin akismet/akismet.php 2 1\ndatabase tar\nsince 20261119T030000Z\n',
-    );
+    ).toBe('format 1\nid abc\nsite s.test\nitem plugin akismet/akismet.php 2 1\ndatabase tar\n');
   });
 });

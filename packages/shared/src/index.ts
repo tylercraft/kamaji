@@ -1326,7 +1326,7 @@ export const RollbackItemView = z.object({
 });
 export type RollbackItemView = z.infer<typeof RollbackItemView>;
 
-/** What the database box would lose, counted on the server before the swap. */
+/** What the database box would lose: counted on the site, read only, before the passkey. */
 export const RollbackCounts = z.object({
   /** Null when the site isn't a WooCommerce shop. */
   orders: z.number().int().nullable(),
@@ -1334,6 +1334,21 @@ export const RollbackCounts = z.object({
   users: z.number().int(),
 });
 export type RollbackCounts = z.infer<typeof RollbackCounts>;
+
+/** Asking for the count, for the run Roll back would undo. */
+export const RollbackCountRequest = z.object({ batchId: z.string().min(1).max(64) });
+export type RollbackCountRequest = z.infer<typeof RollbackCountRequest>;
+
+/** A count as it stands: asked, being counted by the backups process, or its answer. */
+export const RollbackCountView = z.object({
+  id: z.string(),
+  state: z.enum(['waiting', 'running', 'done', 'failed']),
+  /** The restore point counted from. */
+  since: Timestamp,
+  counts: RollbackCounts.nullable(),
+  problem: z.string().nullable(),
+});
+export type RollbackCountView = z.infer<typeof RollbackCountView>;
 
 /** A rollback or undo as it stands, from asked to checked. */
 export const RollbackView = z.object({
@@ -1349,7 +1364,6 @@ export const RollbackView = z.object({
   problem: z.string().nullable(),
   /** What the push left: none, files, all, partial, broken or unknown (migrations.ts, 27). */
   changed: z.string().nullable(),
-  counts: RollbackCounts.nullable(),
   warnings: z.array(z.string()),
   /** The checks after: null until they've run (or when nothing changed). */
   checksOk: z.boolean().nullable(),

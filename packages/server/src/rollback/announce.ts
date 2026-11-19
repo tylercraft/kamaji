@@ -24,7 +24,6 @@ export function age(ms: number): string {
 const STEPS: Record<string, string> = {
   check: 'its checks on the server',
   receive: 'sending the files',
-  count: 'counting what the database would lose',
   stage: 'staging the files',
   save: 'saving the database first',
   maintenance: 'maintenance mode',

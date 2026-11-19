@@ -21,7 +21,6 @@ const latest = (over: Partial<RollbackView> = {}): RollbackView => ({
   step: 'done',
   problem: null,
   changed: 'all',
-  counts: null,
   warnings: [],
   checksOk: true,
   checksProblem: null,
@@ -39,7 +38,7 @@ describe('the Rollback section’s words', () => {
     );
   });
 
-  it('says what the database lost, orders only on a shop', () => {
+  it('says what the database would lose, orders only on a shop', () => {
     expect(countsWords({ orders: 12, comments: 3, users: 1 })).toBe(
       '12 orders, 3 comments and 1 new user',
     );
@@ -64,13 +63,10 @@ describe('the Rollback section’s words', () => {
     expect(
       rollbackPollMs({ offer: null, why: null, latest: pushed, undo: null, undoWhy: null }),
     ).toBe(5_000);
-    expect(
-      latestWords(latest({ withDatabase: true, counts: { orders: 2, comments: 0, users: 0 } })),
-    ).toEqual({
+    expect(latestWords(latest({ withDatabase: true }))).toEqual({
       tone: 'green',
       label: 'Rolled back',
-      detail:
-        'Checks passed. Put back with the database, losing 2 orders, 0 comments and 0 new users since then.',
+      detail: 'Checks passed. The database was put back too.',
     });
     expect(inProgress(latest())).toBe(false);
   });

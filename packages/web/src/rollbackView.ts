@@ -27,7 +27,7 @@ export function itemLine(i: RollbackItemView): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** What the database box lost, as counted on the server: "12 orders, 3 comments and 1 new user". */
+/** What the database box would lose, as counted on the site: "12 orders, 3 comments and 1 new user". */
 export function countsWords(c: RollbackCounts): string {
   const parts = [
     ...(c.orders === null ? [] : [plural(c.orders, 'order', 'orders')]),
@@ -50,7 +50,6 @@ export const rollbackPollMs = (last: SiteRollbackResponse | null) =>
 const STEPS: Record<string, string> = {
   check: 'the checks on the server',
   receive: 'sending the files',
-  count: 'counting what the database would lose',
   stage: 'staging the files',
   save: 'saving the database first',
   maintenance: 'maintenance mode',
@@ -87,10 +86,6 @@ export function latestWords(r: RollbackView): { tone: Tone; label: string; detai
     };
   if (r.checksOk === null)
     return { tone: 'neutral', label: 'Checking', detail: 'Pushed; the checks are running.' };
-  const lost =
-    r.counts && r.withDatabase && !undo
-      ? ` Put back with the database, losing ${countsWords(r.counts)} since then.`
-      : '';
   const checks = r.checksOk
     ? 'Checks passed.'
     : `Checks failed: ${r.checksProblem ?? 'see Activity'}.`;
@@ -98,7 +93,7 @@ export function latestWords(r: RollbackView): { tone: Tone; label: string; detai
     return {
       tone: r.checksOk ? 'green' : 'red',
       label: undo ? 'Rollback undone' : 'Rolled back',
-      detail: `${checks}${lost}`,
+      detail: r.withDatabase ? `${checks} The database was put back too.` : checks,
     };
   if (r.changed === 'files')
     return {

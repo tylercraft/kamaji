@@ -673,7 +673,10 @@ export const migrations: Migration[] = [
     // is its own row, naming the rollback it undoes. The restore point is recorded as used: the
     // run's snapshot and, on craftish, its database export. `changed` is what the push left: none,
     // files (the database couldn't be put back, or wasn't asked for), all, partial (a swap that
-    // couldn't be reversed) or broken (a database that wouldn't import either way).
+    // couldn't be reversed) or broken (a database that wouldn't import either way). `approval`
+    // is the passkey's proof and the request as signed, checked again before the push. A count
+    // is what the dialog shows with the database box ticked, before the passkey: orders,
+    // comments and users since the restore point, asked of the site read only.
     sql: `
       CREATE TABLE rollbacks (
         id TEXT PRIMARY KEY,
@@ -694,7 +697,7 @@ export const migrations: Migration[] = [
         problem TEXT,
         problem_detail TEXT,
         changed TEXT CHECK (changed IN ('none', 'files', 'all', 'partial', 'broken', 'unknown')),
-        counts TEXT,
+        approval TEXT,
         warnings TEXT,
         started_at INTEGER,
         finished_at INTEGER,
@@ -714,6 +717,21 @@ export const migrations: Migration[] = [
         back_version TEXT NOT NULL,
         PRIMARY KEY (rollback_id, position)
       );
+      CREATE TABLE rollback_counts (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL REFERENCES sites (id),
+        batch_id TEXT NOT NULL REFERENCES batches (id),
+        host TEXT NOT NULL CHECK (host IN ('craftish', 'kinsta')),
+        since INTEGER NOT NULL,
+        requested_at INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('waiting', 'running', 'done', 'failed')),
+        orders INTEGER,
+        comments INTEGER,
+        users INTEGER,
+        problem TEXT,
+        finished_at INTEGER
+      );
+      CREATE INDEX rollback_counts_site ON rollback_counts (site_id, requested_at);
     `,
   },
 ];
