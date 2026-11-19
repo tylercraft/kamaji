@@ -1,6 +1,14 @@
 import type { QueueItem, QueueSite } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
-import { bySite, byUpdate, needsBackup } from './updatesView';
+import {
+  bySite,
+  byUpdate,
+  itemKey,
+  needsBackup,
+  proposalTicks,
+  rolledBackWords,
+  routineItems,
+} from './updatesView';
 
 const item = (siteId: string, name: string, from = '1.0', to = '1.1'): QueueItem => ({
   siteId,
@@ -56,5 +64,27 @@ describe('the backups the approval waits for', () => {
 
   it('ignores sites that aren’t chosen', () => {
     expect(needsBackup(['b'], sites, new Set())).toEqual([]);
+  });
+});
+
+describe('what a rollback put back', () => {
+  const putBack = {
+    ...item('a.test', 'menu', '1.15.2', '1.15.3'),
+    rolledBackAt: '2026-11-19T02:00:00.000Z',
+  };
+  const major = { ...item('a.test', 'big', '1.0', '2.0'), major: true };
+  const plain = item('b.test', 'akismet');
+
+  it('is never routine', () => {
+    expect(routineItems([putBack, major, plain])).toEqual([plain]);
+  });
+
+  it('isn’t ticked from a proposal; the rest of it is', () => {
+    const ticks = proposalTicks([putBack, plain], [putBack, major, plain]);
+    expect([...ticks]).toEqual([itemKey(plain)]);
+  });
+
+  it('says the day', () => {
+    expect(rolledBackWords('2026-11-19T02:00:00.000Z')).toBe('Rolled back on 19 Nov');
   });
 });

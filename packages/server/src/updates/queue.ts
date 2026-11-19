@@ -64,6 +64,33 @@ export function isMajor(type: ComponentType, from: string, to: string): boolean 
   return type === 'core' ? a[0] !== b[0] || a[1] !== b[1] : a[0] !== b[0];
 }
 
+/**
+ * Each item's latest rollback on the site, when it's still in effect (it changed the files, and
+ * no undo has since): the version it went back from, and when, by type and item.
+ */
+function rolledBackFrom(db: Db, siteId: string): Map<string, { from: string; at: number }> {
+  const by = new Map<string, { from: string; at: number }>();
+  const rows = db
+    .prepare(
+      `SELECT i.type, i.item, i.now_version, r.finished_at,
+         EXISTS (SELECT 1 FROM rollbacks u WHERE u.kind = 'undo' AND u.undoes = r.id
+           AND u.changed IN ('files', 'all')) AS undone
+       FROM rollback_items i JOIN rollbacks r ON r.id = i.rollback_id
+       WHERE r.site_id = ? AND r.kind = 'rollback' AND r.changed IN ('files', 'all')
+       ORDER BY r.requested_at DESC, r.rowid DESC`,
+    )
+    .all(siteId);
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const k = `${String(row.type)}\u0000${String(row.item)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (Number(row.undone) === 0)
+      by.set(k, { from: String(row.now_version), at: Number(row.finished_at) });
+  }
+  return by;
+}
+
 /** What's waiting, on every site Kamaji can update or, with `siteId`, on that one only. */
 export function queue(
   db: Db,
@@ -87,6 +114,7 @@ export function queue(
     }
     if (site.blocked) continue;
     const known = matches(db, site.id).filter((m) => !m.vulnerability.informational);
+    const putBack = rolledBackFrom(db, site.id);
     const offers = db
       .prepare(
         `SELECT type, item, name, version, offer_version, offer_seen_at FROM components
@@ -102,6 +130,7 @@ export function queue(
       const to = String(o.offer_version);
       const own = known.filter((m) => m.type === type && m.item === item);
       const fixed = own.filter((m) => m.fixedIn && compareVersions(to, m.fixedIn) >= 0).length;
+      const back = putBack.get(`${type}\u0000${item}`);
       items.push({
         siteId: site.id,
         siteName: site.name,
@@ -116,6 +145,7 @@ export function queue(
         major: isMajor(type, from, to),
         offerSeenAt:
           o.offer_seen_at === null ? null : new Date(Number(o.offer_seen_at)).toISOString(),
+        rolledBackAt: back && back.from === to ? new Date(back.at).toISOString() : null,
       });
     }
   }

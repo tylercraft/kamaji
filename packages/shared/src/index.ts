@@ -992,6 +992,11 @@ export const QueueItem = z.object({
   major: z.boolean(),
   /** When WordPress first offered this version, for the "new" dot; null for older offers. */
   offerSeenAt: Timestamp.nullable().optional(),
+  /**
+   * When the site's latest rollback, not undone, put this item back from the version offered:
+   * shown, and never ticked for Tyler. Null otherwise.
+   */
+  rolledBackAt: Timestamp.nullable().optional(),
 });
 export type QueueItem = z.infer<typeof QueueItem>;
 

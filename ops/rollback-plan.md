@@ -142,6 +142,8 @@ A site is busy while it's in a batch that's approved or running, or has a backup
 
 Routes: `GET /api/sites/:id/rollback` (the offer or why not, the latest, and Undo or why not), `POST /api/sites/:id/rollback/count` (no passkey: it changes nothing; body `{ batchId }`, answers the count's id), `GET /api/sites/:id/rollback/count/:count`, `POST /api/sites/:id/rollback` (passkey each time, body `{ batchId, withDatabase }`), `POST /api/sites/:id/rollback/undo` (passkey each time, body `{ rollbackId, withDatabase }`).
 
+In Updates, an offer for an item whose latest rollback (not undone) put it back from that same version says "Rolled back on 19 Nov", and isn't ticked by "Select routine updates" or by a proposal; Tyler ticks it himself.
+
 Who does what: the backups process pushes (it holds the snapshots and the SSH keys); the updater runs the checks after, as it does after an update (it holds the Care keys), and ends the uptime pause. Site Health is measured against the site's last report from before the rollback or undo was asked for, and only without one against the run's own baseline, which may be days old and miss a release that came out since (aleyahoerlein.com trial, 2026-11-19); the app's cycle sends the one Discord line, and the toast goes to whoever asked.
 
 ## When a step fails

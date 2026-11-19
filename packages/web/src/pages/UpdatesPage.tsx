@@ -51,6 +51,9 @@ import {
   byUpdate,
   itemKey as key,
   needsBackup,
+  proposalTicks,
+  rolledBackWords,
+  routineItems,
   type Grouping,
 } from '../updatesView';
 
@@ -97,6 +100,11 @@ export function Flags({ item }: { item: QueueItem }) {
         <Pill tone="amber">
           <Dot /> Major
         </Pill>
+      )}{' '}
+      {item.rolledBackAt && (
+        <Pill tone="amber">
+          <Dot /> {rolledBackWords(item.rolledBackAt)}
+        </Pill>
       )}
     </>
   );
@@ -138,6 +146,7 @@ function ProposalLine({ proposal, data }: { proposal: ProposalView; data: Update
       </Muted>
     );
   const first = data.sites.find((s) => s.siteId === proposal.firstSite)?.siteName;
+  const left = n - proposalTicks(proposal.items, data.items).size;
   return (
     <p role="status" css={{ margin: 0 }}>
       <strong>
@@ -145,7 +154,11 @@ function ProposalLine({ proposal, data }: { proposal: ProposalView; data: Update
         {sites === 1 ? 'site' : 'sites'}
       </strong>{' '}
       <Time iso={proposal.createdAt} />: ticked below with its notes
-      {first ? `, ${first} first` : ''}. Nothing runs until you review and approve it.
+      {first ? `, ${first} first` : ''}
+      {left > 0
+        ? `, except ${left === 1 ? 'one update' : `${left} updates`} a rollback put back, left for you to tick`
+        : ''}
+      . Nothing runs until you review and approve it.
     </p>
   );
 }
@@ -241,7 +254,7 @@ function Queue({
     setTicked(next);
   };
   const [grouping, setGrouping] = useState<Grouping>('update');
-  const routine = data.items.filter((i) => !i.major);
+  const routine = routineItems(data.items);
   const notes = proposalNotes(data.proposal);
   return (
     <Panel aria-labelledby="queue">
@@ -270,7 +283,8 @@ function Queue({
             </Button>
             <Muted>
               Kamaji never updates a site on its own: each update runs only after you review and
-              approve it here. Major versions are never routine; security fixes come first.
+              approve it here. Major versions are never routine, nor is what a rollback put back;
+              security fixes come first.
             </Muted>
           </div>
           <div role="group" aria-label="Group by" css={{ display: 'flex', gap: 6 }}>
@@ -1024,7 +1038,7 @@ export function UpdatesPage() {
   const current = proposal && !proposal.stale ? proposal : null;
   if (current && current.id !== shown) {
     setShown(current.id);
-    setTicked(new Set(current.items.map(key)));
+    setTicked(proposalTicks(current.items, updates.state === 'ready' ? updates.data.items : []));
     setReviewing(false);
   }
   return (
