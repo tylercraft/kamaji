@@ -539,6 +539,28 @@ const freePort = () =>
   });
 }
 
+// Screenshots for the recent run on Aleya's site, through the screenshots process's own code
+// with a stand-in for Docker: a "before" set, then an "after" where the shop page's band moved.
+const { runShots } = await imp('shots/run.js');
+const { requestSet } = await imp('shots/sets.js');
+const { fakeDocker } = await imp('shots/testShots.js');
+const shotsDir = mkdtempSync(join(tmpdir(), 'kamaji-smoke-shots-'));
+const shootWith = (shot) =>
+  runShots({
+    db,
+    exec: fakeDocker(shot).exec,
+    docker: 'docker',
+    dir: shotsDir,
+    seccomp: 'seccomp.json',
+    image: 'kamaji-shots:smoke',
+    now: Date.now,
+    log: () => {},
+  });
+requestSet(db, { siteId: OK, batchId: 'recent', kind: 'before', by: null }, now - 4 * H);
+await shootWith();
+requestSet(db, { siteId: OK, batchId: 'recent', kind: 'after', by: null }, now - 4 * H + MIN);
+await shootWith((_round, position) => (position === 1 ? { band: 30 } : {}));
+
 const LOGIN = 'smoke@localhost';
 // Passkeys: a file of the smoke's own, filled from the Passkeys page by Chrome's virtual
 // authenticator. A passkey can't belong to an IP address, so that part runs on localhost.
@@ -556,6 +578,7 @@ const app = createApp({
   workerOn: true,
   passkeys,
   iconsDir,
+  shotsDir,
   // Refetch icon, with the web stood in for: nothing answers, so the last icon stays.
   iconFetch: async () => new globalThis.Response('not found', { status: 404 }),
   statusInput: () => ({
@@ -1202,6 +1225,61 @@ for (const view of VIEWS) {
   }
   if (problems.length) failures.push(`before-update backups: ${problems.join('; ')}`);
   else console.log('ok   before-update backups: the panel names which one ran');
+}
+
+// Screenshots: the run's line and strip on Updates, the changed page first; a tile opens the
+// comparison with its three images; the site page's panel has Take screenshots now.
+{
+  problems = [];
+  await send('Page.navigate', { url: `http://localhost:${appPort}/updates` });
+  await new Promise((r) => setTimeout(r, 1500));
+  // Aleya's run, opened as Tyler would.
+  await evaluate(
+    `(() => { for (const d of document.querySelectorAll('details')) if (d.textContent.includes('Aleya Hoerlein')) d.open = true; })()`,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  const line = await evaluate(
+    `[...document.querySelectorAll('p')].map((p) => p.textContent).find((t) => t.startsWith('Screenshots:')) ?? ''`,
+  );
+  if (!line.includes('3 pages at 2 sizes. 1 changed; the most: /shop/'))
+    problems.push(`the run’s line says “${line}”`);
+  const first = await evaluate(
+    `document.querySelector('button[aria-pressed]:has(img)')?.textContent ?? ''`,
+  );
+  if (!first.startsWith('/shop/')) problems.push(`the first tile is “${first}”, not the shop`);
+  await evaluate(`document.querySelector('button[aria-pressed]:has(img)')?.click()`);
+  await new Promise((r) => setTimeout(r, 800));
+  const compared = await evaluate(`(() => {
+    const s = document.querySelector('section[aria-label^="Comparison of /shop/"]');
+    if (!s) return null;
+    return [...s.querySelectorAll('img')].map((i) => i.complete && i.naturalWidth > 0);
+  })()`);
+  if (JSON.stringify(compared) !== '[true,true,true]')
+    problems.push(`the comparison’s images: ${JSON.stringify(compared)}`);
+  const thumbs = await evaluate(
+    `[...document.querySelectorAll('button[aria-pressed] img')].every((i) => i.complete && i.naturalWidth > 0)`,
+  );
+  if (!thumbs) problems.push('a thumbnail didn’t load');
+  if (SHOTS) {
+    await evaluate(
+      `document.querySelector('button[aria-pressed]:has(img)')?.scrollIntoView({ block: 'start' })`,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, 'screenshots-run.png'), Buffer.from(shot.result.data, 'base64'));
+  }
+  await send('Page.navigate', { url: `http://localhost:${appPort}/sites/${OK}` });
+  await new Promise((r) => setTimeout(r, 1500));
+  const panel = await evaluate(
+    `document.getElementById('screenshots')?.closest('section')?.textContent ?? ''`,
+  );
+  if (!panel.includes('Take screenshots now')) problems.push('no Take screenshots now on the site');
+  if (!panel.includes('Hidden and masked')) problems.push('no hide and mask settings');
+  if (problems.length) failures.push(`screenshots: ${problems.join('; ')}`);
+  else
+    console.log(
+      'ok   screenshots: the run’s strip, changed first, opens a comparison; Take screenshots now',
+    );
 }
 
 // One save, the whole page: Configure on First & Last turns its whole-site backups from weekly to

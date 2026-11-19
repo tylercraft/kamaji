@@ -865,9 +865,41 @@ sha256sum /usr/local/lib/kamaji/site-push
 sudo -u kamaji-push env SSH_ORIGINAL_COMMAND='result aleyahoerlein.com 0123456789abcdef rollback' /usr/local/bin/kamaji-site-push
 ```
 
+## Screenshots
+
+Screenshot checks (`ops/screenshots-plan.md`): each site's check pages, at 1440 and 390 wide, just before its first update in a run and just after its last, compared and shown on the run's record; and Take screenshots now on a site's page. The screenshots process does it, `dev.craftish.kamaji-shots`, in a container from the `kamaji-shots` image (`shots/`): Microsoft's Playwright image pinned by digest, 3.6 GB in Docker Desktop's disk. It loads each page read only, with analytics and ads blocked (`packages/server/src/shots/blocked.ts`) and every connection through a guard that refuses the mini, the LAN and the tailnet other than the site itself (`shots/guard.mjs`), and holds no keys or secrets, so it runs without Doppler. It starts when asked (the updater, the app, or the app's cycle when a set waits), shoots whatever waits, and exits; the first start after `shots/` changes builds the image first, which takes a few minutes the first time (the 3.5 GB pull). Report-only: a screenshot failure never holds or fails an update, and the updater waits at most 4 minutes for "before" and 3 for "after". Images are in `data/screenshots/`, kept 30 days plus each site's latest set. Its log is `~/Library/Logs/kamaji-shots.log`.
+
+Once, on the mini, after the deploy that brings it (migration 28):
+
+1. Deploy Kamaji:
+
+```
+/Users/tylercraft/kamaji/ops/deploy.sh
+```
+
+2. Load the screenshots LaunchAgent (it does nothing until it's started):
+
+```
+/bin/cp /Users/tylercraft/kamaji/ops/dev.craftish.kamaji-shots.plist /Users/tylercraft/Library/LaunchAgents/ && /bin/launchctl bootstrap gui/501 /Users/tylercraft/Library/LaunchAgents/dev.craftish.kamaji-shots.plist
+```
+
+3. Start it once by hand, so it builds the image now rather than in a run's 4 minutes:
+
+```
+/bin/launchctl kickstart gui/501/dev.craftish.kamaji-shots
+```
+
+4. Follow it until it says `nothing left to shoot; exiting` (after `built kamaji-shots:…` the first time):
+
+```
+/usr/bin/tail -f /Users/tylercraft/Library/Logs/kamaji-shots.log
+```
+
+5. In Kamaji, on F&L accounting's page (tailnet only), then aleyahoerlein.com's: Screenshots → Take screenshots now. Each shows its shots within a minute or so. Look at them together with Calcifer before the first run that takes them.
+
 ## Passkeys
 
-TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake and refreshing a report don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
+TY-170. Every write that starts or changes work on a site needs Tyler's passkey: approving updates, carry on, re-check, export now, whole-site backups and restore checks, Configure and Remove. Touch ID or Face ID on the phone or laptop signs that exact write; Kamaji checks the signature and spends a single-use nonce. Proposing a batch, adding a site, choosing its mode, the handshake, refreshing a report and Take screenshots now don't need one (`app.ts`, `PASSKEY_FREE`), and every write added later does unless it's put on that list.
 
 The passkeys Kamaji accepts are in `/etc/kamaji/passkeys`, one JSON line each, a file only root can change. Kamaji and every agent on the mini run as `tylercraft`, so a list kept anywhere `tylercraft` can write, Kamaji's database included, an agent could add its own key to. Kamaji refuses the file if it or `/etc/kamaji` isn't root's and writable by root only. It's read on every check, so a change takes effect at once, without a restart.
 

@@ -17,7 +17,8 @@ import { announceRuns } from './updates/announce.js';
 import { announceRollbacks } from './rollback/announce.js';
 import { checkWordfence } from './wordfence/feed.js';
 import { checkEndOfLife } from './endOfLife/check.js';
-import { backupsLauncher, updaterLauncher } from './updates/launcher.js';
+import { backupsLauncher, shotsLauncher, updaterLauncher } from './updates/launcher.js';
+import { setsWaiting, staleManual } from './shots/sets.js';
 import { pendingWork } from './updates/batches.js';
 import { checkMolcajete } from './molcajete/check.js';
 import { CYCLE, cycleHandler } from './cycle.js';
@@ -75,6 +76,7 @@ const localMac = () =>
   undefined;
 const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
 const startBackups = backupsLauncher(process.env.KAMAJI_UPDATER, log);
+const startShots = shotsLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
 const discord = createDiscord(db, config.discordUrl, { log });
 // Domains' renewal dates, once a day each: never waited on (checks/domains.ts).
@@ -111,6 +113,9 @@ const runChecks = async (signal: AbortSignal) => {
     if (pendingWork(db)) startUpdater();
     // A backup asked for and not yet taken (the updater's, before an update): start the process.
     if (requestsWaiting(db)) startBackups();
+    // A screenshot set asked for and not taken (the process didn't start): start it.
+    staleManual(db, Date.now());
+    if (setsWaiting(db)) startShots();
     const servers = await steps.step('servers', () =>
       checkServers(db, {
         now: Date.now,
@@ -192,6 +197,8 @@ const app = createApp({
   backup: (site) => craftishBackup(backupConfig(db, process.env))(site),
   fetchExport: (site, at) => craftishFetch(backupConfig(db, process.env), process.env)(site, at),
   startBackups,
+  startShots,
+  shotsDir: config.shotsDir,
   passkeys: passkeyConfig(process.env),
   serverCheck: {
     keyPath: config.sshKeyPath,

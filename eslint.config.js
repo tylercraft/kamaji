@@ -25,6 +25,21 @@ export default tseslint.config(
     },
   },
   {
+    // The shot script runs in the kamaji-shots container; parts of it run in the page.
+    files: ['shots/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
+        location: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+  },
+  {
     files: ['scripts/**/*.mjs'],
     languageOptions: { globals: { console: 'readonly', process: 'readonly', URL: 'readonly' } },
   },

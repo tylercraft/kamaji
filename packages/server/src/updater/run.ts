@@ -25,6 +25,7 @@ import { readPages } from '../sites/pages.js';
 import { BEFORE_UPDATE, needsFreshBackup } from '../backups/beforeUpdate.js';
 import { eligible } from '../sitebackups/eligible.js';
 import { checkRollbacks } from '../rollback/checks.js';
+import { shootAndWait, type ShotsWait } from '../shots/wait.js';
 import {
   latestGoodSnapshot,
   snapshotBeforeUpdate,
@@ -95,6 +96,11 @@ export interface UpdaterDeps {
    * Tyler's passkey never runs.
    */
   approvalProblem: (batchId: string) => string | null;
+  /**
+   * Screenshot checks (ops/screenshots-plan.md): starting the screenshots process, and how long
+   * to wait for each set. Without it, a run takes none.
+   */
+  screenshots?: Pick<ShotsWait, 'start' | 'capMs'>;
 }
 
 export interface RunSite {
@@ -307,9 +313,27 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
       }
     }
 
+    // Just before the first update: never once one has started (a run picked up after a restart).
+    const shots = deps.screenshots
+      ? {
+          ...deps.screenshots,
+          db,
+          now: deps.now,
+          sleep: (ms: number) => deps.sleep(ms, deps.signal),
+        }
+      : null;
+    const started = db
+      .prepare(
+        "SELECT 1 FROM batch_items WHERE batch_id = ? AND site_id = ? AND state != 'waiting' LIMIT 1",
+      )
+      .get(batchId, siteId);
+    if (shots && !started) await shootAndWait(shots, siteId, batchId, 'before');
+
+    let ran = false;
     for (;;) {
       const item = nextItem(db, batchId, siteId);
       if (!item) break;
+      ran = true;
       await pause(deps, site);
       const { outcome, detail } = await runItem(deps, site, item, siteHealthBefore);
       finishItem(db, item, outcome, detail, deps.now());
@@ -320,6 +344,8 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
         break;
       }
     }
+    // Just after the last, whether it passed or the site is held: most useful then.
+    if (shots && ran) await shootAndWait(shots, siteId, batchId, 'after');
     if (!held) {
       db.prepare(
         "UPDATE batch_sites SET state = 'done', finished_at = ? WHERE batch_id = ? AND site_id = ? AND state = 'running'",

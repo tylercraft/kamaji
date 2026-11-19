@@ -1,0 +1,17 @@
+What Chromium 1248 (Playwright 1.64.1, kamaji-shots) says for a script request aborted with
+route.abort('blockedbyclient'), 2026-11-19: the request's failure text, then a console error
+for the same load. shoot.mjs counts load failures from requestfailed and responses, so console
+errors starting "Failed to load resource:" aren't counted again as JavaScript errors.
+
+failed net::ERR_BLOCKED_BY_CLIENT.Inspector
+console error "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector" https://www.googletagmanager.com/gtag/js?id=G-TEST
+
+The same Chromium through shots/guard.mjs, 2026-11-19, for a WebSocket and a fetch() to
+host.docker.internal:47999 from a page: the guard refused both, and Chromium logged these.
+shoot.mjs doesn't count a console error that names a URL whose host:port the guard refused.
+
+guard refused host.docker.internal:47999
+guard refused host.docker.internal:47999
+console error "WebSocket connection to 'ws://host.docker.internal:47999/ws' failed: Establishing a tunnel via proxy server failed." {"url":"","line":0,"column":0,"lineNumber":0,"columnNumber":0}
+console error "Access to fetch at 'http://host.docker.internal:47999/fetch' from origin 'null' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource." {"url":"about:blank","line":0,"column":0,"lineNumber":0,"columnNumber":0}
+console error "Failed to load resource: net::ERR_FAILED" {"url":"http://host.docker.internal:47999/fetch","line":0,"column":0,"lineNumber":0,"columnNumber":0}

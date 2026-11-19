@@ -9,6 +9,8 @@
 // Discord is a third party, so its lines give counts ("1 update"), never component names: those
 // stay in the toast and on Updates (`names`). The held reason is the one Kamaji wrote, as the
 // held issue's alert already sends it.
+import { changedPages, type RunScreenshots } from '@kamaji/shared';
+import { runScreenshots } from '../shots/sets.js';
 import type { Db } from '../db.js';
 import type { Discord } from '../discord.js';
 
@@ -84,7 +86,9 @@ export function runLines(
     `SELECT name, from_version, to_version, outcome, detail FROM batch_items
      WHERE batch_id = ? AND site_id = ? AND state = 'done' AND outcome != 'passed' ORDER BY position`,
   );
-  return sites.map((s) => {
+  return sites.map((s) => withShots(line(s), runScreenshots(db, batchId, String(s.site_id))));
+
+  function line(s: Row): string {
     const name = String(s.name);
     const updated = done.all(batchId, String(s.site_id));
     if (s.state === 'held') {
@@ -105,7 +109,15 @@ export function runLines(
     return updated.length > 0
       ? `✅ Updated ${name}: ${what(updated)}, checks passed (${backup})`
       : `✅ ${name}: nothing left to update (${backup})`;
-  });
+  }
+}
+
+/** Screenshot checks, as a count only (never a page): said only when something changed. */
+function withShots(line: string, shots: RunScreenshots | null): string {
+  const n = shots ? changedPages(shots.comparisons).length : 0;
+  if (n === 0) return line;
+  const words = `screenshots changed on ${n} ${n === 1 ? 'page' : 'pages'}`;
+  return line.endsWith('.') ? `${line} S${words.slice(1)}.` : `${line}; ${words}`;
 }
 
 export interface FinishedRun {

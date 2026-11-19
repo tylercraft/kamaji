@@ -8,7 +8,7 @@ describe('migrate', () => {
     const db = openDb(':memory:');
     expect(migrate(db).map((m) => m.version)).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-      27,
+      27, 28,
     ]);
     expect(migrate(db)).toEqual([]);
     const tables = db
@@ -25,6 +25,9 @@ describe('migrate', () => {
         'issues',
         'jobs',
         'restore_checks',
+        'screenshot_comparisons',
+        'screenshot_sets',
+        'screenshots',
         'server_updates',
         'servers',
         'site_backup_requests',

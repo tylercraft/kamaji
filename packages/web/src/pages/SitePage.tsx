@@ -47,6 +47,7 @@ import {
   Steps,
 } from './SiteSetup';
 import { SiteUpdatesPanel } from './SiteUpdatesPanel';
+import { ScreenshotsPanel } from './Screenshots';
 import { RememberedDetails } from '../components/remembered';
 import { SiteIcon } from '../components/SiteIcon';
 import { PLATFORM_NAMES } from '../sitesView';
@@ -412,6 +413,7 @@ function SiteView({ id }: { id: string }) {
                   </Cards>
                 )}
                 {connected && <InventoryPanel detail={d} now={now} reload={reload} />}
+                <ScreenshotsPanel siteId={site.id} />
                 <ConfigureStep detail={d} reload={reload} section />
                 <RemovePanel detail={d} closed />
               </>
