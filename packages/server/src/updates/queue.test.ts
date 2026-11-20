@@ -210,3 +210,67 @@ describe('an offer for what a rollback put back', () => {
     expect(akismet(none)).toBeNull();
   });
 });
+
+describe('an offer that isn’t newer than what’s installed', () => {
+  it('isn’t queued, for WordPress itself, a plugin or a theme', async () => {
+    const db = testDb();
+    db.prepare(
+      `INSERT INTO sites (id, name, url, host_kind, mode, setup, created_at)
+       VALUES (?, ?, 'https://kamaji-wp.ddev.site/', 'craftish', 'connected', 'done', ?)`,
+    ).run(SITE.id, SITE.name, T);
+    recordObservation(db, {
+      resourceType: 'site',
+      resourceId: SITE.id,
+      check: 'hello',
+      source: 'plugin',
+      at: T,
+      ok: true,
+      value: {
+        ok: true,
+        hello: { plugin: '0.2.2', capabilities: { can_update: true, update_blockers: [] } },
+      },
+    });
+    const r = structuredClone(BASE);
+    // What aleyahoerlein.com reported after its core update (2026-11-20): update_core still
+    // listed an "upgrade" to the version just installed.
+    r.core.version = '7.1.5';
+    r.core.offers = [{ version: '7.1.5', locale: 'en_US', response: 'upgrade', package: true }];
+    r.plugins.push(
+      {
+        file: 'same/same.php',
+        slug: 'same',
+        name: 'Same',
+        version: '2.0',
+        active: true,
+        auto_update: false,
+        offer: { version: '2.0', package: true },
+      },
+      {
+        file: 'older/older.php',
+        slug: 'older',
+        name: 'Older',
+        version: '2.1',
+        active: true,
+        auto_update: false,
+        offer: { version: '2.0.9', package: true },
+      },
+      {
+        file: 'newer/newer.php',
+        slug: 'newer',
+        name: 'Newer',
+        version: '2.1',
+        active: true,
+        auto_update: false,
+        offer: { version: '2.1.1', package: true },
+      },
+    );
+    const theme = r.themes[0]!;
+    theme.offer = { version: theme.version, package: true };
+    storeReport(db, SITE, r, T);
+    const items = queue(db).items.map((i) => `${i.type} ${i.name} ${i.from} → ${i.to}`);
+    expect(items.sort()).toEqual([
+      'plugin Akismet Anti-spam: Spam Protection 5.3 → 5.7.2',
+      'plugin Newer 2.1 → 2.1.1',
+    ]);
+  });
+});

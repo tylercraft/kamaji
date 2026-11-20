@@ -128,6 +128,8 @@ export function queue(
       if (busy.has(`${site.id}\u0000${type}\u0000${item}`)) continue;
       const from = String(o.version);
       const to = String(o.offer_version);
+      // An offer that isn't newer, as update_core can leave after a core update: nothing to do.
+      if (compareVersions(to, from) <= 0) continue;
       const own = known.filter((m) => m.type === type && m.item === item);
       const fixed = own.filter((m) => m.fixedIn && compareVersions(to, m.fixedIn) >= 0).length;
       const back = putBack.get(`${type}\u0000${item}`);
