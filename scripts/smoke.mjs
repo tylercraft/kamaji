@@ -1345,6 +1345,25 @@ for (const view of VIEWS) {
   })()`);
   if (!editor?.sign || editor.name !== 'Minor plugin updates' || editor.ticked < 1)
     problems.push(`the editor: ${JSON.stringify(editor)}`);
+  // The editor's preview, as written: tick a site the rule can name, if there's one, and it asks.
+  const offered = await evaluate(`(() => {
+    const sites = [...document.querySelectorAll('legend')]
+      .find((l) => l.textContent.startsWith('Sites'))
+      ?.parentElement?.querySelectorAll('input[type=checkbox]');
+    const box = sites ? [...sites].find((c) => !c.checked) : undefined;
+    box?.click();
+    return Boolean(box) || (sites ? [...sites].some((c) => c.checked) : false);
+  })()`);
+  await new Promise((r) => setTimeout(r, 1500));
+  const preview = await evaluate(
+    `document.getElementById('rule-preview')?.closest('section')?.textContent ?? ''`,
+  );
+  if (!preview.includes('What it would take at its next run'))
+    problems.push('the editor has no preview');
+  else if (
+    offered ? !preview.includes('Its next run') : !preview.includes('Choose at least one site')
+  )
+    problems.push(`the editor’s preview says “${preview.slice(0, 160)}”`);
   await send('Page.navigate', { url: `http://localhost:${appPort}/updates` });
   await new Promise((r) => setTimeout(r, 1500));
   const waiting = await evaluate(
@@ -1356,7 +1375,7 @@ for (const view of VIEWS) {
   if (problems.length) failures.push(`rules: ${problems.join('; ')}`);
   else
     console.log(
-      'ok   rules: a rule as a sentence, its editor, its run waiting with Pause this run',
+      'ok   rules: a rule as a sentence, its editor and its preview, its run waiting with Pause this run',
     );
   void ruled;
 }

@@ -2,9 +2,9 @@
 // A rule as a sentence, what it would take at its next run and what it wouldn't with why, its
 // warnings, and WordPress's own auto-updates it overlaps (read only). New, edit, pause, sign again
 // to resume, delete.
-import type { RuleSiteOption, RulesResponse, RuleView } from '@kamaji/shared';
-import { RuleSaved, RulesResponse as RulesSchema } from '@kamaji/shared';
-import { useState } from 'react';
+import type { RuleCandidate, RuleSiteOption, RulesResponse, RuleView } from '@kamaji/shared';
+import { RulePreview, RuleSaved, RulesResponse as RulesSchema } from '@kamaji/shared';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { postJson } from '../api';
 import { Choices, Field, Form, FormError, inputStyle, PrimaryButton } from '../components/forms';
@@ -170,29 +170,7 @@ function RulePanel({
       <h3 css={{ fontSize: 12, margin: '10px 0 4px' }}>
         What it would take at its next run, going by what Kamaji knows now
       </h3>
-      {rule.takes.length === 0 ? (
-        <Muted>Nothing.</Muted>
-      ) : (
-        <ul css={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
-          {rule.takes.map((t) => (
-            <li key={`${t.siteId}-${t.name}`}>
-              {t.siteName}: {t.name} {t.from} → {t.to}
-            </li>
-          ))}
-        </ul>
-      )}
-      {rule.misses.length > 0 && (
-        <details css={{ marginTop: 6 }}>
-          <summary css={{ fontSize: 12 }}>{rule.misses.length} it wouldn’t take, with why</summary>
-          <ul css={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13 }}>
-            {rule.misses.map((m) => (
-              <li key={`${m.siteId}-${m.name}`}>
-                {m.siteName}: {m.name} {m.from} → {m.to}: <Muted as="span">{m.why}</Muted>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <WouldTake takes={rule.takes} misses={rule.misses} />
       {rule.autoUpdates.length > 0 && (
         <p css={{ color: 'var(--amber)', fontSize: 13 }}>
           WordPress auto-updates these on its own as well, without Kamaji’s backup or checks:{' '}
@@ -233,6 +211,59 @@ function RulePanel({
   );
 }
 
+/** What a rule takes and what it wouldn't, with why: a signed rule's panel and the editor's preview. */
+function WouldTake({ takes, misses }: { takes: RuleCandidate[]; misses: RuleCandidate[] }) {
+  return (
+    <>
+      {takes.length === 0 ? (
+        <Muted>Nothing.</Muted>
+      ) : (
+        <ul css={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+          {takes.map((t) => (
+            <li key={`${t.siteId}-${t.name}`}>
+              {t.siteName}: {t.name} {t.from} → {t.to}
+            </li>
+          ))}
+        </ul>
+      )}
+      {misses.length > 0 && (
+        <details css={{ marginTop: 6 }}>
+          <summary css={{ fontSize: 12 }}>{misses.length} it wouldn’t take, with why</summary>
+          <ul css={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13 }}>
+            {misses.map((m) => (
+              <li key={`${m.siteId}-${m.name}`}>
+                {m.siteName}: {m.name} {m.from} → {m.to}: <Muted as="span">{m.why}</Muted>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
+
+/**
+ * The editor's preview, asked again a moment after each change: what the rule as written would
+ * take at its next run, by the same matcher a signed rule's panel uses. Nothing is saved.
+ */
+function usePreview(body: unknown): RulePreview | 'asking' | 'failed' | null {
+  const [answer, setAnswer] = useState<{ key: string; value: RulePreview | 'failed' } | null>(null);
+  const latest = useRef('');
+  const key = body === null ? '' : JSON.stringify(body);
+  useEffect(() => {
+    latest.current = key;
+    if (key === '') return;
+    const timer = window.setTimeout(() => {
+      void postJson('/api/rules/preview', JSON.parse(key), RulePreview).then((result) => {
+        if (latest.current === key) setAnswer({ key, value: result.ok ? result.data : 'failed' });
+      });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [key]);
+  if (key === '') return null;
+  return answer?.key === key ? answer.value : 'asking';
+}
+
 function RuleEditor({
   data,
   rule,
@@ -247,6 +278,8 @@ function RuleEditor({
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<RuleForm>) => setForm((f) => ({ ...f, ...patch }));
   const t = data.updateTime;
+  const draft = bodyOf(form, rule?.id ?? null, data.sites, t);
+  const preview = usePreview(draft.ok ? draft.body : null);
   const save = async () => {
     const built = bodyOf(form, rule?.id ?? null, data.sites, t);
     if (!built.ok) return setError(built.why);
@@ -385,6 +418,30 @@ function RuleEditor({
         {number('securityWaitDays', 'Days, for a security fix', 0, 30)}
         {number('perSite', 'Most updates a site', 1, 20)}
         {number('sites', 'Most sites a run', 1, 20)}
+        <section aria-labelledby="rule-preview" aria-live="polite">
+          <h3 id="rule-preview" css={{ fontSize: 12, margin: '6px 0 4px' }}>
+            What it would take at its next run, going by what Kamaji knows now
+          </h3>
+          {preview === null ? (
+            <Muted>{!draft.ok && draft.why}</Muted>
+          ) : preview === 'asking' ? (
+            <Muted>Looking…</Muted>
+          ) : preview === 'failed' ? (
+            <Muted>Kamaji couldn’t say just now.</Muted>
+          ) : (
+            <>
+              {preview.problem && (
+                <p css={{ color: 'var(--amber)', margin: '2px 0', fontSize: 13 }}>
+                  It can’t be signed as it is: {preview.problem}.
+                </p>
+              )}
+              <Muted>
+                Its next run: <When iso={preview.at} />.
+              </Muted>
+              <WouldTake takes={preview.takes} misses={preview.misses} />
+            </>
+          )}
+        </section>
         <Muted>
           It runs at the update time, {WEEKDAYS[t.weekday]} {String(t.hour).padStart(2, '0')}:00,
           set out with “Ready to update” and started an hour later. Saving signs it with your

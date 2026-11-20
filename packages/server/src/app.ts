@@ -16,6 +16,7 @@ import {
   RollbackRequest,
   RuleBody,
   type RuleSaved,
+  type RulePreview,
   type RulesResponse,
   UndoRequest,
   DetectPlatformRequest,
@@ -64,7 +65,7 @@ import { challengeFor } from './passkeys/webauthn.js';
 import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
 import { NOT_LISTED, type OrgLookup } from './rules/org.js';
-import { labelQueue, pauseRun, ruleViews } from './rules/runs.js';
+import { labelQueue, pauseRun, rulePreview, ruleViews } from './rules/runs.js';
 import { bodyProblem, deleteRule, pauseRule, ruleRow, ruleSites, saveRule } from './rules/store.js';
 import type { Db } from './db.js';
 import { readUpdateTime, writeUpdateTime } from './settings.js';
@@ -174,6 +175,8 @@ const PASSKEY_FREE = new Set([
   'POST /api/sites/detect',
   // Opening a page: when this viewer last looked, for "new" dots. Nothing on any site.
   'POST /api/me/seen',
+  // The rule editor's preview: what a rule as written would take, read only. Nothing is saved.
+  'POST /api/rules/preview',
 ]);
 // Refetch icon: the plain GETs of the home page and its icon, as when the site was added.
 // Check: the cycle's home page and certificate checks, for one site (an issue's Check again).
@@ -826,6 +829,15 @@ export function createApp({
     if (problem) return c.json({ error: 'invalid', problem }, 409);
     const saved = saveRule(db, body, c.get('approval'), login, now());
     return c.json({ ok: true, ...saved } satisfies RuleSaved, 201);
+  });
+  app.post('/api/rules/preview', async (c) => {
+    const body = await readJson(c, RuleBody);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const preview: RulePreview = {
+      ...(await rulePreview(db, body, now(), org)),
+      problem: bodyProblem(db, body),
+    };
+    return c.json(preview);
   });
   app.post('/api/rules/:id/pause', (c) =>
     ruleRow(db, c.req.param('id')) &&

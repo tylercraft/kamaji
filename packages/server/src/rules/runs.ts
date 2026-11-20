@@ -4,7 +4,14 @@
 // fine for showing and proposing: the updater checks each run again from the signed rule, the
 // site and wordpress.org before it sends anything (rules/check.ts).
 import { randomUUID } from 'node:crypto';
-import type { BatchRule, QueueItem, RuleBody, RuleCandidate, RuleView } from '@kamaji/shared';
+import type {
+  BatchRule,
+  QueueItem,
+  RuleBody,
+  RuleCandidate,
+  RulePreview,
+  RuleView,
+} from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import { recordEvent } from '../events.js';
@@ -343,6 +350,21 @@ export async function labelQueue(
         labels.set(key(t.item), { id: rule.id, name: rule.body.name, at: iso(next + VETO_MS) });
   }
   return items.map((i) => ({ ...i, rule: labels.get(key(i)) ?? null }));
+}
+
+/**
+ * What a rule as written, not yet signed, would take at its next run: the editor's preview. The
+ * same candidates() a signed rule's panel shows, so the two can't disagree.
+ */
+export async function rulePreview(
+  db: Db,
+  body: RuleBody,
+  now: number,
+  org: OrgLookup,
+): Promise<Omit<RulePreview, 'problem'>> {
+  const at = updateTimes(now, body.when).next + VETO_MS;
+  const { takes, misses } = await candidates(db, body, at, org);
+  return { takes: takes.map(plain), misses, at: iso(at) };
 }
 
 /** The Rules page: each rule as a sentence, what it would take next, and what's wrong with it. */

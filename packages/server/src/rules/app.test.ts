@@ -3,7 +3,13 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CareReport, RulesResponse, UpdatesResponse, type RuleBody } from '@kamaji/shared';
+import {
+  CareReport,
+  RulePreview,
+  RulesResponse,
+  UpdatesResponse,
+  type RuleBody,
+} from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import type { Db } from '../db.js';
@@ -83,6 +89,7 @@ function setup() {
   );
   const tyler = testAuthenticator();
   let at = T - DAY;
+  let starts = 0;
   const webDist = mkdtempSync(join(tmpdir(), 'kamaji-web-'));
   writeFileSync(join(webDist, 'index.html'), '<!doctype html>');
   const app = createApp({
@@ -91,6 +98,7 @@ function setup() {
     webDist,
     passkeys: tyler.config,
     org,
+    startUpdater: () => (starts += 1),
     now: () => at,
     statusInput: () => ({
       version: '0.1.0',
@@ -109,7 +117,7 @@ function setup() {
     schema.parse(await (await app.request(path, { headers: PAGE })).json()) as ReturnType<
       S['parse']
     >;
-  return { db, app, raw, signed, get, setAt: (t: number) => (at = t) };
+  return { db, app, raw, signed, get, setAt: (t: number) => (at = t), starts: () => starts };
 }
 
 describe('the Rules routes', () => {
@@ -193,6 +201,30 @@ describe('the Rules routes', () => {
     expect(
       updates.items.find((i) => i.siteId === 'two.test' && i.type === 'plugin')!.rule,
     ).toBeNull();
+  });
+
+  it('previews a rule as written, without a passkey, saving nothing', async () => {
+    const s = setup();
+    const preview = async (b: RuleBody) =>
+      RulePreview.parse(await (await s.raw('/api/rules/preview', JSON.stringify(b))).json());
+    const minor = await preview(body());
+    expect(minor.problem).toBeNull();
+    expect(minor.takes.map((t) => `${t.name} ${t.from} → ${t.to}`)).toEqual([
+      'Akismet Anti-spam: Spam Protection 5.3 → 5.7.2',
+    ]);
+    // Changing the form changes the answer, by the same matcher a signed rule uses.
+    const patch = await preview(body({ change: 'patch' }));
+    expect(patch.takes).toEqual([]);
+    expect(patch.misses.find((m) => m.siteId === 'one.test' && m.to === '5.7.2')?.why).toBe(
+      'a minor version, and the rule takes patches only',
+    );
+    const tylers = await preview(
+      body({ sites: [{ id: 'two.test', url: 'https://two.test/', backup: 'host' }] }),
+    );
+    expect(tylers.takes).toEqual([]);
+    expect(tylers.problem).toMatch(/^two.test can’t be in a rule/);
+    expect(s.db.prepare('SELECT COUNT(*) AS n FROM rule_versions').get()!.n).toBe(0);
+    expect((await s.raw('/api/rules/preview', '{"name":1}')).status).toBe(400);
   });
 
   it('warns when a signed site’s address changed, or the update time moved', async () => {

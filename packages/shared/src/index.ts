@@ -1625,6 +1625,18 @@ export const RuleCandidate = z.object({
 });
 export type RuleCandidate = z.infer<typeof RuleCandidate>;
 
+/**
+ * What a rule as written would take at its next run, before it's signed: the same matcher and
+ * the same records the Rules page uses for a signed rule. `problem` is why it couldn't be signed.
+ */
+export const RulePreview = z.object({
+  takes: z.array(RuleCandidate),
+  misses: z.array(RuleCandidate),
+  at: Timestamp,
+  problem: z.string().nullable(),
+});
+export type RulePreview = z.infer<typeof RulePreview>;
+
 export const RuleView = z.object({
   id: z.string(),
   version: z.number().int(),
