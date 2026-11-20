@@ -182,6 +182,12 @@ final class Jobs {
 		$job['message']     = null === $job['error'] ? null : self::message( (string) $job['error'] );
 		$job['maintenance'] = file_exists( ABSPATH . '.maintenance' );
 		$job['finished']    = time();
+		if ( 'core' === $job['type'] ) {
+			// Core_Upgrader deletes it too, but something later in the same request can check again
+			// with the old version still in memory and save the offer just installed. Kamaji's next
+			// report has WordPress check again, as after a rollback push (site-push/push).
+			delete_site_transient( 'update_core' );
+		}
 		Store::save_job( $job );
 		Store::unlock( $job['job'] );
 		Store::log( 'update', null, $job['state'] . ': ' . self::label( $job ) . ( $job['error'] ? ' (' . $job['error'] . ')' : '' ) );
