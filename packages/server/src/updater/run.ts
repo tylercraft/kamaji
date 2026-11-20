@@ -37,6 +37,7 @@ import {
 } from '../rules/check.js';
 import { orgLookup, type OrgLookup } from '../rules/org.js';
 import { releaseSite } from '../rules/runs.js';
+import { noteVersions, versionProblem, type RuleVersions } from '../rules/seen.js';
 import { pauseRule } from '../rules/store.js';
 import {
   latestGoodSnapshot,
@@ -120,6 +121,11 @@ export interface UpdaterDeps {
   ruleApproval?: RuleApproval;
   /** wordpress.org, asked when a version was released (rules/org.ts). */
   org?: OrgLookup;
+  /**
+   * The updater's own record of the rule versions it has seen signed (rules/seen.ts), outside
+   * the database. Without it, no rule's run runs.
+   */
+  ruleVersions?: RuleVersions;
 }
 
 export interface RunSite {
@@ -165,15 +171,30 @@ export async function runUpdater(deps: UpdaterDeps): Promise<void> {
     if (deps.signal.aborted) throw deps.signal.reason;
     // A rollback the backups process finished: its checks, before any more updates.
     await checkRollbacks(deps);
+    // Every rule version signed since it last looked, before anything a rule set out runs.
+    if (deps.ruleApproval && deps.ruleVersions)
+      noteVersions(deps.db, deps.ruleApproval, deps.ruleVersions);
     const batch = nextBatch(deps.db, deps.now());
     if (!batch) return;
     if (batch.rule) {
       // A rule's run: the signed rule is its approval (rules/check.ts), and one site goes first.
-      const checked = deps.ruleApproval
-        ? ruleRunProblem(deps.db, batch.id, deps.ruleApproval, deps.now())
-        : { ok: false as const, problem: 'the updater can’t check rules', ruleId: null };
+      if (!deps.ruleApproval || !deps.ruleVersions) {
+        refuseRule(deps, batch.id, 'the updater can’t check rules', null);
+        continue;
+      }
+      const checked = ruleRunProblem(deps.db, batch.id, deps.ruleApproval, deps.now());
       if (!checked.ok) {
         refuseRule(deps, batch.id, checked.problem, checked.ruleId);
+        continue;
+      }
+      const older = versionProblem(
+        deps.db,
+        deps.ruleVersions,
+        checked.run.ruleId,
+        checked.run.version,
+      );
+      if (older !== null) {
+        refuseRule(deps, batch.id, older, checked.run.ruleId);
         continue;
       }
       await runBatch(deps, batch.id, true, checked.run);

@@ -133,6 +133,8 @@ describe('the Rules routes', () => {
     expect((await s.raw('/api/rules', again)).status).toBe(401);
     expect((await s.signed('/api/rules', again)).status).toBe(201);
     expect(ruleRow(s.db, id)?.version).toBe(2);
+    // The updater starts after each, to note the version in its own record (rules/seen.ts).
+    expect(s.starts()).toBe(2);
     const stored = JSON.parse(
       String(s.db.prepare('SELECT approval FROM rule_versions WHERE version = 2').get()!.approval),
     ) as { body: string };

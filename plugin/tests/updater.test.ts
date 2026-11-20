@@ -26,6 +26,7 @@ import { ruleApprovalProblem } from '../../packages/server/src/passkeys/guard.js
 import { testAuthenticator } from '../../packages/server/src/passkeys/testing.js';
 import { bodyHash, challengeFor } from '../../packages/server/src/passkeys/webauthn.js';
 import type { OrgLookup } from '../../packages/server/src/rules/org.js';
+import { memoryVersions } from '../../packages/server/src/rules/seen.js';
 import { makeRuleRuns } from '../../packages/server/src/rules/runs.js';
 import { saveRule } from '../../packages/server/src/rules/store.js';
 import { KAMAJI_ZONE, wallClock } from '../../packages/server/src/sitebackups/schedule.js';
@@ -428,6 +429,7 @@ describe('M4’s done test on DDEV', () => {
       ...deps(),
       ruleApproval: (r, v) => ruleApprovalProblem(db, tyler.config, r, v),
       org,
+      ruleVersions: memoryVersions(),
     });
     expect(items(batch)).toEqual([
       { item: ONE, state: 'done', outcome: 'passed', detail: '1.1.0 installed; the checks passed' },

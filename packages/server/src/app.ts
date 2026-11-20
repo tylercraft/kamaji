@@ -828,6 +828,8 @@ export function createApp({
     const problem = bodyProblem(db, body);
     if (problem) return c.json({ error: 'invalid', problem }, 409);
     const saved = saveRule(db, body, c.get('approval'), login, now());
+    // The updater notes each signed version in its own record (rules/seen.ts) as it starts.
+    startUpdater();
     return c.json({ ok: true, ...saved } satisfies RuleSaved, 201);
   });
   app.post('/api/rules/preview', async (c) => {

@@ -2,6 +2,7 @@
 // approved (launchctl kickstart on the mini), it runs every approved batch, then exits. It holds
 // the update key, which the app never does: its Doppler config is `updater`, scoped to
 // ~/.kamaji-updater. One at a time: a second start while one runs exits at once.
+import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { careRequest } from '../care/client.js';
 import { loadCareKeys } from '../care/keys.js';
@@ -12,6 +13,7 @@ import { releaseLock, takeLock } from './lock.js';
 import { passkeyConfig } from '../config.js';
 import { approvalProblem, ruleApprovalProblem } from '../passkeys/guard.js';
 import { orgLookup } from '../rules/org.js';
+import { fileVersions } from '../rules/seen.js';
 import { runUpdater, type Send } from './run.js';
 import { shotsLauncher } from '../updates/launcher.js';
 
@@ -81,6 +83,10 @@ try {
     approvalProblem: (batchId) => approvalProblem(db, passkeyConfig(env), batchId),
     ruleApproval: (ruleId, version) => ruleApprovalProblem(db, passkeyConfig(env), ruleId, version),
     org: orgLookup(),
+    // Its own record of rule versions, beside its Doppler scope, not in the database.
+    ruleVersions: fileVersions(
+      env.KAMAJI_UPDATER_RULE_VERSIONS ?? `${homedir()}/.kamaji-updater/rule-versions.json`,
+    ),
     // launchd on the mini, where the updater's own plist sets nothing; a child on the laptop.
     screenshots: { start: shotsLauncher(env.KAMAJI_UPDATER ?? 'launchd', log) },
   });

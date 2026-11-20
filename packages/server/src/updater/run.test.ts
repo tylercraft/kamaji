@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CareReport } from '@kamaji/shared';
 import { describe, expect, it } from 'vitest';
 import type { CareResult } from '../care/client.js';
@@ -20,6 +22,7 @@ import { testAuthenticator } from '../passkeys/testing.js';
 import { bodyHash, challengeFor } from '../passkeys/webauthn.js';
 import type { OrgLookup } from '../rules/org.js';
 import { makeRuleRuns } from '../rules/runs.js';
+import { fileVersions, memoryVersions } from '../rules/seen.js';
 import { pauseRule, saveRule } from '../rules/store.js';
 import { KAMAJI_ZONE, wallClock } from '../sitebackups/schedule.js';
 
@@ -1013,6 +1016,7 @@ describe('a rule’s run, from the updater’s side (ops/rules-plan.md)', () => 
     let release = { version: '5.7.2', at: T - 10 * DAY };
     const org: OrgLookup = async () => release;
     const hosts: string[] = [];
+    const versions = memoryVersions();
     const run = (now: number, extra: Partial<UpdaterDeps> = {}) => {
       const base = s.deps();
       return runUpdater({
@@ -1024,6 +1028,7 @@ describe('a rule’s run, from the updater’s side (ops/rules-plan.md)', () => 
         },
         ruleApproval: (r, v) => ruleApprovalProblem(s.db, tyler.config, r, v),
         org,
+        ruleVersions: versions,
         ...extra,
       });
     };
@@ -1033,6 +1038,7 @@ describe('a rule’s run, from the updater’s side (ops/rules-plan.md)', () => 
       org,
       run,
       hosts,
+      versions,
       sent: () => hosts.filter((h) => h.startsWith('update ')),
       releasedAt: (at: number) => (release = { version: '5.7.2', at }),
     };
@@ -1145,6 +1151,99 @@ describe('a rule’s run, from the updater’s side (ops/rules-plan.md)', () => 
       await makeRuleRuns(r.db, T, r.org);
       r.db.prepare('UPDATE batches SET starts_at = ?').run(T);
       await refused(r, /too early/, T + 10 * 60_000);
+    });
+  });
+
+  describe('a database edit can’t bring back an older version: the updater’s own record', () => {
+    /** Rule versions 1 and 2, both seen by the updater (it starts after each is signed). */
+    async function twice() {
+      const r = ruled();
+      const v2 = rule({ ruleId: r.id });
+      saveRule(r.db, v2, sign(v2), 'tyler', T - DAY + 60_000);
+      // Nothing set out yet: the updater only looks, notes both versions, and exits.
+      await r.run(T - HOUR);
+      expect(r.versions.seen().highest).toEqual({ [r.id]: 2 });
+      return r;
+    }
+    const approvalOf = (db: Db, version: number) =>
+      String(
+        db.prepare('SELECT approval FROM rule_versions WHERE version = ?').get(version)!.approval,
+      );
+
+    it('the newer version’s row deleted, so the older is the latest again', async () => {
+      const r = await twice();
+      r.db.prepare('DELETE FROM rule_versions WHERE version = 2').run();
+      await makeRuleRuns(r.db, T, r.org);
+      expect(batchViews(r.db)[0]!.rule).toMatchObject({ version: 1 });
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toMatch(
+        /version 1 is older than version 2, which the updater has seen signed/,
+      );
+      expect(ruleState(r.db, r.id)).toMatchObject({ paused_by: 'kamaji' });
+    });
+
+    it('an older signed version moved into a newer version’s place', async () => {
+      const r = await twice();
+      // Version 2's signature, which carries the rule's id, now posing as a version 3.
+      const old = approvalOf(r.db, 2);
+      r.db.prepare('DELETE FROM rule_versions WHERE version = 2').run();
+      r.db
+        .prepare(
+          `INSERT INTO rule_versions (rule_id, version, body, approval, signed_at, signed_by)
+           SELECT rule_id, 3, body, ?, signed_at, signed_by FROM rule_versions WHERE version = 1`,
+        )
+        .run(old);
+      await makeRuleRuns(r.db, T, r.org);
+      expect(batchViews(r.db)[0]!.rule).toMatchObject({ version: 3 });
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toMatch(
+        /its signature was first seen as another version or rule/,
+      );
+    });
+
+    it('a rule’s first version moved to a rule of its own', async () => {
+      const r = await twice();
+      // Version 1 is signed before the rule has an id, so its signature fits any rule.
+      const first = approvalOf(r.db, 1);
+      r.db.prepare('DELETE FROM rule_versions WHERE version = 1').run();
+      r.db
+        .prepare("INSERT INTO rules (id, created_at, created_by) VALUES ('copy', 0, 'tyler')")
+        .run();
+      r.db
+        .prepare(
+          `INSERT INTO rule_versions (rule_id, version, body, approval, signed_at, signed_by)
+           VALUES ('copy', 1, ?, ?, 0, 'tyler')`,
+        )
+        .run(JSON.stringify(rule()), first);
+      r.db.prepare('UPDATE rules SET deleted_at = 0 WHERE id = ?').run(r.id);
+      await makeRuleRuns(r.db, T, r.org);
+      expect(batchViews(r.db)[0]!.rule).toMatchObject({ id: 'copy' });
+      await r.run(AFTER);
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toMatch(/first seen as another/);
+    });
+
+    it('a record it can’t read: no rule’s run runs', async () => {
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      const dir = mkdtempSync(join(tmpdir(), 'kamaji-seen-'));
+      writeFileSync(join(dir, 'rule-versions.json'), 'not json');
+      await r.run(AFTER, { ruleVersions: fileVersions(join(dir, 'rule-versions.json')) });
+      expect(r.sent()).toEqual([]);
+      expect(batchViews(r.db)[0]!.sites[0]!.heldReason).toMatch(/record of rule versions/);
+    });
+
+    it('the record in its file: made on first use, kept across runs', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'kamaji-seen-'));
+      const path = join(dir, 'home', 'rule-versions.json');
+      const r = ruled();
+      await makeRuleRuns(r.db, T, r.org);
+      await r.run(AFTER, { ruleVersions: fileVersions(path) });
+      expect(r.sent()).toEqual(['update one.test']);
+      expect(fileVersions(path).read()).toMatchObject({ highest: { [r.id]: 1 } });
+      expect(statSync(path).mode & 0o777).toBe(0o600);
     });
   });
 
