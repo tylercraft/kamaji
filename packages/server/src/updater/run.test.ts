@@ -368,6 +368,18 @@ describe('the updater', () => {
     expect(openIssues(db)).toEqual([]);
   });
 
+  it('asks for a refreshed report after WordPress itself, so its update checks run again', async () => {
+    const { db, site, deps } = setup();
+    await approve(db);
+    await runUpdater(deps());
+    // The report straight after each job: refreshed after core (Craftish Care cleared update_core
+    // at the end of the job), as usual after a plugin.
+    const reports = site.sent.flatMap((s, n) =>
+      s.endpoint === 'report' && site.sent[n - 1]?.endpoint === 'status' ? [s.body] : [],
+    );
+    expect(reports).toEqual([{ refresh: true }, { refresh: false }]);
+  });
+
   it('holds the rest when an update breaks a check, and alerts without naming the component', async () => {
     const { db, site, deps } = setup();
     site.behave.breaksHomePage = true;

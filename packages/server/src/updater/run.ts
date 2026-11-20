@@ -955,7 +955,9 @@ async function runItem(
     setItem(deps.db, item.id, 'checking');
   }
 
-  const report = await freshReport(deps, site);
+  // After WordPress itself, a refreshed one: Craftish Care cleared update_core at the end of the
+  // job, so WordPress checks again with the version now installed.
+  const report = await freshReport(deps, site, item.type === 'core');
   if (!report)
     return { outcome: 'incomplete', detail: 'the site’s report after the update couldn’t be read' };
   const installed = installedVersion(report, item);

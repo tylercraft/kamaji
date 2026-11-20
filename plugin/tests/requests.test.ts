@@ -55,6 +55,24 @@ describe('happy paths', () => {
     });
   });
 
+  it('offers WordPress itself only when newer than what’s installed', async () => {
+    // update_core as a core update can leave it (aleyahoerlein.com, 2026-11-20): an "upgrade" to
+    // the version installed, beside a real one.
+    wp(
+      'eval',
+      `$v = get_bloginfo( 'version' );
+      $offer = fn ( $to ) => (object) array( 'response' => 'upgrade', 'version' => $to, 'current' => $to,
+        'locale' => 'en_US', 'download' => 'https://example.invalid/', 'packages' => (object) array( 'full' => 'https://example.invalid/' ) );
+      set_site_transient( 'update_core', (object) array( 'updates' => array( $offer( $v ), $offer( '99.0' ) ),
+        'last_checked' => time(), 'version_checked' => $v ) );`,
+    );
+    onTestFinished(() => {
+      wp('transient', 'delete', 'update_core', '--network');
+    });
+    const sent = await send('report', { body: '{"refresh":false}' });
+    expect(CareReport.parse(sent.body).core.offers.map((o) => o.version)).toEqual(['99.0']);
+  });
+
   it('goes through Kamaji’s own client', async () => {
     const result = await careRequest(HOME, report, 'hello', {});
     expect(result.ok).toBe(true);

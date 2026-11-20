@@ -1,7 +1,7 @@
 // M4's done test on DDEV (calcifer explore/kamaji/plan.md, M4): Kamaji's own updater, approval
 // and checks, against the local WordPress with Craftish Care 0.2.0 and DISABLE_WP_CRON set, as on
 // aleyahoerlein.com. A core update (WordPress downgraded to 7.1.3 first, so wordpress.org offers
-// 7.1.4), a good plugin update, one that breaks a check, the site going away mid-run, and Kamaji
+// its latest), a good plugin update, one that breaks a check, the site going away mid-run, and Kamaji
 // restarted mid-run, each ending in the right outcome; plus the path a host without PHP-FPM takes.
 // The Worker is a stand-in that records what it's told; Discord isn't involved.
 import { execFileSync } from 'node:child_process';
@@ -70,6 +70,32 @@ add_filter( 'upgrader_pre_install', function ( $return ) {
 	}
 	return $return;
 } );
+// What aleyahoerlein.com was left with after a core update (2026-11-20): the first time
+// update_core is cleared after kamaji_done_stale_core is set, it's saved again offering that
+// version, as a version check from before the update would have saved it.
+add_action( 'deleted_site_transient', function ( $transient ) {
+	static $once = false;
+	$stale = get_option( 'kamaji_done_stale_core' );
+	if ( 'update_core' !== $transient || $once || ! $stale ) {
+		return;
+	}
+	$once = true;
+	$url  = 'https://downloads.wordpress.org/release/wordpress-' . $stale . '.zip';
+	set_site_transient( 'update_core', (object) array(
+		'updates' => array( (object) array(
+			'response' => 'upgrade', 'version' => $stale, 'current' => $stale, 'locale' => 'en_US',
+			'download' => $url, 'packages' => (object) array( 'full' => $url ),
+		) ),
+		'last_checked' => time(), 'version_checked' => '7.1.3',
+	) );
+} );
+// update_core as the core job left it, kept as the plugin's job finishes: before WordPress's own
+// version check after that job saves a new one.
+add_action( 'upgrader_process_complete', function ( $upgrader, $options ) {
+	if ( get_option( 'kamaji_done_stale_core' ) && 'plugin' === ( $options['type'] ?? '' ) ) {
+		update_option( 'kamaji_done_core_between', wp_json_encode( get_site_transient( 'update_core' ) ) );
+	}
+}, 1, 2 );
 `;
 
 const ddev = (...args: string[]) =>
@@ -225,7 +251,13 @@ beforeAll(async () => {
  */
 function reset(): void {
   synced();
-  for (const name of ['kamaji_done_offers', 'kamaji_done_slow', 'craftish_care_lock']) {
+  for (const name of [
+    'kamaji_done_offers',
+    'kamaji_done_slow',
+    'kamaji_done_stale_core',
+    'kamaji_done_core_between',
+    'craftish_care_lock',
+  ]) {
     try {
       wp('option', 'delete', name);
     } catch {
@@ -260,6 +292,17 @@ describe('M4’s done test on DDEV', () => {
   it('a good update: WordPress itself, then a plugin, each checked after', async () => {
     offer({ [ONE]: { version: '1.1.0' } });
     const batch = await approve(['core', ONE]);
+    // wordpress.org's latest, whichever it is today.
+    const latest = String(
+      db
+        .prepare("SELECT to_version FROM batch_items WHERE batch_id = ? AND type = 'core'")
+        .get(batch)!.to_version,
+    );
+    wp('option', 'update', 'kamaji_done_stale_core', latest);
+    // A refresh in the last 10 minutes, so the report after the update can't run WordPress's
+    // version check (which would throw the stale offer away itself): only Craftish Care's clearing
+    // at the end of the job can.
+    wp('option', 'update', 'craftish_care_refreshed', String(Math.floor(Date.now() / 1000)));
     worker.length = 0;
     await runUpdater(deps());
     expect(items(batch)).toEqual([
@@ -267,11 +310,17 @@ describe('M4’s done test on DDEV', () => {
         item: 'core',
         state: 'done',
         outcome: 'passed',
-        detail: '7.1.4 installed; the checks passed',
+        detail: `${latest} installed; the checks passed`,
       },
       { item: ONE, state: 'done', outcome: 'passed', detail: '1.1.0 installed; the checks passed' },
     ]);
-    expect(wp('core', 'version')).toBe('7.1.4');
+    expect(wp('core', 'version')).toBe(latest);
+    // The offer of that version saved again after the upgrader cleared it: gone at the end of the job,
+    // so Kamaji has nothing left to offer for WordPress itself.
+    expect(wp('option', 'get', 'kamaji_done_core_between')).toBe('false');
+    expect(queue(db).items.filter((i) => i.type === 'core')).toEqual([]);
+    wp('option', 'delete', 'kamaji_done_stale_core');
+    wp('option', 'delete', 'kamaji_done_core_between');
     expect(wp('plugin', 'get', 'kamaji-done-one', '--field=status')).toBe('active');
     // Uptime alerts paused on both paths for the run, then resumed and re-checked at once.
     expect(worker).toEqual(['PUT (none)', `PUT ${SITE}`, `POST /v1/check/${SITE}`]);

@@ -134,10 +134,18 @@ final class Site {
 		return is_object( $transient ) && isset( $transient->last_checked ) ? (int) $transient->last_checked : null;
 	}
 
+	/**
+	 * WordPress's core offers newer than what's installed. update_core can still list an
+	 * "upgrade" to the version a core update just installed (aleyahoerlein.com, 2026-11-20).
+	 */
 	private static function core_offers(): array {
-		$offers = array();
+		$installed = (string) get_bloginfo( 'version' );
+		$offers    = array();
 		foreach ( (array) get_core_updates( array( 'dismissed' => true ) ) as $offer ) {
 			if ( ! is_object( $offer ) || 'latest' === ( $offer->response ?? '' ) ) {
+				continue;
+			}
+			if ( ! version_compare( (string) ( $offer->version ?? '' ), $installed, '>' ) ) {
 				continue;
 			}
 			$offers[] = array(

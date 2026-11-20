@@ -63,7 +63,7 @@ Only after all seven does the endpoint read the body: it must be a JSON object, 
 
 ### The report
 
-Core (installed, offered updates with version and locale), every plugin (file, slug, name, version, active, auto-update on or off, offered version if any, and whether the offer has a package: a paid plugin with no licence offers a version but no package), every theme (likewise, plus which is active and its parent), from 0.2.0 every must-use plugin (`mu_plugins`: file, name and version from the header of each top-level file in `wp-content/mu-plugins`, as `get_mu_plugins()` reads them; listed only, since WordPress never updates them; absent before 0.2.0, which Kamaji shows as unknown, never as none), PHP and database versions, the last time WordPress checked for updates, and Site Health's critical direct tests. Nothing else: no users, options, content or file lists.
+Core (installed, offered updates with version and locale; from 0.2.3 only offers newer than what's installed, since `update_core` can still list an "upgrade" to the version a core update just installed), every plugin (file, slug, name, version, active, auto-update on or off, offered version if any, and whether the offer has a package: a paid plugin with no licence offers a version but no package), every theme (likewise, plus which is active and its parent), from 0.2.0 every must-use plugin (`mu_plugins`: file, name and version from the header of each top-level file in `wp-content/mu-plugins`, as `get_mu_plugins()` reads them; listed only, since WordPress never updates them; absent before 0.2.0, which Kamaji shows as unknown, never as none), PHP and database versions, the last time WordPress checked for updates, and Site Health's critical direct tests. Nothing else: no users, options, content or file lists.
 
 ### Update jobs
 
@@ -83,6 +83,7 @@ Request:
 
 - **One item per job.** Kamaji runs the checks between items, so one item at a time is all it needs, and it keeps the plugin simple.
 - **Idempotent by job id.** The same job id again returns that job's state and never starts a second run. Kamaji generates ids and stores them before sending.
+- From 0.2.3, a core job clears `update_core` when it ends, as the rollback push does (`site-push/push`), so a version check saved during the job with the old version can't offer the one just installed; Kamaji's report straight after a core update asks for a refresh, so WordPress checks again.
 - The plugin refuses with `409 version_changed` unless `from` is what's installed and `to` is exactly what WordPress's own update data offers right now, and `409 no_package` when the offer has no package. It never takes a version, URL or package from the request: Kamaji names a version, the plugin checks it against WordPress's offer, and WordPress's upgrader fetches it.
 - The same id with a different item or versions is `409 job_id_reused`.
 - One job at a time per site (`409 busy`), with a lock that expires after 15 minutes.
