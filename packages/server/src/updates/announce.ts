@@ -123,6 +123,8 @@ function withShots(line: string, shots: RunScreenshots | null): string {
 export interface FinishedRun {
   id: string;
   approvedBy: string;
+  /** Approved by a rule Tyler signed, not by him (rules/runs.ts). */
+  rule?: boolean;
   finishedAt: number;
   lines: string[];
   /** Updates' anchor for the run's first site (web runHistory.ts, runAnchor). */
@@ -142,7 +144,7 @@ function anchorFor(db: Db, batchId: string): string {
 export function unannounced(db: Db): FinishedRun[] {
   return db
     .prepare(
-      `SELECT id, approved_by, finished_at, announced_at FROM batches
+      `SELECT id, approved_by, rule_id, finished_at, announced_at FROM batches
        WHERE state = 'finished' AND finished_at > COALESCE(announced_at, -1)
        ORDER BY finished_at`,
     )
@@ -150,6 +152,7 @@ export function unannounced(db: Db): FinishedRun[] {
     .map((b) => ({
       id: String(b.id),
       approvedBy: String(b.approved_by),
+      rule: b.rule_id !== null,
       finishedAt: Number(b.finished_at),
       lines: runLines(db, String(b.id), b.announced_at === null ? null : Number(b.announced_at)),
       anchor: anchorFor(db, String(b.id)),
@@ -161,21 +164,27 @@ export function unannounced(db: Db): FinishedRun[] {
 export function recentRuns(db: Db, now: number, withinMs: number): FinishedRun[] {
   return db
     .prepare(
-      `SELECT id, approved_by, finished_at FROM batches
+      `SELECT id, approved_by, rule_id, finished_at FROM batches
        WHERE state = 'finished' AND finished_at > ? ORDER BY finished_at`,
     )
     .all(now - withinMs)
     .map((b) => ({
       id: String(b.id),
       approvedBy: String(b.approved_by),
+      rule: b.rule_id !== null,
       finishedAt: Number(b.finished_at),
       lines: runLines(db, String(b.id), null, true),
       anchor: anchorFor(db, String(b.id)),
     }));
 }
 
+/** Discord's message: a rule's run says so first, without the rule's name. */
 export const runMessage = (run: FinishedRun, kamajiUrl: string) =>
-  [...run.lines, `<${kamajiUrl.replace(/\/$/, '')}/updates#${run.anchor}>`].join('\n');
+  [
+    ...(run.rule ? ['By a rule you signed:'] : []),
+    ...run.lines,
+    `<${kamajiUrl.replace(/\/$/, '')}/updates#${run.anchor}>`,
+  ].join('\n');
 
 /** The cycle's part: one message per finished run, marked told only once Discord takes it. */
 export async function announceRuns(

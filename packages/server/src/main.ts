@@ -13,6 +13,8 @@ import { checkSites } from './checks/sites.js';
 import { checkDirectory } from './inventory/directory.js';
 import { checkReports, reportAll } from './inventory/report.js';
 import { checkReady } from './ready.js';
+import { orgLookup } from './rules/org.js';
+import { makeRuleRuns, ruleRunDue } from './rules/runs.js';
 import { announceRuns } from './updates/announce.js';
 import { announceRollbacks } from './rollback/announce.js';
 import { checkWordfence } from './wordfence/feed.js';
@@ -75,6 +77,8 @@ const localMac = () =>
   db.prepare("SELECT 1 FROM servers WHERE kind = 'local-mac' AND removed_at IS NULL").get() !==
   undefined;
 const startUpdater = updaterLauncher(process.env.KAMAJI_UPDATER, log);
+/** wordpress.org's release dates, for rules: kept an hour, asked with a slug and nothing else. */
+const org = orgLookup(fetch, { ttlMs: 60 * 60_000 });
 const startBackups = backupsLauncher(process.env.KAMAJI_UPDATER, log);
 const startShots = shotsLauncher(process.env.KAMAJI_UPDATER, log);
 const heartbeat = createHeartbeat(db, config.pingUrl, { log });
@@ -154,9 +158,16 @@ const runChecks = async (signal: AbortSignal) => {
         recheck: care
           ? () => reportAll(db, { keys: care, send: careRequest, now: Date.now })
           : null,
+        rules: () => makeRuleRuns(db, Date.now(), org),
         signal,
       }),
     );
+    // Rules: a run set out late (Kamaji was down at the update time, or a rule signed for another
+    // time), and the updater started once a run's hour to pause it is over.
+    await steps.step('rules', async () => {
+      await makeRuleRuns(db, Date.now(), org);
+      if (ruleRunDue(db, Date.now())) startUpdater();
+    });
     await steps.step('notifications', async () => {
       await notifyNow(db, Date.now(), discord, notify);
       // Each finished run, once: what changed, or why it's held (updates/announce.ts).
@@ -199,6 +210,7 @@ const app = createApp({
   startBackups,
   startShots,
   shotsDir: config.shotsDir,
+  org,
   passkeys: passkeyConfig(process.env),
   serverCheck: {
     keyPath: config.sshKeyPath,

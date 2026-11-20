@@ -1,7 +1,9 @@
 // "Ready to update" (Tyler, 2026-11-17): at the weekly update time, a fresh report from every
 // connected site (Recheck all), then one message, to Discord and the top of Overview: each site's
 // backup for this update and the updates waiting on it, majors marked. A failed backup leads.
-// Kamaji approves nothing itself: the message links to Updates, where Tyler does.
+// Kamaji approves nothing itself but what a rule Tyler signed takes (rules/runs.ts): those runs are
+// set out just before the message, which counts them, and wait an hour for him to pause them.
+// Everything else waits in Updates, where Tyler approves it.
 //
 // Discord is a third party, so it gets labels and counts, never plugin names (discord.ts); the
 // list itself is on Overview. Like notify.ts, the message is marked sent only once Discord takes
@@ -20,6 +22,7 @@ import { eligible } from './sitebackups/eligible.js';
 import { backupNight, KAMAJI_ZONE, updateTimes } from './sitebackups/schedule.js';
 import { readState, writeState } from './state.js';
 import { queue, updatableSites } from './updates/queue.js';
+import { ruleRunsFor } from './rules/runs.js';
 
 const HOUR = 60 * 60_000;
 const WEEK = 7 * 24 * HOUR;
@@ -40,7 +43,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
  * there isn't one. The message sent at the update time looks up to then; Overview's live card up
  * to now, so a failure fixed after the update time (Back up site now) clears.
  */
-function wholeSite(db: Db, siteId: string, update: number, upTo: number): ReadyBackup {
+export function wholeSite(db: Db, siteId: string, update: number, upTo: number): ReadyBackup {
   const row = db
     .prepare('SELECT time_zone, site_backup_schedule FROM sites WHERE id = ?')
     .get(siteId);
@@ -169,7 +172,7 @@ export function readyToUpdate(
       Number(b.backup.state === 'failed') - Number(a.backup.state === 'failed') ||
       a.siteName.localeCompare(b.siteName),
   );
-  return { for: iso(update), sentAt: iso(now), sites };
+  return { for: iso(update), sentAt: iso(now), sites, rules: ruleRunsFor(db, update) };
 }
 
 const clock = (at: string) =>
@@ -236,9 +239,19 @@ export function readyMessage(ready: ReadyToUpdate, kamajiUrl: string): string {
     (s) =>
       `- ${s.siteName}: ${backupWords(s.backup)} · ${updateWords(s)}${s.note && s.backup.state !== 'failed' ? ' · not rechecked' : ''}`,
   );
+  // Discord gets counts only: a rule's name may name plugins.
+  const ruled = ready.rules.reduce((n, r) => n + r.updates, 0);
+  const ruledSites = ready.rules.reduce((n, r) => n + r.sites, 0);
+  const rules =
+    ready.rules.length === 0
+      ? []
+      : [
+          `${ready.rules.length === 1 ? 'A rule' : `${ready.rules.length} rules`} will run ${ruled} update${ruled === 1 ? '' : 's'} on ${ruledSites} site${ruledSites === 1 ? '' : 's'} from ${clock(ready.rules[0]!.startsAt)}, unless you pause ${ready.rules.length === 1 ? 'it' : 'them'} in Kamaji.`,
+        ];
   return [
     head,
-    `${waiting} update${waiting === 1 ? '' : 's'} waiting. Nothing is approved until you approve it.`,
+    ...rules,
+    `${waiting} update${waiting === 1 ? '' : 's'} waiting${ready.rules.length > 0 ? ' for you' : ''}. Nothing ${ready.rules.length > 0 ? 'else ' : ''}is approved until you approve it.`,
     ...lines,
     `<${kamajiUrl.replace(/\/$/, '')}/updates>`,
   ].join('\n');
@@ -286,6 +299,8 @@ export interface ReadyDeps {
   kamajiUrl: string;
   /** Recheck all: a fresh report from each connected site, with why any didn't answer. */
   recheck: (() => Promise<{ id: string; ok: boolean; problem: string | null }[]>) | null;
+  /** Each rule's run for this update time, set out after the recheck (rules/runs.ts). */
+  rules?: () => Promise<unknown>;
   signal?: AbortSignal;
 }
 
@@ -304,6 +319,7 @@ export async function checkReady(db: Db, now: number, deps: ReadyDeps): Promise<
   if (deps.recheck)
     for (const r of await deps.recheck())
       if (!r.ok) unreachable.set(r.id, r.problem ?? 'no report');
+  if (deps.rules) await deps.rules();
   const ready = readyToUpdate(db, now, update, unreachable);
   const failed = ready.sites.filter((s) => s.backup.state === 'failed').length;
   const waiting = ready.sites.reduce((n, s) => n + s.updates.length, 0);

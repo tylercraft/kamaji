@@ -813,4 +813,39 @@ export const migrations: Migration[] = [
       ALTER TABLE sites ADD COLUMN screenshot_mask TEXT NOT NULL DEFAULT '[]';
     `,
   },
+  {
+    version: 29,
+    name: 'rules',
+    // Rules (ops/rules-plan.md): a rule is its versions, each the body Tyler signed and the
+    // proof, kept as signed. Editing or resuming signs a new version; only the latest counts. A
+    // pause is on the rule itself, by Tyler or by Kamaji after a run went wrong. A batch a rule
+    // made names the rule and version, the update time it's for, and when it may start (an hour
+    // later, for Tyler to pause it). Its approval column stays empty: the rule is the approval.
+    sql: `
+      CREATE TABLE rules (
+        id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        created_by TEXT NOT NULL,
+        paused_at INTEGER,
+        paused_by TEXT,
+        paused_reason TEXT,
+        deleted_at INTEGER,
+        deleted_by TEXT
+      );
+      CREATE TABLE rule_versions (
+        rule_id TEXT NOT NULL REFERENCES rules (id),
+        version INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        approval TEXT NOT NULL,
+        signed_at INTEGER NOT NULL,
+        signed_by TEXT NOT NULL,
+        PRIMARY KEY (rule_id, version)
+      );
+      ALTER TABLE batches ADD COLUMN rule_id TEXT REFERENCES rules (id);
+      ALTER TABLE batches ADD COLUMN rule_version INTEGER;
+      ALTER TABLE batches ADD COLUMN update_at INTEGER;
+      ALTER TABLE batches ADD COLUMN starts_at INTEGER;
+      CREATE UNIQUE INDEX batches_rule_run ON batches (rule_id, update_at) WHERE rule_id IS NOT NULL;
+    `,
+  },
 ];

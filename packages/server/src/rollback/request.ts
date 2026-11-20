@@ -5,6 +5,7 @@ import type { RollbackView, SiteRollbackResponse } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import { transaction } from '../db.js';
 import { recordEvent } from '../events.js';
+import { pauseRule } from '../rules/store.js';
 import { newId, rollbackItems, rollbackOffer, undoOffer } from './offer.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -66,6 +67,10 @@ export function requestRollback(
       detail: { rollback: id, batch: offer.batchId },
     });
   });
+  // A run a rule made, rolled back: the rule pauses until Tyler signs it again (rules-plan.md).
+  const rule = db.prepare('SELECT rule_id FROM batches WHERE id = ?').get(offer.batchId)?.rule_id;
+  if (rule !== null && rule !== undefined)
+    pauseRule(db, String(rule), by, 'a run it made was rolled back', now);
   return { ok: true, id };
 }
 

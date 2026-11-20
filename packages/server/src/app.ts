@@ -14,6 +14,9 @@ import {
   RollbackCountRequest,
   ScreenshotSettings,
   RollbackRequest,
+  RuleBody,
+  type RuleSaved,
+  type RulesResponse,
   UndoRequest,
   DetectPlatformRequest,
   type DetectPlatformResponse,
@@ -60,6 +63,9 @@ import { checkWrite, issueNonce, type PasskeyConfig } from './passkeys/guard.js'
 import { challengeFor } from './passkeys/webauthn.js';
 import { latestProposal, proposeBatch } from './updates/proposals.js';
 import { queue } from './updates/queue.js';
+import { NOT_LISTED, type OrgLookup } from './rules/org.js';
+import { labelQueue, pauseRun, ruleViews } from './rules/runs.js';
+import { bodyProblem, deleteRule, pauseRule, ruleRow, ruleSites, saveRule } from './rules/store.js';
 import type { Db } from './db.js';
 import { readUpdateTime, writeUpdateTime } from './settings.js';
 import { markSeen, news } from './viewers.js';
@@ -120,6 +126,8 @@ export interface AppOptions {
   rdapFetch?: typeof fetch;
   /** What Check now needs to read a server (checks/serverCheck.ts). Without it, it's refused. */
   serverCheck?: ServerCheckOptions;
+  /** wordpress.org's release dates, for rules (rules/org.ts). Without it, none are known. */
+  org?: OrgLookup;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -175,12 +183,15 @@ const PASSKEY_FREE = new Set([
 // Rollback's count: orders, comments and users since the restore point, read only, for the
 // dialog before the passkey.
 // Take screenshots now: the site's check pages in a headless browser, read only.
+// Pausing a rule, or a rule's run before it starts: it only stops something. Resuming is signing
+// the rule again.
 const PASSKEY_FREE_SITE_STEP =
   /^\/api\/sites\/[^/]+\/(mode|handshake|report|check|icon\/refetch|domain\/check|kinsta\/test|rollback\/count|screenshots)$/;
 // Check now, for a server: the cycle's read of it (its report, or molcajete's readers), on demand.
 const PASSKEY_FREE_SERVER_STEP = /^\/api\/servers\/[^/]+\/check$/;
 // Undo a dismissal: it only shows a warning again. Dismissing hides one, so it takes a passkey.
 const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
+const PASSKEY_FREE_PAUSE = /^\/api\/(rules|batches)\/[^/]+\/pause$/;
 
 /**
  * One passkey for a run of writes: any signed write that succeeds opens a 10-minute window in which
@@ -193,19 +204,23 @@ const PASSKEY_FREE_ISSUE_STEP = /^\/api\/issues\/[^/]+\/undismiss$/;
  * it runs anything (passkeys/guard.ts, approvalProblem), so a batch written straight into the
  * database doesn't run. An approval sent under the window would have no signature to check. A
  * rollback and its undo the same: the backups process checks theirs before it pushes
- * (rollbackApprovalProblem).
+ * (rollbackApprovalProblem). A rule, too: each version is its approval for every run it makes,
+ * checked by the updater (rules/check.ts).
  */
 export const PASSKEY_WINDOW_MS = 10 * 60_000;
 const WINDOW_COOKIE = 'kamaji_passkey';
-const SIGN_EACH_TIME = /^\/api\/(batches|sites\/[^/]+\/rollback(\/undo)?)$/;
+const SIGN_EACH_TIME = /^\/api\/(batches|rules|sites\/[^/]+\/rollback(\/undo)?)$/;
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('base64url');
 
 const passkeyFree = (method: string, path: string) =>
   PASSKEY_FREE.has(`${method} ${path}`) ||
   (method === 'POST' &&
-    [PASSKEY_FREE_SITE_STEP, PASSKEY_FREE_SERVER_STEP, PASSKEY_FREE_ISSUE_STEP].some((step) =>
-      step.test(path),
-    ));
+    [
+      PASSKEY_FREE_SITE_STEP,
+      PASSKEY_FREE_SERVER_STEP,
+      PASSKEY_FREE_ISSUE_STEP,
+      PASSKEY_FREE_PAUSE,
+    ].some((step) => step.test(path)));
 
 const NO_PASSKEYS: PasskeyConfig = {
   load: () => ({ ok: false, problem: 'passkeys aren’t set up' }),
@@ -243,6 +258,7 @@ export function createApp({
   startShots = () => {},
   shotsDir,
   passkeys = NO_PASSKEYS,
+  org = async () => NOT_LISTED,
   iconsDir,
   iconFetch,
   siteCheckers,
@@ -779,17 +795,54 @@ export function createApp({
   });
   // Updates: the queue, approving a batch, and a held site's options (updates/).
   // With ?site=, one site's page: what's waiting there and its latest run.
-  app.get('/api/updates', (c) => {
+  app.get('/api/updates', async (c) => {
     const site = c.req.query('site');
     let body: UpdatesResponse;
     if (site === undefined) {
       const q = queue(db);
-      body = { ...q, batches: batchViews(db, 50), proposal: latestProposal(db, q.items) };
+      const items = await labelQueue(db, q.items, now(), org);
+      body = { ...q, items, batches: batchViews(db, 50), proposal: latestProposal(db, q.items) };
     } else {
-      body = { ...queue(db, site), batches: batchViews(db, 1, site), proposal: null };
+      const q = queue(db, site);
+      const items = await labelQueue(db, q.items, now(), org);
+      body = { ...q, items, batches: batchViews(db, 1, site), proposal: null };
     }
     return c.json(body);
   });
+  // Rules (ops/rules-plan.md): each signed with the passkey, every time, since the signature is
+  // what the updater checks before a run the rule makes.
+  app.get('/api/rules', async (c) => {
+    const body: RulesResponse = {
+      rules: await ruleViews(db, now(), org),
+      ...ruleSites(db),
+      updateTime: readUpdateTime(db),
+    };
+    return c.json(body);
+  });
+  app.post('/api/rules', async (c) => {
+    const body = await readJson(c, RuleBody);
+    if (!body) return c.json({ error: 'bad_request' }, 400);
+    const problem = bodyProblem(db, body);
+    if (problem) return c.json({ error: 'invalid', problem }, 409);
+    const saved = saveRule(db, body, c.get('approval'), login, now());
+    return c.json({ ok: true, ...saved } satisfies RuleSaved, 201);
+  });
+  app.post('/api/rules/:id/pause', (c) =>
+    ruleRow(db, c.req.param('id')) &&
+    pauseRule(db, c.req.param('id'), login, 'Paused by Tyler', now())
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404),
+  );
+  app.post('/api/rules/:id/delete', (c) =>
+    deleteRule(db, c.req.param('id'), login, now())
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404),
+  );
+  app.post('/api/batches/:id/pause', (c) =>
+    pauseRun(db, c.req.param('id'), login, now())
+      ? c.json({ ok: true })
+      : c.json({ error: 'not_found' }, 404),
+  );
   // A proposed batch: ticked in Updates with its notes, for Tyler to review and approve. Never an
   // approval; the only write open to a caller without the page's Origin (allowedWrite, above).
   app.post('/api/proposals', async (c) => {

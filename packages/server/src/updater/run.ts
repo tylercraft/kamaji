@@ -26,6 +26,18 @@ import { BEFORE_UPDATE, needsFreshBackup } from '../backups/beforeUpdate.js';
 import { eligible } from '../sitebackups/eligible.js';
 import { checkRollbacks } from '../rollback/checks.js';
 import { shootAndWait, type ShotsWait } from '../shots/wait.js';
+import { runScreenshots } from '../shots/sets.js';
+import { comparisonChanged } from '@kamaji/shared';
+import {
+  ruleItemVerdict,
+  ruleRunProblem,
+  ruleSiteProblem,
+  type RuleApproval,
+  type RuleRun,
+} from '../rules/check.js';
+import { orgLookup, type OrgLookup } from '../rules/org.js';
+import { releaseSite } from '../rules/runs.js';
+import { pauseRule } from '../rules/store.js';
 import {
   latestGoodSnapshot,
   snapshotBeforeUpdate,
@@ -101,6 +113,13 @@ export interface UpdaterDeps {
    * to wait for each set. Without it, a run takes none.
    */
   screenshots?: Pick<ShotsWait, 'start' | 'capMs'>;
+  /**
+   * A rule's signed version (passkeys/guard.ts, ruleApprovalProblem): checked before a run a
+   * rule made, in place of approvalProblem. Without it, no rule's run runs.
+   */
+  ruleApproval?: RuleApproval;
+  /** wordpress.org, asked when a version was released (rules/org.ts). */
+  org?: OrgLookup;
 }
 
 export interface RunSite {
@@ -146,8 +165,20 @@ export async function runUpdater(deps: UpdaterDeps): Promise<void> {
     if (deps.signal.aborted) throw deps.signal.reason;
     // A rollback the backups process finished: its checks, before any more updates.
     await checkRollbacks(deps);
-    const batch = nextBatch(deps.db);
+    const batch = nextBatch(deps.db, deps.now());
     if (!batch) return;
+    if (batch.rule) {
+      // A rule's run: the signed rule is its approval (rules/check.ts), and one site goes first.
+      const checked = deps.ruleApproval
+        ? ruleRunProblem(deps.db, batch.id, deps.ruleApproval, deps.now())
+        : { ok: false as const, problem: 'the updater can’t check rules', ruleId: null };
+      if (!checked.ok) {
+        refuseRule(deps, batch.id, checked.problem, checked.ruleId);
+        continue;
+      }
+      await runBatch(deps, batch.id, true, checked.run);
+      continue;
+    }
     const problem = deps.approvalProblem(batch.id);
     if (problem !== null) {
       refuse(deps, batch.id, problem);
@@ -157,15 +188,20 @@ export async function runUpdater(deps: UpdaterDeps): Promise<void> {
   }
 }
 
-function nextBatch(db: Db): { id: string; oneSiteFirst: boolean } | null {
+function nextBatch(
+  db: Db,
+  now: number,
+): { id: string; oneSiteFirst: boolean; rule: boolean } | null {
+  // A rule's run waits for its start (the hour to pause it); the rule check holds it to that too.
   const row = db
     .prepare(
-      `SELECT b.id, b.one_site_first FROM batches b
+      `SELECT b.id, b.one_site_first, b.rule_id FROM batches b
        WHERE b.state IN ('approved', 'running')
+       AND (b.starts_at IS NULL OR b.starts_at <= ?)
        AND EXISTS (SELECT 1 FROM batch_sites s WHERE s.batch_id = b.id AND s.state IN ('waiting', 'running'))
        ORDER BY b.approved_at LIMIT 1`,
     )
-    .get();
+    .get(now);
   if (!row) {
     db.prepare(
       `UPDATE batches SET state = 'finished', finished_at = ? WHERE state != 'finished'
@@ -173,10 +209,19 @@ function nextBatch(db: Db): { id: string; oneSiteFirst: boolean } | null {
     ).run(Date.now());
     return null;
   }
-  return { id: String(row.id), oneSiteFirst: Number(row.one_site_first) === 1 };
+  return {
+    id: String(row.id),
+    oneSiteFirst: Number(row.one_site_first) === 1,
+    rule: row.rule_id !== null,
+  };
 }
 
-async function runBatch(deps: UpdaterDeps, batchId: string, oneSiteFirst: boolean): Promise<void> {
+async function runBatch(
+  deps: UpdaterDeps,
+  batchId: string,
+  oneSiteFirst: boolean,
+  rule?: RuleRun,
+): Promise<void> {
   const { db } = deps;
   db.prepare("UPDATE batches SET state = 'running' WHERE id = ?").run(batchId);
   const sites = db
@@ -187,7 +232,26 @@ async function runBatch(deps: UpdaterDeps, batchId: string, oneSiteFirst: boolea
     .all(batchId)
     .map((r) => ({ id: String(r.site_id), position: Number(r.position) }));
   for (const [n, s] of sites.entries()) {
-    const held = await runSite(deps, batchId, s.id);
+    const held = await runSite(deps, batchId, s.id, rule);
+    if (rule) {
+      // A held site, or screenshots that changed, pause the whole rule and stop its run.
+      const name = siteRow(db, s.id).name;
+      const changed =
+        !held && (runScreenshots(db, batchId, s.id)?.comparisons.some(comparisonChanged) ?? false);
+      if (held || changed) {
+        const why = held ? `${name} was held` : `the screenshots changed on ${name}`;
+        const reason =
+          db
+            .prepare('SELECT held_reason FROM batch_sites WHERE batch_id = ? AND site_id = ?')
+            .get(batchId, s.id)?.held_reason ?? why;
+        if (held) releaseSite(db, batchId, s.id, String(reason), deps.now());
+        pauseRule(db, rule.ruleId, 'kamaji', `its run stopped: ${why}`, deps.now());
+        for (const rest of sites.slice(n + 1))
+          releaseSite(db, batchId, rest.id, `the rule paused: ${why}`, deps.now());
+        break;
+      }
+      continue;
+    }
     // "One site first": the rest wait on the first site passing.
     if (held && oneSiteFirst && n === 0 && s.position === 0) {
       for (const rest of sites.slice(1)) {
@@ -234,9 +298,24 @@ export function siteRow(db: Db, id: string): RunSite {
 }
 
 /** Runs one site's part of a batch. Returns whether the site ended held. */
-async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Promise<boolean> {
+async function runSite(
+  deps: UpdaterDeps,
+  batchId: string,
+  siteId: string,
+  rule?: RuleRun,
+): Promise<boolean> {
   const { db } = deps;
-  const site = siteRow(db, siteId);
+  const row = siteRow(db, siteId);
+  // A rule's run goes to the address that was signed, never the row's (rules/check.ts).
+  const signed = rule?.body.sites.find((x) => x.id === siteId);
+  const site = signed ? { ...row, url: signed.url } : row;
+  if (rule) {
+    const problem = ruleSiteProblem(db, rule, siteId, deps.now());
+    if (problem) {
+      hold(db, batchId, siteId, `Not run: ${problem}`, deps.now());
+      return true;
+    }
+  }
   // A rollback waiting or running puts files back under the updater's feet: one at a time.
   const rolling = db
     .prepare(
@@ -253,11 +332,39 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
   await pause(deps, site);
   let held = false;
   try {
-    const run = db
+    // In a rule's run, the backup and baseline stored on the run are only trusted once an update
+    // has begun (a restart mid-run); before that, they're taken here, whatever the row says.
+    const begun =
+      db
+        .prepare(
+          `SELECT 1 FROM batch_items WHERE batch_id = ? AND site_id = ?
+           AND (state IN ('sent', 'running', 'checking') OR outcome IS NOT NULL) LIMIT 1`,
+        )
+        .get(batchId, siteId) !== undefined;
+    if (rule) {
+      const left = await leaveOut(deps, rule, site, batchId);
+      if (left === 'unreadable') {
+        hold(db, batchId, siteId, 'Not run: the site’s report couldn’t be read', deps.now());
+        return true;
+      }
+      if (left === 'none left') {
+        db.prepare(
+          "UPDATE batch_sites SET state = 'done', finished_at = ? WHERE batch_id = ? AND site_id = ?",
+        ).run(deps.now(), batchId, siteId);
+        return false;
+      }
+    }
+    const stored = db
       .prepare(
         'SELECT backup_kind, backup, baseline FROM batch_sites WHERE batch_id = ? AND site_id = ?',
       )
       .get(batchId, siteId)!;
+    const run =
+      signed && !begun
+        ? { backup_kind: signed.backup, backup: null, baseline: null }
+        : signed
+          ? { ...stored, backup_kind: signed.backup }
+          : stored;
 
     if (run.backup === null) {
       const evidence = await backupEvidence(deps, site, String(run.backup_kind), batchId);
@@ -363,6 +470,50 @@ async function runSite(deps: UpdaterDeps, batchId: string, siteId: string): Prom
   }
 }
 
+/**
+ * A rule's run on one site: each update checked again against the rule, by a report the updater
+ * asks for now and wordpress.org. One that no longer matches is left out, with why.
+ */
+async function leaveOut(
+  deps: UpdaterDeps,
+  rule: RuleRun,
+  site: RunSite,
+  batchId: string,
+): Promise<'unreadable' | 'none left' | 'some left'> {
+  const { db } = deps;
+  const report = await freshReport(deps, site, true);
+  if (!report) return 'unreadable';
+  const org = deps.org ?? orgLookup();
+  const waiting = db
+    .prepare(
+      "SELECT id, type, item, from_version, to_version FROM batch_items WHERE batch_id = ? AND site_id = ? AND state = 'waiting'",
+    )
+    .all(batchId, site.id);
+  let left = 0;
+  for (const w of waiting) {
+    const verdict = await ruleItemVerdict(
+      db,
+      rule,
+      site.id,
+      {
+        type: String(w.type) as Item['type'],
+        item: String(w.item),
+        from: String(w.from_version),
+        to: String(w.to_version),
+      },
+      report,
+      org,
+      deps.now(),
+    );
+    if (verdict.ok) left += 1;
+    else
+      db.prepare(
+        "UPDATE batch_items SET state = 'done', detail = ?, finished_at = ? WHERE id = ?",
+      ).run(`Left out: ${verdict.why}`, deps.now(), String(w.id));
+  }
+  return left > 0 ? 'some left' : 'none left';
+}
+
 function nextItem(db: Db, batchId: string, siteId: string): Item | null {
   const r = db
     .prepare(
@@ -438,6 +589,31 @@ function refuse(deps: UpdaterDeps, batchId: string, problem: string): void {
       `Not run: the approval doesn’t hold (${problem}). Nothing was sent to the site; approve the updates again.`,
       deps.now(),
     );
+}
+
+/** A rule's run that mustn't run: nothing is sent, its updates go back, and the rule pauses. */
+function refuseRule(
+  deps: UpdaterDeps,
+  batchId: string,
+  problem: string,
+  ruleId: string | null,
+): void {
+  deps.log(`updater: rule run ${batchId} not run: ${problem}`);
+  const waiting = deps.db
+    .prepare(
+      "SELECT site_id FROM batch_sites WHERE batch_id = ? AND state IN ('waiting', 'running')",
+    )
+    .all(batchId);
+  for (const r of waiting)
+    releaseSite(
+      deps.db,
+      batchId,
+      String(r.site_id),
+      `Not run: the rule doesn’t hold (${problem}). Nothing was sent to the site.`,
+      deps.now(),
+    );
+  if (ruleId !== null)
+    pauseRule(deps.db, ruleId, 'kamaji', `its run was refused: ${problem}`, deps.now());
 }
 
 function hold(db: Db, batchId: string, siteId: string, reason: string, at: number): void {

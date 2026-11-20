@@ -4,9 +4,10 @@
 // and spends the nonce. An approval keeps its proof, and the updater checks it again before it
 // runs anything (approvalProblem), so a batch written straight into the database doesn't run.
 // A rollback or undo keeps its proof the same way, checked by the backups process before it
-// pushes (rollbackApprovalProblem).
+// pushes (rollbackApprovalProblem), and a rule each of its versions, checked by the updater
+// before a run the rule made (ruleApprovalProblem, rules/check.ts).
 import { randomBytes } from 'node:crypto';
-import { ApproveRequest, RollbackRequest, UndoRequest } from '@kamaji/shared';
+import { ApproveRequest, RollbackRequest, RuleBody, UndoRequest } from '@kamaji/shared';
 import type { Db } from '../db.js';
 import type { Loaded } from './store.js';
 import { bodyHash, challengeFor, readProof, verifyProof, type Proof } from './webauthn.js';
@@ -101,7 +102,8 @@ export interface Approval {
  */
 /**
  * A stored approval's body, once its proof checks out for a POST to `path` with that body and
- * its nonce signed nothing else: in neither table, batches or rollbacks, more than this once.
+ * its nonce signed nothing else: in none of batches, rollbacks or rule versions more than this
+ * once.
  */
 function signedBody(
   db: Db,
@@ -130,7 +132,8 @@ function signedBody(
   const uses = db
     .prepare(
       `SELECT (SELECT count(*) FROM batches WHERE json_extract(approval, '$.proof.nonce') = ?1)
-         + (SELECT count(*) FROM rollbacks WHERE json_extract(approval, '$.proof.nonce') = ?1) AS n`,
+         + (SELECT count(*) FROM rollbacks WHERE json_extract(approval, '$.proof.nonce') = ?1)
+         + (SELECT count(*) FROM rule_versions WHERE json_extract(approval, '$.proof.nonce') = ?1) AS n`,
     )
     .get(proof.nonce);
   if (Number(uses?.n) !== 1) return { ok: false, problem: 'an approval used more than once' };
@@ -221,4 +224,33 @@ export function rollbackApprovalProblem(db: Db, config: PasskeyConfig, id: strin
       return 'the rollback isn’t what was approved';
   }
   return null;
+}
+
+/**
+ * A rule version's signed body, or why it doesn't hold (ops/rules-plan.md, "The approval"): a
+ * proof that checks out for POST /api/rules with the stored body, a body that reads as a rule,
+ * and one that's for this rule (a new rule's first version names none). Whether it's the latest,
+ * paused or deleted is rules/check.ts's to say.
+ */
+export function ruleApprovalProblem(
+  db: Db,
+  config: PasskeyConfig,
+  ruleId: string,
+  version: number,
+): { ok: true; body: RuleBody } | { ok: false; problem: string } {
+  const row = db
+    .prepare('SELECT approval FROM rule_versions WHERE rule_id = ? AND version = ?')
+    .get(ruleId, version);
+  if (!row) return { ok: false, problem: 'no such rule version' };
+  const signed = signedBody(db, config, row.approval, '/api/rules');
+  if (!signed.ok) return signed;
+  let body: RuleBody;
+  try {
+    body = RuleBody.parse(JSON.parse(signed.body));
+  } catch {
+    return { ok: false, problem: 'an unreadable rule' };
+  }
+  if (body.ruleId !== (version === 1 ? null : ruleId))
+    return { ok: false, problem: 'the signed rule is another rule’s' };
+  return { ok: true, body };
 }

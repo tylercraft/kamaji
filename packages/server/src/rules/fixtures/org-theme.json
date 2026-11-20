@@ -1,0 +1,29 @@
+{
+  "name": "Twenty Twenty-Four",
+  "slug": "twentytwentyfour",
+  "version": "1.6",
+  "preview_url": "https:\/\/wp-themes.com\/twentytwentyfour\/",
+  "author": {
+    "user_nicename": "wordpressdotorg",
+    "profile": "https:\/\/profiles.wordpress.org\/wordpressdotorg\/",
+    "avatar": "https:\/\/secure.gravatar.com\/avatar\/178f40079143ff7464125e4fbc88e62024a16442920a6a3d6dfa3d7e626be20d?s=96&d=monsterid&r=g",
+    "display_name": "WordPress.org",
+    "author": "the WordPress team",
+    "author_url": "https:\/\/wordpress.org"
+  },
+  "rating": 76,
+  "num_ratings": 39,
+  "reviews_url": "https:\/\/wordpress.org\/support\/theme\/twentytwentyfour\/reviews\/",
+  "downloaded": 10387123,
+  "last_updated": "2026-08-19",
+  "last_updated_time": "2026-08-19 22:52:41",
+  "creation_time": "2023-11-07 19:26:45",
+  "homepage": "https:\/\/wordpress.org\/themes\/twentytwentyfour\/",
+  "download_link": "https:\/\/downloads.wordpress.org\/theme\/twentytwentyfour.1.6.zip",
+  "requires": "6.4",
+  "requires_php": "7.0",
+  "is_commercial": false,
+  "external_support_url": false,
+  "is_community": true,
+  "external_repository_url": "https:\/\/github.com\/WordPress\/twentytwentyfour"
+}

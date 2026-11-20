@@ -30,6 +30,7 @@ const run: BatchView = {
   id: 'b1',
   approvedAt: '2026-11-13T01:00:00Z',
   approvedBy: 'tyler',
+  rule: null,
   finishedAt: '2026-11-13T02:00:00Z',
   state: 'finished',
   oneSiteFirst: true,

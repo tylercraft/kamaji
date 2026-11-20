@@ -20,6 +20,17 @@ import { approveBatch, batchViews } from '../../packages/server/src/updates/batc
 import { queue } from '../../packages/server/src/updates/queue.js';
 import { zip } from '../../packages/server/src/care/zip.js';
 import { freshInstall, HOME, keys, synced, update, wp, WORDPRESS } from './ddev.js';
+import { randomBytes } from 'node:crypto';
+import type { RuleBody } from '@kamaji/shared';
+import { ruleApprovalProblem } from '../../packages/server/src/passkeys/guard.js';
+import { testAuthenticator } from '../../packages/server/src/passkeys/testing.js';
+import { bodyHash, challengeFor } from '../../packages/server/src/passkeys/webauthn.js';
+import type { OrgLookup } from '../../packages/server/src/rules/org.js';
+import { makeRuleRuns } from '../../packages/server/src/rules/runs.js';
+import { saveRule } from '../../packages/server/src/rules/store.js';
+import { KAMAJI_ZONE, wallClock } from '../../packages/server/src/sitebackups/schedule.js';
+
+const HOUR = 60 * 60_000;
 
 const DOCROOT = new URL('./', WORDPRESS);
 const FIXTURES = new URL('care-done/', DOCROOT);
@@ -371,5 +382,61 @@ describe('M4’s done test on DDEV', () => {
     wp('option', 'delete', 'kamaji_done_slow');
     rmSync(new URL('kamaji-done-no-finish.php', MU), { force: true });
     synced();
+  }, 600_000);
+  it('a rule’s run: a signed rule takes a minor update, an hour after its update time', async () => {
+    // Whatever earlier tests left held or waiting is out of the way.
+    db.prepare("UPDATE batch_items SET state = 'done' WHERE state != 'done'").run();
+    db.prepare("UPDATE batch_sites SET state = 'done' WHERE state != 'done'").run();
+    db.prepare(
+      "UPDATE batches SET state = 'finished', finished_at = 0 WHERE state != 'finished'",
+    ).run();
+    install(ONE, '1.0.0');
+    install(TWO, '1.0.0');
+    offer({ [ONE]: { version: '1.1.0' }, [TWO]: { version: '1.1.0' } });
+    wp('option', 'delete', 'craftish_care_refreshed');
+    await refresh(SITE);
+    // The rule's update time: the hour that began two hours ago, so its hour to pause is over.
+    const wall = wallClock(KAMAJI_ZONE, Date.now() - 2 * HOUR);
+    const body: RuleBody = {
+      ruleId: null,
+      name: 'The done test’s first plugin',
+      sites: [{ id: SITE, url: HOME.href, backup: 'host' }],
+      types: ['plugin'],
+      only: ['kamaji-done-one'],
+      leaveOut: [],
+      change: 'minor',
+      waitDays: 3,
+      securityWaitDays: 0,
+      when: { weekday: wall.weekday, hour: wall.hour },
+      most: { perSite: 10, sites: 10 },
+    };
+    const tyler = testAuthenticator();
+    const text = JSON.stringify(body);
+    const nonce = randomBytes(32).toString('base64url');
+    const approval = JSON.stringify({
+      body: text,
+      proof: tyler.assert(nonce, challengeFor(nonce, 'POST', '/api/rules', bodyHash(text))),
+    });
+    const { id } = saveRule(db, body, approval, 'tyler', Date.now());
+    // The test plugins aren't on wordpress.org: this stands in for it, released five days ago.
+    const org: OrgLookup = async () => ({ version: '1.1.0', at: Date.now() - 5 * 24 * HOUR });
+    expect(await makeRuleRuns(db, Date.now(), org)).toBe(1);
+    // Set out late, so it would wait an hour from now; as if set out at its update time.
+    db.prepare('UPDATE batches SET starts_at = update_at + ? WHERE rule_id = ?').run(HOUR, id);
+    const batch = String(db.prepare('SELECT id FROM batches WHERE rule_id = ?').get(id)!.id);
+    await runUpdater({
+      ...deps(),
+      ruleApproval: (r, v) => ruleApprovalProblem(db, tyler.config, r, v),
+      org,
+    });
+    expect(items(batch)).toEqual([
+      { item: ONE, state: 'done', outcome: 'passed', detail: '1.1.0 installed; the checks passed' },
+    ]);
+    expect(wp('plugin', 'get', 'kamaji-done-one', '--field=version')).toBe('1.1.0');
+    expect(wp('plugin', 'get', 'kamaji-done-two', '--field=version')).toBe('1.0.0');
+    expect(batchViews(db).find((b) => b.id === batch)!.rule).toMatchObject({ id, version: 1 });
+    expect(db.prepare('SELECT paused_at FROM rules WHERE id = ?').get(id)).toEqual({
+      paused_at: null,
+    });
   }, 600_000);
 });

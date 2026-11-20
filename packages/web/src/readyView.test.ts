@@ -23,7 +23,7 @@ function site(id: string, over: Partial<ReadySite>): ReadySite {
   };
 }
 
-const ready = (sites: ReadySite[]): ReadyToUpdate => ({ for: at, sentAt: at, sites });
+const ready = (sites: ReadySite[]): ReadyToUpdate => ({ for: at, sentAt: at, sites, rules: [] });
 
 describe('Ready to update’s header', () => {
   it('a site still waiting with a failed backup counts', () => {

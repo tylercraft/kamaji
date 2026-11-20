@@ -8,6 +8,11 @@ describe('tabs', () => {
     expect(paths).toContain('/passkeys');
     expect(paths.indexOf('/passkeys')).toBe(paths.indexOf('/activity') + 1);
   });
+
+  it('has Rules as a tab, after Updates', () => {
+    const paths = tabs.map((t) => t.path);
+    expect(paths.indexOf('/rules')).toBe(paths.indexOf('/updates') + 1);
+  });
 });
 
 describe('the menu button’s red dot', () => {

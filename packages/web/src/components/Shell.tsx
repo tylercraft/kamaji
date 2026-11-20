@@ -4,6 +4,7 @@ import {
   Globe,
   History,
   KeyRound,
+  ListChecks,
   LayoutDashboard,
   Menu as MenuIcon,
   PackageCheck,
@@ -25,11 +26,11 @@ export const tabs: { path: string; label: string; icon: LucideIcon }[] = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
   { path: '/sites', label: 'Sites', icon: Globe },
   { path: '/updates', label: 'Updates', icon: PackageCheck },
+  { path: '/rules', label: 'Rules', icon: ListChecks },
   { path: '/servers', label: 'Servers', icon: Server },
   { path: '/activity', label: 'Activity', icon: History },
   { path: '/passkeys', label: 'Passkeys', icon: KeyRound },
   { path: '/settings', label: 'Settings', icon: Settings },
-  // Rules (/rules) is left out until there are rules to set: every update is approved by hand.
 ];
 
 // One iron header at laptop widths: the brand, the tabs, then Kamaji's own health. Under 980px

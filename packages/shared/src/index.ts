@@ -898,6 +898,17 @@ export const ReadyToUpdate = z.object({
   sentAt: Timestamp,
   /** Failed backups first. */
   sites: z.array(ReadySite),
+  /** The runs rules made for this update time, each waiting an hour for Tyler to pause it. */
+  rules: z
+    .array(
+      z.object({
+        name: z.string(),
+        updates: z.number().int(),
+        sites: z.number().int(),
+        startsAt: Timestamp,
+      }),
+    )
+    .default([]),
 });
 export type ReadyToUpdate = z.infer<typeof ReadyToUpdate>;
 
@@ -997,6 +1008,8 @@ export const QueueItem = z.object({
    * shown, and never ticked for Tyler. Null otherwise.
    */
   rolledBackAt: Timestamp.nullable().optional(),
+  /** A rule that would take it at its next run, going by what Kamaji knows now. */
+  rule: z.object({ id: z.string(), name: z.string(), at: Timestamp }).nullable().optional(),
 });
 export type QueueItem = z.infer<typeof QueueItem>;
 
@@ -1205,10 +1218,22 @@ export const BatchSiteView = z.object({
 });
 export type BatchSiteView = z.infer<typeof BatchSiteView>;
 
+/** The rule that approved a run (ops/rules-plan.md), and when it may start. */
+export const BatchRule = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.number().int(),
+  /** The end of the hour Tyler has to pause it, after "Ready to update". */
+  startsAt: Timestamp,
+});
+export type BatchRule = z.infer<typeof BatchRule>;
+
 export const BatchView = z.object({
   id: z.string(),
   approvedAt: Timestamp,
   approvedBy: z.string(),
+  /** Approved by a rule rather than by Tyler; null for his own. */
+  rule: BatchRule.nullable().default(null),
   /** When the whole run finished; null while it's going or held. */
   finishedAt: Timestamp.nullable(),
   state: z.enum(['approved', 'running', 'finished']),
@@ -1529,3 +1554,122 @@ export const UndoRequest = z.object({
   withDatabase: z.boolean(),
 });
 export type UndoRequest = z.infer<typeof UndoRequest>;
+
+// Rules (ops/rules-plan.md): standing approvals Tyler signs with his passkey. Everything that
+// decides what a rule may update is in its signed body, so nothing written to the database later
+// can widen it: the sites by id with their address and backup, the kinds of change, the wait, the
+// time it runs. The updater checks each run against that body, never against the site's row.
+
+/** A plugin's slug or a theme's stylesheet, as WordPress names them. */
+export const RuleSlug = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, 'a slug: lowercase letters, digits, dots, - and _');
+
+export const RuleSite = z.object({
+  id: z.string().min(1).max(200),
+  /** The address the updater sends to, as signed: a site whose address changes isn't run. */
+  url: z.url().max(500),
+  /** Kamaji's restore-checked whole-site backup, or the host's. Never a client's or Tyler's word. */
+  backup: z.enum(['kamaji', 'host']),
+});
+export type RuleSite = z.infer<typeof RuleSite>;
+
+/** Patch only (1.2.3 → 1.2.4), patch or minor (never major), or security fixes short of major. */
+export const RuleChange = z.enum(['patch', 'minor', 'security']);
+export type RuleChange = z.infer<typeof RuleChange>;
+
+export const RuleBody = z.object({
+  /** Null for a new rule; the rule's id for a new version of it (an edit, or resuming). */
+  ruleId: z
+    .string()
+    .regex(/^[0-9a-f]{16}$/)
+    .nullable(),
+  name: z.string().trim().min(1).max(80),
+  sites: z
+    .array(RuleSite)
+    .min(1)
+    .max(20)
+    .refine((s) => new Set(s.map((x) => x.id)).size === s.length, 'a site is listed twice'),
+  types: z
+    .array(z.enum(['plugin', 'theme']))
+    .min(1)
+    .max(2),
+  /** Only these plugins and themes; empty for any. */
+  only: z.array(RuleSlug).max(50),
+  leaveOut: z.array(RuleSlug).max(50),
+  change: RuleChange,
+  /** Days since wordpress.org released the version, before the rule takes it. */
+  waitDays: z.number().int().min(0).max(30),
+  /** The same, for a version that fixes a known vulnerability. */
+  securityWaitDays: z.number().int().min(0).max(30),
+  /** The weekly time it runs, in NZ time: the update time when it was signed. */
+  when: z.object({
+    weekday: z.number().int().min(0).max(6),
+    hour: z.number().int().min(0).max(23),
+  }),
+  most: z.object({
+    perSite: z.number().int().min(1).max(20),
+    sites: z.number().int().min(1).max(20),
+  }),
+});
+export type RuleBody = z.infer<typeof RuleBody>;
+
+/** An update a rule would take, or the first reason it wouldn't. */
+export const RuleCandidate = z.object({
+  siteId: z.string(),
+  siteName: z.string(),
+  name: z.string(),
+  from: z.string(),
+  to: z.string(),
+  why: z.string().nullable(),
+});
+export type RuleCandidate = z.infer<typeof RuleCandidate>;
+
+export const RuleView = z.object({
+  id: z.string(),
+  version: z.number().int(),
+  body: RuleBody,
+  /** The rule as a sentence. */
+  words: z.string(),
+  signedAt: Timestamp,
+  signedBy: z.string(),
+  paused: z.object({ at: Timestamp, by: z.string(), reason: z.string() }).nullable(),
+  /** What it would take now, and what it wouldn't with why, going by what Kamaji knows now. */
+  takes: z.array(RuleCandidate),
+  misses: z.array(RuleCandidate),
+  /** Why parts of it won't run as signed: a site's address or backup changed, the time moved. */
+  warnings: z.array(z.string()),
+  /** Its next run's time; null while paused. */
+  nextAt: Timestamp.nullable(),
+  lastRun: z.object({ batchId: z.string(), at: Timestamp, words: z.string() }).nullable(),
+  /** Plugins and themes WordPress auto-updates on its own that this rule also covers. */
+  autoUpdates: z.array(z.object({ siteName: z.string(), name: z.string() })),
+});
+export type RuleView = z.infer<typeof RuleView>;
+
+/** A site a rule can name: connected, with Kamaji's whole-site backups or the host's. */
+export const RuleSiteOption = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  backup: z.enum(['kamaji', 'host']),
+  /** WordPress's own auto-updates, on for these plugins and themes: read only here. */
+  autoUpdates: z.array(z.string()),
+});
+export type RuleSiteOption = z.infer<typeof RuleSiteOption>;
+
+export const RulesResponse = z.object({
+  rules: z.array(RuleView),
+  sites: z.array(RuleSiteOption),
+  /** Sites Kamaji updates that no rule may name, with why. */
+  notAllowed: z.array(z.object({ id: z.string(), name: z.string(), why: z.string() })),
+  updateTime: z.object({ weekday: z.number().int(), hour: z.number().int() }),
+});
+export type RulesResponse = z.infer<typeof RulesResponse>;
+
+export const RuleSaved = z.object({
+  ok: z.literal(true),
+  id: z.string(),
+  version: z.number().int(),
+});
+export type RuleSaved = z.infer<typeof RuleSaved>;

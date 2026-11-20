@@ -48,6 +48,7 @@ export const ISSUE_FAMILIES = [
   'stale',
   'list-stale',
   'feed-stale',
+  'rule-paused',
 ] as const;
 export type IssueFamily = (typeof ISSUE_FAMILIES)[number];
 export type IssueKind = IssueFamily | `${IssueFamily}:${string}`;
@@ -118,6 +119,10 @@ const ACTIONS: Record<IssueFamily, (issue: Of) => IssueAction> = {
   abandoned: refreshInventory,
   'end-of-life': look('Ask the host or client to upgrade.'),
   'update-held': look('Look at what held it on Updates, then carry on or stop.', '/updates'),
+  'rule-paused': look(
+    'Look at the run that stopped it, then sign the rule again under Rules or leave it paused.',
+    '/rules',
+  ),
   // Renewed: a fresh read finds the later date and clears it.
   'domain-expiring': checkDomainAgain,
   'domain-unreadable': checkDomainAgain,
